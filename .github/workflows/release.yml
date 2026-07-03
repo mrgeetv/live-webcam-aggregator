@@ -1,0 +1,72 @@
+name: Release & Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Manual trigger
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+jobs:
+  semantic-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+      new_release_major_version: ${{ steps.semantic.outputs.new_release_major_version }}
+      new_release_minor_version: ${{ steps.semantic.outputs.new_release_minor_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # Need full history for semantic-release
+
+      - name: Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
+        with:
+          semantic_version: 25.0.2
+          extra_plugins: |
+            @semantic-release/changelog@6.0.3
+            @semantic-release/git@10.0.1
+            conventional-changelog-conventionalcommits@9.1.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release Deployment
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: |
+          echo "## 🎉 Release Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`v${{ steps.semantic.outputs.new_release_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Major | \`${{ steps.semantic.outputs.new_release_major_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Minor | \`${{ steps.semantic.outputs.new_release_minor_version }}\` |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**🚀 New release published and Docker images will be built!**" >> $GITHUB_STEP_SUMMARY
+
+          echo "🎉 New release published!"
+          echo "Version: ${{ steps.semantic.outputs.new_release_version }}"
+          echo "Major: ${{ steps.semantic.outputs.new_release_major_version }}"
+          echo "Minor: ${{ steps.semantic.outputs.new_release_minor_version }}"
+
+  docker-build-and-deploy:
+    name: Build & Deploy Docker Image
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      tags: |
+        ghcr.io/${{ github.repository }}:latest
+        ghcr.io/${{ github.repository }}:v${{ needs.semantic-release.outputs.new_release_version }}
+        ghcr.io/${{ github.repository }}:v${{ needs.semantic-release.outputs.new_release_major_version }}
+        ghcr.io/${{ github.repository }}:v${{ needs.semantic-release.outputs.new_release_major_version }}.${{ needs.semantic-release.outputs.new_release_minor_version }}
+    secrets: inherit

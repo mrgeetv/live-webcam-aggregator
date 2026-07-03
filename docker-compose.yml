@@ -1,0 +1,16 @@
+services:
+  youtube-streams:
+    build:
+      context: .
+      args:
+        BUILD_IMAGE: python:3.14-slim
+        RUNTIME_IMAGE: python:3.14-slim
+    init: true
+    ports:
+      - "23457:8000"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
+      - CATALOGUE_INTERVAL_HOURS=${CATALOGUE_INTERVAL_HOURS:-6}
+    restart: unless-stopped

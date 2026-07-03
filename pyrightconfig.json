@@ -1,0 +1,15 @@
+{
+  "include": ["src"],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "recommended",
+  "reportAny": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnusedCallResult": false,
+  "reportConstantRedefinition": false,
+  "reportImplicitStringConcatenation": false,
+  "reportMissingModuleSource": false,
+  "reportExplicitAny": false,
+  "reportUnknownLambdaType": false
+}

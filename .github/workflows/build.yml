@@ -1,0 +1,68 @@
+name: Build & Test
+
+on:
+  push:
+    branches:
+      - "build/**" # Build testing branches only (NOT main)
+  workflow_dispatch: # Manual trigger
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # Ensure CI passes first
+  ci-validation:
+    name: CI Validation
+    uses: ./.github/workflows/ci.yml
+
+  # Compute sanitized branch name for Docker tags
+  prepare-tags:
+    name: Prepare Docker Tags
+    runs-on: ubuntu-latest
+    needs: ci-validation
+    outputs:
+      sanitized_branch: ${{ steps.sanitize.outputs.branch }}
+    steps:
+      - name: Sanitize branch name
+        id: sanitize
+        run: |
+          # Replace / with - for valid Docker tags
+          SANITIZED="${GITHUB_REF_NAME//\//-}"
+          echo "branch=$SANITIZED" >> "$GITHUB_OUTPUT"
+
+  docker-build:
+    name: Docker Build & Push
+    needs: prepare-tags
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      tags: |
+        ghcr.io/${{ github.repository }}:${{ needs.prepare-tags.outputs.sanitized_branch }}-${{ github.sha }}
+        ghcr.io/${{ github.repository }}:${{ needs.prepare-tags.outputs.sanitized_branch }}-latest
+    secrets: inherit
+
+  build-summary:
+    name: Build Results
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: always()
+
+    steps:
+      - name: Build Status
+        run: |
+          echo "## 🏗️ Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build | ${{ needs.docker-build.result == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Images pushed to registry for testing!**" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.docker-build.result }}" == "success" ]]; then
+            echo "✅ Build completed successfully!"
+          else
+            echo "❌ Build failed"
+            exit 1
+          fi

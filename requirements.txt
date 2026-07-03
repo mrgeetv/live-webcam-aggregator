@@ -1,0 +1,7 @@
+google-api-python-client==2.198.0
+google-auth-httplib2==0.4.0
+google-auth-oauthlib==1.4.0
+psutil==7.2.2
+requests==2.34.2
+yt-dlp==2026.6.9
+yt-dlp-ejs==0.8.0

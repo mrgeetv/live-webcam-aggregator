@@ -1,0 +1,53 @@
+# Generated playlists
+/src/playlist*
+
+# Environment configuration (use .env.example as template)
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Local virtualenv (dev only)
+.venv/
+.pytest_cache/
+
+# Coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Docker
+.dockerignore
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code local overrides (personal, not shared)
+.claude/settings.local.json
+
+# Working artifacts — local only, NOT committed to the public repo
+docs/specs/
+docs/plans/
+docs/recon/
+docs/superpowers/
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
