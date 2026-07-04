@@ -263,7 +263,7 @@ def make_handler(
                 snapshot = store.snapshot()
                 st = source_status()
                 unhealthy = st["unhealthy"]
-                # Single rollup for an Uptime Kuma JSON-query monitor ($.healthy == true).
+                # Single rollup for a JSON-query uptime monitor ($.healthy == true).
                 # False during the cold-start build (not ready yet) and whenever any source
                 # crashed or returned 0 cams this cycle — even while the empty-guard is
                 # still masking that failure in the served playlist.

@@ -160,6 +160,17 @@ The states you'll see:
 The cold-start build reads as `healthy: false`, so give the monitor a couple of retries
 to ride out normal restarts before it alerts.
 
+**Basic HTTP-status monitoring** (no JSON query) is also possible via response codes:
+
+- `/health` returns **200** whenever the process is up — even mid-cold-start — so a plain
+  200 check only confirms the server is alive, not readiness or source health.
+- `/playlist.m3u8` returns **503** until the first catalogue build completes, then **200**.
+  An HTTP-status monitor on it catches a down process and a stuck cold start, but not
+  source-level degradation (a failed source still returns a served catalogue as `200`).
+
+Use `$.healthy` for source-level alerting; the `/playlist.m3u8` status check is the
+low-effort liveness option.
+
 ## Configuration
 
 All via environment variables (see `.env.example`):
