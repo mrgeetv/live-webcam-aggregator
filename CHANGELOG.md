@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.10.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.9.1...v2.10.0) (2026-07-04)
+
+### Features
+
+* **playlist:** expose per-source health rollup on /health ([e83bc01](https://github.com/mrgeetv/live-webcam-aggregator/commit/e83bc016fc0788453f998669d1deb4681829215c))
+
 ## [2.9.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.9.0...v2.9.1) (2026-06-26)
 
 ### Bug Fixes
