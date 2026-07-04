@@ -93,7 +93,10 @@ def test_end_to_end_server() -> None:
         cache,
         _BASE_URL,
         _manifest_fetch,
-        source_counts=lambda: {"youtube-api": 1},
+        source_status=lambda: {
+            "sources": {"youtube-api": {"kept": 1, "discovered": 1, "crashed": False}},
+            "unhealthy": [],
+        },
         segment_fetch=lambda u, r: (200, "video/mp2t", None, b"seg"),
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
@@ -138,7 +141,9 @@ def test_end_to_end_server() -> None:
         health = json.loads(resp.read())
         assert health["streams"] == 1, f"expected streams=1, got {health}"
         assert health["ready"] is True
-        assert health["sources"] == {"youtube-api": 1}, f"bad sources: {health}"
+        assert health["healthy"] is True, f"expected healthy, got {health}"
+        assert health["unhealthy_sources"] == [], f"bad unhealthy: {health}"
+        assert health["sources"]["youtube-api"]["kept"] == 1, f"bad sources: {health}"
 
         conn.close()
     finally:

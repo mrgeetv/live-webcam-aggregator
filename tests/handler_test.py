@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.parse
 from http.server import ThreadingHTTPServer
+from typing import Any
 
 from webcam_aggregator.app import CatalogueStore, make_handler
 from webcam_aggregator.cache import ResolveCache
@@ -84,20 +85,27 @@ def _segment_fetch(
     return (200, "video/mp2t", None, b"fakesegment")
 
 
+def _healthy_status(name: str = "fake", kept: int = 1) -> dict[str, Any]:
+    return {
+        "sources": {name: {"kept": kept, "discovered": kept, "crashed": False}},
+        "unhealthy": [],
+    }
+
+
 def _start_server(
     store: CatalogueStore,
     cache: ResolveCache | None = None,
-    source_counts: dict[str, int] | None = None,
+    source_status: dict[str, Any] | None = None,
 ) -> tuple[ThreadingHTTPServer, int]:
     if cache is None:
         cache = _make_cache()
-    sc = source_counts or {"fake": 1}
+    ss = source_status or _healthy_status()
     handler_cls = make_handler(
         store,
         cache,
         _BASE_URL,
         _manifest_fetch,
-        source_counts=lambda: sc,
+        source_status=lambda: ss,
         segment_fetch=_segment_fetch,
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
@@ -219,21 +227,63 @@ def test_segment_valid_sig_returns_segment() -> None:
         server.shutdown()
 
 
+def _get_health(port: int) -> dict[str, Any]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request("GET", "/health")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    body = json.loads(resp.read())
+    conn.close()
+    return body
+
+
 def test_health_returns_correct_json() -> None:
     store, _ = _make_store()
-    server, port = _start_server(store, source_counts={"fake": 3})
+    server, port = _start_server(store, source_status=_healthy_status("fake", kept=3))
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-        conn.request("GET", "/health")
-        resp = conn.getresponse()
-        assert resp.status == 200
-        health = json.loads(resp.read())
-        assert health["status"] == "ok"
+        health = _get_health(port)
         assert health["ready"] is True
+        assert health["healthy"] is True
+        assert health["unhealthy_sources"] == []
         assert isinstance(health["streams"], int)
         assert health["streams"] >= 1
         assert "rss_mb" in health
-        assert health["sources"] == {"fake": 3}
-        conn.close()
+        assert health["sources"]["fake"] == {
+            "kept": 3,
+            "discovered": 3,
+            "crashed": False,
+        }
+    finally:
+        server.shutdown()
+
+
+def test_health_unhealthy_when_source_failed() -> None:
+    """A source that crashed / returned 0 this cycle flips healthy False and is named,
+    even though the store is ready (the empty-guard is still masking it in the playlist).
+    """
+    store, _ = _make_store()  # ready=True
+    status = {
+        "sources": {"fake": {"kept": 0, "discovered": 0, "crashed": True}},
+        "unhealthy": ["fake"],
+    }
+    server, port = _start_server(store, source_status=status)
+    try:
+        health = _get_health(port)
+        assert health["ready"] is True
+        assert health["healthy"] is False
+        assert health["unhealthy_sources"] == ["fake"]
+    finally:
+        server.shutdown()
+
+
+def test_health_not_healthy_during_cold_start() -> None:
+    """Before the first build completes (not ready), healthy is False even with no
+    failing sources — guards against a fresh container reporting a false all-clear."""
+    store, _ = _make_store(ready=False)
+    server, port = _start_server(store, source_status=_healthy_status())
+    try:
+        health = _get_health(port)
+        assert health["ready"] is False
+        assert health["healthy"] is False
     finally:
         server.shutdown()

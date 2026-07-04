@@ -169,7 +169,7 @@ def make_handler(
     cache: ResolveCache,
     base_url: str,
     manifest_fetch: Callable[[str], str | None],
-    source_counts: Callable[[], dict[str, int]],
+    source_status: Callable[[], dict[str, Any]],
     segment_fetch: Callable[
         [str, str | None], tuple[int, str, str | None, bytes] | None
     ],
@@ -261,11 +261,19 @@ def make_handler(
 
             if path == "/health":
                 snapshot = store.snapshot()
+                st = source_status()
+                unhealthy = st["unhealthy"]
+                # Single rollup for an Uptime Kuma JSON-query monitor ($.healthy == true).
+                # False during the cold-start build (not ready yet) and whenever any source
+                # crashed or returned 0 cams this cycle — even while the empty-guard is
+                # still masking that failure in the served playlist.
+                healthy = store.ready and not unhealthy
                 payload = {
-                    "status": "ok",
                     "ready": store.ready,
+                    "healthy": healthy,
                     "streams": len(snapshot),
-                    "sources": source_counts(),
+                    "unhealthy_sources": unhealthy,
+                    "sources": st["sources"],
                     "rss_mb": round(_total_rss() / 1048576, 1),
                 }
                 self._respond(200, "application/json", json.dumps(payload).encode())
@@ -311,7 +319,7 @@ def build_app(
     CatalogueStore,
     ResolveCache,
     Callable[[], None],
-    Callable[[], dict[str, int]],
+    Callable[[], dict[str, Any]],
 ]:
     fetcher = Fetcher()
     resolver_fetcher = Fetcher(delay=0.0, retries=2)
@@ -377,13 +385,37 @@ def build_app(
             log.exception("youtube live_ids failed; treating YT cams as offline")
             return {}
 
-    def source_counts() -> dict[str, int]:
+    expected_sources = [s.name for s in active_sources]
+
+    def source_status() -> dict[str, Any]:
+        # Per-source RAW outcome of the last rebuild + the sources that failed this cycle
+        # (crashed, or 0 kept), for /health monitoring. The values are the raw result
+        # even when the empty-guard is masking a failure in the served playlist, so a
+        # dying source surfaces here immediately. Cold-start (nothing recorded yet) shows
+        # all sources at zero; the top-level `ready` distinguishes that from a real 0.
         # Copy defensively: build_catalogue mutates `history` from the rebuild thread,
         # so a live /health request must not crash on "changed size during iteration".
         try:
-            return {name: (h.last_count or 0) for name, h in list(history.items())}
+            hist = dict(history)
         except RuntimeError:
-            return {}
+            hist = {}
+        sources: dict[str, Any] = {}
+        unhealthy: list[str] = []
+        for name in expected_sources:
+            h = hist.get(name)
+            if h is None:
+                # Not attempted yet (cold start, before the first rebuild records it):
+                # placeholder zeros, never counted unhealthy — `ready` gates that window.
+                sources[name] = {"kept": 0, "discovered": 0, "crashed": False}
+                continue
+            sources[name] = {
+                "kept": h.last_raw_kept,
+                "discovered": h.last_discovered,
+                "crashed": h.last_crashed,
+            }
+            if h.last_crashed or h.last_raw_kept == 0:
+                unhealthy.append(name)
+        return {"sources": sources, "unhealthy": unhealthy}
 
     def rebuild_once() -> None:
         log.info("starting catalogue rebuild")
@@ -398,7 +430,7 @@ def build_app(
         store.swap(entries)
         log.info("catalogue rebuilt: %d entries", len(entries))
 
-    return store, cache, rebuild_once, source_counts
+    return store, cache, rebuild_once, source_status
 
 
 def main() -> None:
@@ -413,7 +445,7 @@ def main() -> None:
     logging.getLogger("webcam-aggregator").setLevel(
         getattr(logging, cfg.log_level, logging.INFO)
     )
-    store, cache, rebuild_once, source_counts = build_app(cfg)
+    store, cache, rebuild_once, source_status = build_app(cfg)
 
     manifest_fetcher = Fetcher(delay=0.0, retries=1, byte_cap=MANIFEST_MAX_BYTES)
     handler_cls = make_handler(
@@ -421,7 +453,7 @@ def main() -> None:
         cache,
         cfg.public_base_url,
         manifest_fetch=manifest_fetcher.get,
-        source_counts=source_counts,
+        source_status=source_status,
         segment_fetch=manifest_fetcher.get_segment,
         proxy_youtube=cfg.proxy_youtube,
     )

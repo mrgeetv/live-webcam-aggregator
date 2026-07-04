@@ -212,8 +212,13 @@ Available levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`
 
 At `INFO`, each catalogue rebuild logs per-source `kept / discovered` counts and any
 source collapse (empty-guard). At `DEBUG`, it also logs dropped/failed resolves and
-liveness-probe failures. Live process memory (`rss_mb`) and per-source counts are
-exposed on the `/health` endpoint.
+liveness-probe failures. Live process memory (`rss_mb`) and the per-source **raw**
+outcome of the last rebuild (`kept`/`discovered`/`crashed`) are exposed on the `/health`
+endpoint, along with a `healthy` rollup (`ready` **and** no source crashed or returned 0
+this cycle) and `unhealthy_sources` for a single uptime check. The per-source counts stay
+raw even when the empty-guard is still serving a failed source's last good set, so a
+failure surfaces immediately. See the *Monitoring* section in the README for the payload
+shape and the state table.
 
 A source category we have no mapping for logs a `WARNING` (once per distinct value) and
 the cam lands in the `Unmapped Category` group rather than `Other`; camscape and skyline
