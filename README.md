@@ -119,7 +119,57 @@ mapping can sit in front. The only requirement is that the front door forwards
 | ---- | ------- |
 | `/playlist.m3u8` | The channel list |
 | `/stream/<id>` | On-demand resolve + HLS manifest proxy (302 for MP4 sources) |
-| `/health` | JSON status: readiness, stream count, per-source counts, memory |
+| `/health` | JSON status: readiness, `healthy` rollup, per-source outcome, memory |
+
+### Monitoring
+
+`/health` is built for a single uptime check: point a JSON-query monitor at it and
+alert when `$.healthy` isn't `true`.
+
+```json
+{
+  "ready": true,
+  "healthy": false,
+  "streams": 812,
+  "unhealthy_sources": ["worldcams"],
+  "sources": {
+    "worldcams": {"kept": 0, "discovered": 0, "crashed": true}
+  },
+  "rss_mb": 210.4
+}
+```
+
+Fields:
+
+- `ready` — the first catalogue build has completed (the playlist is serveable).
+- `healthy` — `ready` **and** no source crashed or returned 0 cams on the last rebuild.
+- `unhealthy_sources` — the sources that failed this cycle (the reason `healthy` is `false`).
+- `sources.<name>` — the **raw** result of the last rebuild: `discovered` (found),
+  `kept` (passed liveness), `crashed` (`discover`/liveness threw). These stay raw even
+  when the empty-guard is still serving a failed source's last good set, so a dying
+  source surfaces immediately.
+
+The states you'll see:
+
+| `ready` | `healthy` | `unhealthy_sources` | Meaning |
+| ------- | --------- | ------------------- | ------- |
+| `false` | `false` | `[]` | Cold start — first build still running, nothing served yet |
+| `true` | `true` | `[]` | All sources succeeded |
+| `true` | `false` | non-empty | Serving, but a listed source crashed or returned 0 (`crashed` tells which) |
+
+The cold-start build reads as `healthy: false`, so give the monitor a couple of retries
+to ride out normal restarts before it alerts.
+
+**Basic HTTP-status monitoring** (no JSON query) is also possible via response codes:
+
+- `/health` returns **200** whenever the process is up — even mid-cold-start — so a plain
+  200 check only confirms the server is alive, not readiness or source health.
+- `/playlist.m3u8` returns **503** until the first catalogue build completes, then **200**.
+  An HTTP-status monitor on it catches a down process and a stuck cold start, but not
+  source-level degradation (a failed source still returns a served catalogue as `200`).
+
+Use `$.healthy` for source-level alerting; the `/playlist.m3u8` status check is the
+low-effort liveness option.
 
 ## Configuration
 

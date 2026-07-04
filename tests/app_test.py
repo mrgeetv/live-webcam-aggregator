@@ -116,7 +116,16 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
         proxy_youtube=False,
         max_parallel_sources=4,
     )
-    store, _cache, rebuild, source_counts = _app.build_app(cfg)
+    store, _cache, rebuild, source_status = _app.build_app(cfg)
     assert store is not None
     assert callable(rebuild)
-    assert callable(source_counts)
+    assert callable(source_status)
+    # Cold start: no rebuild has run, so nothing is unhealthy yet (the top-level `ready`
+    # gates that window) and every expected source is listed at zero — never an empty {}.
+    st = source_status()
+    assert st["unhealthy"] == []
+    assert st["sources"], "expected the source roster to be listed at cold start"
+    assert all(
+        s == {"kept": 0, "discovered": 0, "crashed": False}
+        for s in st["sources"].values()
+    )

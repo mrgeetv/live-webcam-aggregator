@@ -399,6 +399,81 @@ def test_crash_reuses_last_good_set_and_never_wipes() -> None:
         assert len(result) == 1
 
 
+def test_health_fields_record_raw_outcome_under_guard() -> None:
+    """The per-cycle raw fields (/health monitoring) record the actual failure even
+    while the empty-guard masks it: on a collapse, last_raw_kept is the shrunk count
+    (the raw result), not the larger count the guard keeps serving."""
+    old_kept = _make_old_candidates(10)
+    history: dict[str, Hist] = {
+        "worldcams": Hist(last_count=10, shrink_streak=0, last_kept=old_kept)
+    }
+    small = [
+        _make_candidate(
+            key=f"hls:s{i}",
+            page=f"https://example.com/s{i}",
+            target=f"https://example.com/s{i}.m3u8",
+            title=f"S {i}",
+        )
+        for i in range(2)
+    ]
+
+    # Collapse cycle: guard reuses the old 10, but the raw field shows the true 2.
+    build_catalogue(
+        [_Src("worldcams", small)],
+        is_alive=_always_alive,
+        youtube_live=_no_yt_live,
+        history=history,
+    )
+    h = history["worldcams"]
+    assert h.last_raw_kept == 2  # RAW: what this cycle actually produced
+    assert h.last_crashed is False
+    assert h.last_discovered == 2
+
+    # Healthy cycle (10 candidates, no collapse): raw reflects the full set.
+    ten = _make_old_candidates(10)
+    build_catalogue(
+        [_Src("worldcams", ten)],
+        is_alive=_always_alive,
+        youtube_live=_no_yt_live,
+        history=history,
+    )
+    h = history["worldcams"]
+    assert h.last_raw_kept == 10
+    assert h.last_crashed is False
+
+
+def test_health_fields_flag_crash() -> None:
+    """A crashed discover records last_crashed=True and last_raw_kept=0, even though
+    the empty-guard keeps serving the last-good set."""
+    cam = _make_candidate(
+        source="worldcams", key="hls:a", target="https://example.com/a.m3u8"
+    )
+
+    class _CrashSrc:
+        name: str = "worldcams"
+        calls: int = 0
+
+        def discover(self) -> list[Candidate]:
+            self.calls += 1
+            if self.calls == 1:
+                return [cam]
+            raise RuntimeError("boom")
+
+    src = _CrashSrc()
+    history: dict[str, Hist] = {}
+    build_catalogue(
+        [src], is_alive=_always_alive, youtube_live=_no_yt_live, history=history
+    )
+    assert history["worldcams"].last_crashed is False  # first cycle succeeded
+
+    build_catalogue(
+        [src], is_alive=_always_alive, youtube_live=_no_yt_live, history=history
+    )
+    h = history["worldcams"]
+    assert h.last_crashed is True
+    assert h.last_raw_kept == 0
+
+
 def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
     """Sources run concurrently: one whose liveness probe raises is treated like a crash
     (reuse its last good set) and must NOT sink the other sources' results."""

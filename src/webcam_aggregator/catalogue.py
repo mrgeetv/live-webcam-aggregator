@@ -25,6 +25,13 @@ class Hist:
     last_count: int | None = None
     shrink_streak: int = 0
     last_kept: list[Candidate] = field(default_factory=list)
+    # This-cycle RAW outcome, for /health monitoring — distinct from the guard's
+    # last-*good* state above. These record what actually happened on the most
+    # recent rebuild (crash / 0 kept) even while the empty-guard masks it by
+    # reusing last_kept, so a failure surfaces to monitoring the moment it occurs.
+    last_discovered: int = 0
+    last_raw_kept: int = 0
+    last_crashed: bool = False
 
 
 def _to_entry(c: Candidate) -> CatalogueEntry:
@@ -114,6 +121,11 @@ def build_catalogue(
     for name, kept, discovered, crashed in results:
         log.info("%s: %d kept / %d discovered", name, len(kept), discovered)
         h = history.setdefault(name, Hist())
+        # Record the RAW result before the guard can mask it — /health alerts on this
+        # (crashed, or 0 kept) even when the guard keeps serving the last good set.
+        h.last_discovered = discovered
+        h.last_raw_kept = len(kept)
+        h.last_crashed = crashed
         if crashed and h.last_kept:
             # A crash is not a genuine "0 cams" result — reuse the last good set and leave
             # history untouched, so two consecutive crashes can't get accepted as an empty
