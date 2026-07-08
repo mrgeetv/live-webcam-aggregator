@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.10.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.10.0...v2.10.1) (2026-07-08)
+
+### Code Refactoring
+
+* **docker:** rename service youtube-streams to live-streams ([#94](https://github.com/mrgeetv/live-webcam-aggregator/issues/94)) ([6783f3b](https://github.com/mrgeetv/live-webcam-aggregator/commit/6783f3b28cf6d05288e63d0bf73eb0337ec82c19))
+
 ## [2.10.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.9.1...v2.10.0) (2026-07-04)
 
 ### Features
