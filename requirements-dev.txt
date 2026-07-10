@@ -1,4 +1,4 @@
-google-api-python-client-stubs==1.37.0
+google-api-python-client-stubs==1.38.0
 pre-commit==4.6.0
 pytest==9.1.1
 pytest-cov==7.1.0
