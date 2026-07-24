@@ -1,5 +1,5 @@
 google-api-python-client-stubs==1.39.0
-pre-commit==4.6.0
+pre-commit==4.6.1
 pytest==9.1.1
 pytest-cov==7.1.0
 pytest-xdist==3.8.0
