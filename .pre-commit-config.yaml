@@ -60,9 +60,16 @@ repos:
         args: ["--severity=warning"]
 
   - repo: https://github.com/hadolint/hadolint
-    rev: v2.14.0
+    rev: v2.15.1
     hooks:
+      # The hook's default entry (ghcr.io/hadolint/hadolint hadolint) has no
+      # image tag, which Docker resolves to :latest - an untracked moving
+      # target independent of the `rev:` above. That let CI and a local
+      # machine run genuinely different hadolint builds and disagree on the
+      # same unchanged Dockerfile. Pinning the tag to match `rev:` makes the
+      # image deterministic with the hook version.
       - id: hadolint-docker
+        entry: ghcr.io/hadolint/hadolint:v2.15.1 hadolint
 
   - repo: local
     hooks:

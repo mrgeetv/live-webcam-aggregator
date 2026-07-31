@@ -59,6 +59,6 @@ USER 65532:65532
 
 # Health check (uses stdlib urllib - no curl/wget in DHI images)
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+  CMD ["/bin/sh", "-c", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
 
 CMD ["python3", "-m", "webcam_aggregator"]
