@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.10.5](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.10.4...v2.10.5) (2026-07-31)
+
+### Bug Fixes
+
+* **docker:** satisfy hadolint DL3025 in the healthcheck ([#103](https://github.com/mrgeetv/live-webcam-aggregator/issues/103)) ([a19ec43](https://github.com/mrgeetv/live-webcam-aggregator/commit/a19ec434456c99736940d7e1809cf0083ea95a7d))
+
 ## [2.10.4](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.10.3...v2.10.4) (2026-07-24)
 
 ### Bug Fixes
