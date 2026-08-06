@@ -24,9 +24,12 @@ updates:
       day: "friday"
       time: "08:00"
       timezone: "Etc/UTC"
-    # Proper conventional commit format for strict validation
+    # chore, not fix: semantic-release treats fix as a patch release, so an
+    # actions bump would mint a version and rebuild the image despite shipping
+    # nothing. chore is release:false in .releaserc. pip and docker stay on
+    # fix — those do change what ends up in the image.
     commit-message:
-      prefix: "fix(deps)"
+      prefix: "chore(deps)"
 
   # Docker base images - Weekly on Friday
   - package-ecosystem: "docker"

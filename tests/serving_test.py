@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import quote
+
+import pytest
 
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import CatalogueEntry
 from webcam_aggregator.serving import (
+    loggable,
     rewrite_manifest,
     render_playlist,
     serve_segment,
@@ -654,3 +658,64 @@ def test_serve_stream_truncates_dvr() -> None:
     assert status == 200
     segs = [ln for ln in body.decode().splitlines() if ln.endswith(".ts")]
     assert len(segs) == 120  # truncated from 500 to the live edge
+
+
+# ---------------------------------------------------------------------------
+# loggable() — CDN session tokens must not land in an INFO-level log
+# ---------------------------------------------------------------------------
+
+
+def test_loggable_strips_the_query_by_default() -> None:
+    url = "https://hd-auth.skylinewebcams.com/live.m3u8?a=t68vrSECRETTOKEN"
+    out = loggable(url)
+    assert "t68vrSECRETTOKEN" not in out
+    assert out == "https://hd-auth.skylinewebcams.com/live.m3u8"
+
+
+def test_loggable_keeps_host_and_path_for_diagnosis() -> None:
+    assert loggable("https://cdn.example/a/b/c.m3u8?tok=x") == (
+        "https://cdn.example/a/b/c.m3u8"
+    )
+
+
+def test_loggable_keeps_the_full_url_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """User decision: allow the tokens when DEBUG is deliberately switched on."""
+    url = "https://hd-auth.skylinewebcams.com/live.m3u8?a=t68vrSECRETTOKEN"
+    with caplog.at_level(logging.DEBUG, logger="webcam-aggregator.serving"):
+        assert loggable(url) == url
+
+
+def test_serve_stream_does_not_log_the_token(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """End-to-end over the real warning path, not just the helper."""
+    entry = CatalogueEntry(
+        id="e1",
+        title="t",
+        category="Other",
+        source="skyline",
+        target_url="https://www.skylinewebcams.com/en/webcam/x.html",
+        source_page_url="https://www.skylinewebcams.com/en/webcam/x.html",
+    )
+
+    def resolve(_id: str, _url: str) -> Resolved:
+        return Resolved(
+            url="https://hd-auth.skylinewebcams.com/live.m3u8?a=t68vrSECRETTOKEN",
+            stream_type="hls",
+            ttl_seconds=None,
+        )
+
+    cache = ResolveCache(resolve, clock=lambda: 0.0)
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.serving"):
+        status, _ct, _body = serve_stream(
+            "e1",
+            catalogue={"e1": entry},
+            cache=cache,
+            fetch=lambda _u: None,  # force the manifest-fetch-failed warning
+            base_url="http://x",
+        )
+    assert status == 502
+    assert "t68vrSECRETTOKEN" not in caplog.text
+    assert "hd-auth.skylinewebcams.com" in caplog.text

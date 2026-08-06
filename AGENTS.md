@@ -6,6 +6,11 @@
 
 @DEVELOPMENT.md
 
+**Every change must leave the repo better than it found it.** Fix what you touch —
+don't bolt new code onto known-bad old code, and don't leave a wart you noticed for
+the next person. (Surfacing a genuinely separate fix for a decision is fine; silently
+skipping it is not.)
+
 ## Architecture & Extension Points (v2)
 
 The app is two phases, decoupled by a catalogue snapshot:
@@ -15,7 +20,7 @@ The app is two phases, decoupled by a catalogue snapshot:
    build concurrency stays ~cap × `SCRAPE_WORKERS` no matter how many sources exist, and
    a source that crashes is isolated (reuses its last good set, the rest proceed). Each
    `Source.discover()` yields `Candidate`s → liveness filter (YouTube via the Data
-   API batch; everything else via a **fetch-verified probe** — `make_is_alive`
+   API batch; everything else via a **fetch-verified probe** — `make_liveness_check`
    actually fetches the HLS manifest and drops dead/404 and DASH cams) → per-source
    empty-guard (keeps the last good set if a source collapses ≥50%, needs 2 bad
    cycles to accept) → cross-source `dedupe()` (per-field merge) → YouTube cams get
@@ -27,8 +32,9 @@ The app is two phases, decoupled by a catalogue snapshot:
    through `/stream/<id>/m?u=…&sig=…`. Segments go **direct to the CDN by default**,
    with two per-host exceptions (their tokens are IP-bound to the fetcher):
    `_DIRECT_PLAYBACK_HOSTS` (pixelcaster) get a **302 passthrough** so the player
-   fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, skylinewebcams, earthcam)
-   get their **segments relayed** through `/stream/<id>/s?u=…&sig=…`.
+   fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, enhd.es,
+   skylinewebcams, earthcam, wetmet) get their **segments relayed** through
+   `/stream/<id>/s?u=…&sig=…`.
    **YouTube cams 302-redirect straight to googlevideo by default** (`PROXY_YOUTUBE`
    off): lower latency / less buffering on shallow live windows, but playback stops
    when the ~6h googlevideo token expires. `PROXY_YOUTUBE=true` proxies them like the
@@ -38,6 +44,11 @@ The app is two phases, decoupled by a catalogue snapshot:
 
 **`build_app()` in `app.py` is the wiring seam.** To extend:
 
+- **Candidates are normalised at the extraction seam** (`extract_candidates`): a
+  site-relative embed is resolved against its page (worldcams' `streams[]` array mixes
+  absolute iframes with paths), and a still-image target is dropped outright — a JPEG
+  "cam" can never be a stream, and counting it as `no-extractor` buries the hosts that
+  genuinely need one.
 - **Add a source** — implement the `Source` protocol (`sources/base.py`): a `name`
   and `discover() -> Iterable[Candidate]`. HTML scrapers subclass `HtmlScraperSource`
   (`sources/base.py`) and implement three hooks — `_page_urls()` (the cam detail-page
@@ -75,6 +86,21 @@ The app is two phases, decoupled by a catalogue snapshot:
   guard raises if a rule names a category outside `ALL_CATEGORIES`. `EXCLUDE_CATEGORIES`
   (config) post-filters the built catalogue by mapped category, across all sources. The
   full excludable set is `categories.ALL_CATEGORIES` — a test guards the README list matches.
+- **Diagnostics come free** — failures aggregate at two seams, so a new source or
+  extractor is diagnosable without extra work. Each source gets its **own `Fetcher`
+  carrying its own `FetchStats`** (wired in `build_app._source_fetcher`; the keys must
+  match `Source.name` and a startup check raises if they don't), and `catalogue`
+  reports that source's fetch outcome on its own `kept / discovered` line. Per-source,
+  NOT global: a fully blocked source makes very few requests (skyline: 11), so a global
+  "top N failing hosts" view ranks it below healthy sources' routine dead-cam probes —
+  the worse the outage, the better it hides. The second seam is the liveness probe,
+  which returns a **reason** (`models.NO_EXTRACTOR` / `RESOLVE_FAILED` /
+  `DEAD_MANIFEST` / `YT_OFFLINE`, optionally `":<detail>"`) that `filter_source`
+  counts. Log **hostnames** in aggregates; full URLs only via `serving.loggable()`,
+  which keeps the query string at DEBUG only — and the `resolve-failed:<detail>`
+  strings have embedded URL query strings stripped (`app._URL_QUERY`) before they
+  reach the INFO aggregate, since an extractor error often quotes its target URL,
+  token and all.
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and
   ALWAYS validate: a bad/unparseable value must log a `WARNING` at startup and fall
   back to the default, never crash or silently misbehave (e.g. `_int_env` warns on a
@@ -84,8 +110,38 @@ The app is two phases, decoupled by a catalogue snapshot:
 
 **Hard-won lessons (don't relearn these):**
 
-- Route ipcamlive **`player/player.php` URLs only** to the resolver; direct
-  `s*.ipcamlive.com/.../stream.m3u8` (the majority) must fall through to `DirectHls`.
+- **Anything that changes the egress IP (a VPN, a new host, a proxy) can get a scraper
+  blocked**, and the block does not look like an error. Two properties make it easy to
+  miss, which is why the per-source fetch/liveness aggregation above exists: a **total
+  block produces very few requests** (a source that can't read its index never reaches
+  its cam pages — skyline manages 11 fetches), so anything ranking failures globally
+  buries the worst outages; and a block **can return HTTP 200** (a challenge or consent
+  page), so "0 failed" is not the same as "nothing wrong" — fetched-ok-but-extracted-
+  nothing needs its own warning. A gradual decline rather than a cliff points at
+  progressive challenge/rate-limiting rather than a hard IP ban.
+- **A wedged googleapiclient connection survives retries.** httplib2's `Http.request`
+  evicts a pooled connection **only** on `socket.timeout` — a `BrokenPipeError` leaves
+  the dead socket in `self.connections`, so every later call reuses it and fails
+  instantly with no round trip, for the life of the client. `num_retries` on `.execute()`
+  does NOT fix this: googleapiclient retries via `http.request()`, which pulls the same
+  wedged connection back out of that dict. The Http object has to be **replaced** —
+  hence `YoutubeApiSource` taking a client **factory** and calling `_drop_client()` on
+  any failure (`build()` with `static_discovery=True` costs ~5 ms and no network). Note
+  `videos.list` (1 unit) can succeed while `search.list` (100 units) fails, so "one
+  YouTube call works" doesn't rule out quota.
+- **Every env var the docs promise must be in `docker-compose.yml`'s `environment:`
+  list**, or setting it in `.env` does nothing and silently falls back to the built-in
+  default — `SEARCH_QUERY` and `EXCLUDE_CATEGORIES` were missing for months. Compose
+  forwards `${VAR:-}` as an empty string when a var is absent, so `config._int_env`,
+  `_bool_env` and `fetch.resolve_scrape_workers` all treat **blank as unset**, not as an
+  invalid value to warn about.
+
+- Route ipcamlive **`player/player.php` URLs and bare `www.ipcamlive.com/<alias>` share
+  pages** to the resolver; direct `s*.ipcamlive.com/.../stream.m3u8` (the majority) must
+  fall through to `DirectHls`, so the alias predicate is anchored to the apex/www host.
+  A share page carries neither `address`/`streamid` nor a link to the player (it builds
+  the player client-side), so the resolver rewrites it to
+  `g0.ipcamlive.com/player/player.php?alias=<alias>` rather than scraping it.
 - Baltic's admin-ajax POST needs `Referer` = the **site origin** (`origin_of`), not
   the ajax URL — wrong Referer 403s silently.
 - YouTube extraction needs the deno/yt-dlp-ejs stack (the n-challenge); the Dockerfile
@@ -116,6 +172,18 @@ The app is two phases, decoupled by a catalogue snapshot:
   (server fetch gets only stub manifests, segments 404) + angelcam (auth) are
   unservable, dropped. Category + location come from the cam page's
   `/showing/<cat>` + `/location/<loc>` tags.
+- camscape/cxtvlive also embed **wetmet** widgets (`api.wetmet.net/widgets/stream/frame.php?uid=`);
+  the frame's inline script assigns the master playlist to `var vurl`, so `WetmetResolver`
+  just reads it. Wowza/Nimble signs it (`wmsAuthSign` + a `nimblesessionid` minted for
+  whoever fetched the manifest) and both propagate into the segment URLs — a segment
+  stripped of its query 404s — so `wetmet.net` is in `_PROXY_SEGMENT_HOSTS` and the
+  `Resolved` carries a short TTL rather than being cached indefinitely.
+- Re-probed and still unservable, so their candidates are expected `no-extractor` drops:
+  **ivideon** (`open.ivideon.com/embed/v3`, WebRTC — no HLS in the embed),
+  **rtsp.me** (builds the stream URL in a JS bundle at runtime; a server fetch gets only
+  stub manifests whose segments 404), **angelcam** (`v.angelcam.com/iframe`, JWT-gated),
+  **video.nest.com** (exposes only `nexusapi…/get_image`, a still JPEG, not a stream),
+  **console.rhombussystems.com** and **surfline** (403 without a Referer, 404 with).
 - EarthCam is a source via its **mapsearch JSON API** (no HTML scrape): `get_locations_network`
   (its own cams) + the global-bbox `get_locations` (the whole map, incl partners). It's a
   meta-aggregator — ~4000 mapped cams across 2400+ one-off sites — so `EarthCamSource._routable`
@@ -151,12 +219,13 @@ The app is two phases, decoupled by a catalogue snapshot:
   static HTML, or only a channel link) yield nothing and drop — so only the statically-
   extractable ones (~11) make it.
 
-**Security model:** every outbound fetch is validated by `fetch._resolve_validated_ip`
-(rejects non-http(s) and private/loopback/link-local/reserved IPs), an 8 MB cap, and
+**Security model:** every outbound fetch is validated by `fetch._validate_ip`
+(rejects non-http(s) and private/loopback/link-local/reserved IPs; `_resolve_validated_ip`
+is a thin wrapper for callers that don't need the rejection reason), an 8 MB cap, and
 **per-hop redirect re-validation** in the `requests` `Fetcher`; proxied `/m` and `/s`
 URLs are HMAC-signed (`signing.py`) so only server-emitted URLs are fetched.
 **DNS-rebinding TOCTOU is now closed in-app** (no firewall needed): the `Fetcher`
-resolves+validates the host once (`_resolve_validated_ip`) and then **pins the DNS
+resolves+validates the host once (`_validate_ip`) and then **pins the DNS
 resolution to that validated IP** for the connect, via a thread-local `getaddrinfo`
 override scoped by `_PinDNS` (the curl `--resolve` approach). urllib3 still connects
 to the hostname, so SNI, the `Host` header, and certificate validation stay bound to
@@ -167,8 +236,25 @@ fell back to the IP and Cloudflare 403'd it.) **Known residual** (mitigate by ru
 behind your own network controls): the **egress-proxy surface** — the proxy will sign
 and fetch any *public* host that appears in an upstream manifest; durable fix = a
 CDN-host allowlist on the rewritten `/m`/`/s` URLs.
+The rejection **reason** (`bad-scheme`/`dns-error`/`blocked-ip`) comes from that one
+lookup, never a second one — re-resolving to label a failure would be slow on the
+dead-domain long tail and, on flaky or round-robin DNS, could report a genuine
+unsafe-IP block as a transient `dns-error`, losing the only signal that says the guard
+fired.
+**Credentials must never reach the logs.** googleapiclient puts the developer key in
+the request URI and `HttpError.__str__` (which IS its `__repr__`) prints that URI — so
+`log.exception` on any Data API failure writes `YOUTUBE_API_KEY` to disk (a traceback
+ends in `str(exc)`). Never `log.exception` a googleapiclient error, and never `%s` one raw:
+log `type(exc).__name__` plus `logging_redaction.scrub(str(exc))`. `RedactingFilter`
+(installed on the root **handler** in `main()`, because a logger's filters only see
+records logged directly on it and every module uses a child logger) is the backstop,
+not the primary defence — fix the call site too.
 
 **Tests:** files are `*_test.py` (the `name-tests-test` hook rejects `test_*.py`).
+`tests/repo_hygiene_test.py` guards what ships in a public repo: shipped source must
+carry no dates, no named operator infrastructure (VPNs, uptime tooling, the edge
+proxy), and nothing matching the real Google-API-key shape — state the hazard in a
+comment, never the incident.
 The suite is **fully offline** — no real-endpoint/live tests (sources, resolvers,
 and the HTTP handler are exercised with injected fakes + real sockets on port 0).
 The gate is `pre-commit` (which runs `pytest` + a coverage floor as a `files:`-gated

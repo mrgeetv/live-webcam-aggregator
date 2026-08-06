@@ -78,7 +78,7 @@ def test_end_to_end_server() -> None:
 
     entries = build_catalogue(
         [FakeSource()],
-        is_alive=lambda c: True,
+        drop_reason_for=lambda c: None,
         youtube_live=_youtube_live,
         history={},
     )

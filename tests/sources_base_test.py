@@ -174,3 +174,48 @@ def test_channel_has_no_predisc_key():
     # NOTE: a bare channel link with no attribution prefix is a stream candidate
     cands = list(extract_candidates(html, page_url="https://s/x", source="cxtvlive"))
     assert cands and cands[0].predisc_key is None
+
+
+def test_relative_embed_is_resolved_against_the_page() -> None:
+    """worldcams' streams[] array mixes absolute iframes with site-relative paths.
+    A target with no host is useless to every extractor and shows up in the
+    diagnostics as an unattributable '?', so resolve it rather than emitting it raw."""
+    html = (
+        "streams[0] = '<iframe src=\"https://www.youtube.com/embed/3nyPER2kzqk\">';"
+        "streams[7] = '<iframe src=\"/player/live?id=9\">';"
+    )
+    cands = list(
+        extract_candidates(
+            html, page_url="https://worldcams.tv/ireland/dublin/temple-bar", source="w"
+        )
+    )
+    targets = [c.target_url for c in cands]
+    assert "https://worldcams.tv/player/live?id=9" in targets
+    assert not any(t.startswith("/") for t in targets)
+
+
+def test_still_image_entries_are_not_candidates() -> None:
+    """worldcams lists JPEG stills in streams[] beside real embeds. They can never be
+    a stream, so they must not become candidates — otherwise they inflate the
+    'no extractor' counts that are supposed to say which extractor to write next."""
+    html = (
+        "streams[0] = '<iframe src=\"https://www.youtube.com/embed/3nyPER2kzqk\">';"
+        "streams[449] = '<iframe src=\"/images/live/big/227.jpg\">';"
+    )
+    cands = list(
+        extract_candidates(
+            html, page_url="https://worldcams.tv/ireland/dublin/temple-bar", source="w"
+        )
+    )
+    # streams[] embeds pass through verbatim (the watch?v= normalisation is only on
+    # the fallback whole-page scan), so assert on the embed URL as-is.
+    assert [c.target_url for c in cands] == [
+        "https://www.youtube.com/embed/3nyPER2kzqk"
+    ]
+
+
+def test_image_check_uses_the_path_not_the_query() -> None:
+    """A real stream URL may carry .jpg in a query param (a poster image)."""
+    html = "streams[0] = '<iframe src=\"https://e.example/play?poster=/a/b.jpg\">';"
+    cands = list(extract_candidates(html, page_url="https://e.example/cam", source="w"))
+    assert len(cands) == 1

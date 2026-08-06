@@ -39,7 +39,9 @@ class Config:
 
 def _int_env(env: dict[str, str], key: str, default: int, minimum: int) -> int:
     raw = env.get(key)
-    if raw is None:
+    # Blank means unset, not invalid: docker-compose passes `FOO=${FOO:-}` through as an
+    # empty string when the var isn't in .env, and warning about that would be noise.
+    if raw is None or not raw.strip():
         return default
     try:
         return max(minimum, int(raw))
@@ -55,12 +57,15 @@ def _csv_set(raw: str) -> frozenset[str]:
 
 def _bool_env(env: dict[str, str], key: str, default: bool) -> bool:
     raw = env.get(key)
-    if raw is None:
+    # Blank means unset, not "false": same contract as _int_env — docker-compose passes
+    # `FOO=${FOO:-}` through as an empty string when the var isn't in .env, and that
+    # must take the DEFAULT, whatever the default is.
+    if raw is None or not raw.strip():
         return default
     v = raw.strip().lower()
     if v in ("true", "1"):
         return True
-    if v in ("false", "0", ""):
+    if v in ("false", "0"):
         return False
     log.warning(
         "invalid %s=%r — expected true/false; using default %s", key, raw, default

@@ -1,6 +1,8 @@
 import time
 from pathlib import Path
 
+import pytest
+
 from webcam_aggregator.extractors.direct_hls import DirectHls
 from webcam_aggregator.extractors.metatag import MetaTagExtractor
 from webcam_aggregator.extractors.ytdlp import YtDlpExtractor
@@ -53,3 +55,32 @@ def test_ytdlp_requests_hls_format():
     # must select an HLS-protocol format so we never get served a DASH .mpd
     assert "-f" in captured
     assert "m3u8" in captured[captured.index("-f") + 1]
+
+
+def test_wetmet_extracts_the_player_script_url() -> None:
+    """The widget's inline script assigns the master playlist to `vurl` (plain, not
+    JSON-escaped — the fixture mirrors the real page)."""
+    from webcam_aggregator.extractors.wetmet import WetmetResolver
+
+    body = (
+        "\t\t\t\tvar tuprun = false;\n"
+        "\t\t\t\tvar vurl = 'https://wmso-us-ea1.wetmet.net/live/289-06-01"
+        "/playlist.m3u8?wmsAuthSign=abc123';\n"
+    )
+    out = WetmetResolver(lambda _u: body).resolve(
+        "https://api.wetmet.net/widgets/stream/frame.php?uid=deadbeef"
+    )
+    assert out.url == (
+        "https://wmso-us-ea1.wetmet.net/live/289-06-01/playlist.m3u8?wmsAuthSign=abc123"
+    )
+    assert out.stream_type == "hls"
+    assert out.ttl_seconds == 300  # wmsAuthSign is time-limited
+
+
+def test_wetmet_missing_m3u8_raises() -> None:
+    from webcam_aggregator.extractors.wetmet import WetmetResolver
+
+    with pytest.raises(ValueError, match="no m3u8"):
+        WetmetResolver(lambda _u: "<html>offline</html>").resolve(
+            "https://api.wetmet.net/widgets/stream/frame.php?uid=deadbeef"
+        )

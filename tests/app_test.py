@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from webcam_aggregator.app import origin_of
+from webcam_aggregator.models import Candidate
 
 # ---------------------------------------------------------------------------
 # origin_of helper — must return the scheme+host with trailing slash
@@ -69,26 +70,84 @@ def test_baltic_post_sends_xhr_and_site_origin_referer() -> None:
     assert headers["X-Requested-With"] == "XMLHttpRequest"
 
 
-def test_is_alive_fetch_verifies_hls() -> None:
-    from webcam_aggregator.app import make_is_alive
-    from webcam_aggregator.extractors.base import Resolved
-    from webcam_aggregator.models import Candidate
-
-    def resolve(_id: str, _url: str) -> Resolved:
-        return Resolved(url="https://cdn.x/p.m3u8", stream_type="hls", ttl_seconds=None)
-
-    cand = Candidate(
+def _probe_candidate(target: str = "https://x/p.m3u8") -> Candidate:
+    return Candidate(
         title="x",
         angle_key=None,
         category=None,
         source="s",
         source_page_url="https://x/p",
-        target_url="https://x/p.m3u8",
+        target_url=target,
         predisc_key=None,
     )
-    assert make_is_alive(resolve, lambda u: "#EXTM3U\nseg.ts\n")(cand) is True
-    assert make_is_alive(resolve, lambda u: None)(cand) is False  # dead/404
-    assert make_is_alive(resolve, lambda u: "<?xml?><MPD/>")(cand) is False  # DASH
+
+
+def test_liveness_check_fetch_verifies_hls() -> None:
+    from webcam_aggregator.app import make_liveness_check
+    from webcam_aggregator.extractors.base import Resolved
+
+    def resolve(_id: str, _url: str) -> Resolved:
+        return Resolved(url="https://cdn.x/p.m3u8", stream_type="hls", ttl_seconds=None)
+
+    cand = _probe_candidate()
+    assert make_liveness_check(resolve, lambda u: "#EXTM3U\nseg.ts\n")(cand) is None
+    assert make_liveness_check(resolve, lambda u: None)(cand) == "dead-manifest"
+    assert (
+        make_liveness_check(resolve, lambda u: "<?xml?><MPD/>")(cand) == "dead-manifest"
+    )  # DASH
+
+
+def test_liveness_check_distinguishes_missing_extractor() -> None:
+    """A gap in our coverage must not read the same as a cam being off air."""
+    from webcam_aggregator.app import NoExtractorError, make_liveness_check
+    from webcam_aggregator.extractors.base import Resolved
+
+    def resolve(_id: str, url: str) -> Resolved:
+        raise NoExtractorError(f"no extractor for {url}")
+
+    check = make_liveness_check(resolve, lambda u: None)
+    assert check(_probe_candidate("https://rtsp.me/abc")) == "no-extractor"
+
+
+def test_liveness_check_reports_resolver_detail() -> None:
+    """The detail is what separates "yt-dlp is broken" from "this cam is off air"."""
+    from webcam_aggregator.app import make_liveness_check
+    from webcam_aggregator.extractors.base import Resolved
+
+    def resolve(_id: str, _url: str) -> Resolved:
+        raise ValueError("yt-dlp failed: Sign in to confirm you are not a bot")
+
+    reason = make_liveness_check(resolve, lambda u: None)(_probe_candidate())
+    assert reason is not None
+    assert reason.startswith("resolve-failed:")
+    assert "Sign in to confirm" in reason
+
+
+def test_liveness_check_detail_strips_url_query_strings() -> None:
+    """An extractor error can embed its target URL, token-carrying query and all; the
+    detail is aggregated at INFO, where the rule is hostnames/paths only."""
+    from webcam_aggregator.app import make_liveness_check
+    from webcam_aggregator.extractors.base import Resolved
+
+    def resolve(_id: str, _url: str) -> Resolved:
+        raise ValueError(
+            "no address/streamid in https://g0.ipcamlive.com/player/player.php?alias=TOKEN"
+        )
+
+    reason = make_liveness_check(resolve, lambda u: None)(_probe_candidate())
+    assert reason is not None
+    assert "TOKEN" not in reason
+    assert "g0.ipcamlive.com/player/player.php" in reason
+
+
+def test_liveness_check_trusts_non_hls_resolve() -> None:
+    from webcam_aggregator.app import make_liveness_check
+    from webcam_aggregator.extractors.base import Resolved
+
+    def resolve(_id: str, _url: str) -> Resolved:
+        return Resolved(url="https://cdn.x/v.mp4", stream_type="mp4", ttl_seconds=None)
+
+    assert make_liveness_check(resolve, lambda u: None)(_probe_candidate()) is None
 
 
 def test_build_app_starts_without_youtube_when_client_init_fails(
@@ -126,6 +185,54 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
     assert st["unhealthy"] == []
     assert st["sources"], "expected the source roster to be listed at cold start"
     assert all(
-        s == {"kept": 0, "discovered": 0, "crashed": False}
+        s
+        == {
+            "kept": 0,
+            "discovered": 0,
+            "crashed": False,
+            "status": "unknown",
+            "fetches": {},
+            "drop_reasons": {},
+            "no_extractor_hosts": {},
+        }
         for s in st["sources"].values()
     )
+
+
+def test_health_sources_carry_the_diagnosis() -> None:
+    """The uptime check's response body should be enough to diagnose a dead source
+    without going to the logs."""
+    from webcam_aggregator.app import (
+        _source_status_for,  # pyright: ignore[reportPrivateUsage]
+    )
+    from webcam_aggregator.catalogue import Hist
+
+    history = {
+        "skyline": Hist(
+            last_raw_kept=0,
+            last_discovered=0,
+            last_crashed=False,
+            last_fetches={"www.skylinewebcams.com": {"http-403": 11}},
+            drop_reasons={"dead-manifest": 12},
+            no_extractor_hosts={"rtsp.me": 3},
+        )
+    }
+    st = _source_status_for(["skyline"], history)
+    src = st["sources"]["skyline"]
+    assert src["fetches"] == {"www.skylinewebcams.com": {"http-403": 11}}
+    assert src["drop_reasons"] == {"dead-manifest": 12}
+    assert src["no_extractor_hosts"] == {"rtsp.me": 3}
+    assert st["unhealthy"] == ["skyline"]
+
+
+def test_health_detail_is_a_copy_not_a_live_reference() -> None:
+    """A /health request must not hand out the rebuild thread's mutable state."""
+    from webcam_aggregator.app import (
+        _source_status_for,  # pyright: ignore[reportPrivateUsage]
+    )
+    from webcam_aggregator.catalogue import Hist
+
+    h = Hist(last_raw_kept=1, drop_reasons={"dead-manifest": 1})
+    st = _source_status_for(["skyline"], {"skyline": h})
+    h.drop_reasons["dead-manifest"] = 999
+    assert st["sources"]["skyline"]["drop_reasons"] == {"dead-manifest": 1}

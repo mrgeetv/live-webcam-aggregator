@@ -130,3 +130,32 @@ def test_readme_documents_every_category():
     readme = (Path(__file__).resolve().parent.parent / "README.md").read_text("utf-8")
     missing = [c for c in ALL_CATEGORIES if c not in readme]
     assert not missing, f"categories missing from README: {missing}"
+
+
+def test_every_youtube_category_maps_to_a_real_group() -> None:
+    """youtube_api._YT_CATEGORIES and categories._MAP/_NATIVE_YT are two tables that
+    have to agree. When they drifted, Gaming / Film & Animation / Howto & Style /
+    Comedy all fell into the single "Unmapped Category" bucket, so a user could only
+    exclude all four together (or none). Every YouTube category must land on a real,
+    individually-excludable group."""
+    from webcam_aggregator.categories import ALL_CATEGORIES, UNMAPPED, map_category
+    from webcam_aggregator.sources.youtube_api import (
+        _YT_CATEGORIES,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    for yt_name in _YT_CATEGORIES.values():
+        mapped = map_category(yt_name)
+        assert mapped != UNMAPPED, f"YouTube category {yt_name!r} is unmapped"
+        assert (
+            mapped in ALL_CATEGORIES
+        ), f"{yt_name!r} -> {mapped!r} not a real category"
+
+
+def test_gaming_is_individually_excludable() -> None:
+    """The specific thing that prompted this: live gaming streams sneak in via the
+    YouTube search and must be droppable without taking cartoons and comedy with them.
+    """
+    from webcam_aggregator.categories import map_category, unknown_categories
+
+    assert map_category("Gaming") == "Gaming"
+    assert unknown_categories(frozenset({"gaming"})) == frozenset()

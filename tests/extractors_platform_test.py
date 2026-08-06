@@ -82,3 +82,39 @@ def test_baltic_ttl_derived_from_epoch_ms() -> None:
     expected = future_epoch_ms // 1000 - int(time.time())
     # Allow ±2 s for execution time
     assert abs(out.ttl_seconds - expected) <= 2
+
+
+def test_ipcamlive_alias_page_is_rewritten_to_the_player() -> None:
+    """The landing page builds its player client-side, so scraping it yields nothing.
+    The alias in the path is all the player URL needs."""
+    fetched: list[str] = []
+
+    def fetch(url: str) -> str:
+        fetched.append(url)
+        return 'var address = "https://s2.ipcamlive.com/"; var streamid = "zzz";'
+
+    out = IpcamliveResolver(fetch).resolve("https://www.ipcamlive.com/campusmartius")
+    assert fetched == ["https://g0.ipcamlive.com/player/player.php?alias=campusmartius"]
+    assert out.url == "https://s2.ipcamlive.com/streams/zzz/stream.m3u8"
+
+
+def test_ipcamlive_player_url_is_passed_through_unchanged() -> None:
+    fetched: list[str] = []
+
+    def fetch(url: str) -> str:
+        fetched.append(url)
+        return 'var address = "https://s2.ipcamlive.com/"; var streamid = "zzz";'
+
+    player = "https://g1.ipcamlive.com/player/player.php?alias=x"
+    IpcamliveResolver(fetch).resolve(player)
+    assert fetched == [player]
+
+
+def test_ipcamlive_offline_alias_reports_the_player_url() -> None:
+    """The error should name the URL actually fetched, not the alias page."""
+    import pytest
+
+    with pytest.raises(ValueError, match="player.php"):
+        IpcamliveResolver(lambda _u: "<html>nothing</html>").resolve(
+            "https://www.ipcamlive.com/elhovo"
+        )

@@ -8,9 +8,24 @@ services:
     init: true
     ports:
       - "23457:8000"
+    # Compose does not forward .env automatically: every documented var must be listed
+    # here or setting it has no effect at all and the built-in default is used silently.
+    # Blank (var absent from .env) is treated as unset by config.py, not as invalid.
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
       - CATALOGUE_INTERVAL_HOURS=${CATALOGUE_INTERVAL_HOURS:-6}
+      - SEARCH_QUERY=${SEARCH_QUERY:-}
+      - EXCLUDE_CATEGORIES=${EXCLUDE_CATEGORIES:-}
+      - MAX_PARALLEL_SOURCES=${MAX_PARALLEL_SOURCES:-}
+      - SCRAPE_WORKERS=${SCRAPE_WORKERS:-}
+      - PROXY_YOUTUBE=${PROXY_YOUTUBE:-}
     restart: unless-stopped
+    # json-file logging is unbounded by default and will grow until it fills the disk,
+    # long after it has become too large to read. 5x10 MB is ~a fortnight at INFO.
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"

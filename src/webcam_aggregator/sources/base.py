@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from dataclasses import replace
 from typing import Generic, Protocol, TypeVar
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 from ..fetch import FetcherProtocol, thread_map
 from ..models import Candidate
@@ -22,6 +22,10 @@ _WC_STREAMS = re.compile(r"""streams\[(\d+)\]\s*=\s*(["'])((?:\\.|(?!\2).)*)\2""
 _WC_PLAYER = re.compile(r"worldcams\.tv\\?/player\?url=([^\"'\s\\]+)")
 _IFRAME_SRC = re.compile(r'src=\\?"([^"\\]+)')
 _IFRAME_TAG = re.compile(r'<iframe[^>]+src=["\']([^"\']+)["\']', re.I)
+# Still-image "cams" listed alongside real streams (worldcams' streams[] array, the
+# EarthCam long tail). Matched on the URL PATH so a query string can't false-trigger.
+_IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.I)
+
 # Strips entire "Source: <a ...>...</a>" attribution block (including the URL inside)
 _ATTRIBUTION_BLOCK = re.compile(
     r"Source:\s*(?:&nbsp;\s*)?<a\b[^>]*>.*?</a>", re.I | re.S
@@ -138,7 +142,17 @@ def extract_candidates(html: str, *, page_url: str, source: str) -> Iterator[Can
         multi = len(plain) > 1
         pairs = [(str(i) if multi else None, t) for i, t in enumerate(plain)]
     seen: set[str] = set()
-    for key, target in pairs:
+    for key, raw_target in pairs:
+        # Embeds are sometimes site-relative (worldcams' streams[] array mixes absolute
+        # iframes with paths). Resolve against the page rather than dropping them: a
+        # relative player path is perfectly usable once absolute, and a target with no
+        # host is useless to every extractor and unattributable in the diagnostics.
+        target = urljoin(page_url, raw_target)
+        # A still image is not a stream and never will be — worldcams and the EarthCam
+        # long tail both list JPEG cams alongside real ones. Drop them here so they
+        # don't inflate the "no extractor" counts that say which extractor to write next.
+        if _IMAGE_EXT.search(urlsplit(target).path):
+            continue
         if target in seen:
             continue
         seen.add(target)

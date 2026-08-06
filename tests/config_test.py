@@ -3,6 +3,9 @@ import logging
 import pytest
 
 from webcam_aggregator import config
+from webcam_aggregator.config import (
+    _bool_env,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 def test_requires_api_key():
@@ -126,3 +129,39 @@ def test_legacy_v1_var_removed_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
         config.load({"YOUTUBE_API_KEY": "k", "MAX_VIDEOS_PER_CYCLE": "500"})
     assert "MAX_VIDEOS_PER_CYCLE" in caplog.text
+
+
+def test_blank_env_vars_mean_unset_not_invalid(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """docker-compose passes `FOO=${FOO:-}` through as an empty string when the var
+    isn't in .env — that must take the default silently, not warn about a bad value."""
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
+        c = config.load(
+            {
+                "YOUTUBE_API_KEY": "k",
+                "CATALOGUE_INTERVAL_HOURS": "",
+                "MAX_PARALLEL_SOURCES": "",
+                "PROXY_YOUTUBE": "",
+                "SEARCH_QUERY": "",
+                "EXCLUDE_CATEGORIES": "",
+            }
+        )
+    assert c.catalogue_interval_hours == 6
+    assert c.max_parallel_sources == 4
+    assert c.proxy_youtube is False
+    assert c.search_query  # falls back to the built-in default
+    assert c.exclude_categories == frozenset()
+    assert "invalid" not in caplog.text
+
+
+def test_whitespace_only_env_var_also_means_unset() -> None:
+    c = config.load({"YOUTUBE_API_KEY": "k", "MAX_PARALLEL_SOURCES": "   "})
+    assert c.max_parallel_sources == 4
+
+
+def test_blank_bool_takes_the_default_not_false() -> None:
+    """Blank means UNSET for bools too — with PROXY_YOUTUBE defaulting False, "" ->
+    False looks right by coincidence; the trap is any future bool defaulting True."""
+    assert _bool_env({"X": ""}, "X", True) is True
+    assert _bool_env({"X": "  "}, "X", True) is True
