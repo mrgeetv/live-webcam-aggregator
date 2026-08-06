@@ -8,11 +8,20 @@ services:
     init: true
     ports:
       - "23457:8000"
+    # Every var README/DEVELOPMENT document must be forwarded, or setting it in .env
+    # does nothing at all and silently falls back to the built-in default. SEARCH_QUERY
+    # and EXCLUDE_CATEGORIES were missing, so a tuned query in .env was never applied.
+    # Blank (var absent from .env) is treated as unset by config.py, not as invalid.
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
       - CATALOGUE_INTERVAL_HOURS=${CATALOGUE_INTERVAL_HOURS:-6}
+      - SEARCH_QUERY=${SEARCH_QUERY:-}
+      - EXCLUDE_CATEGORIES=${EXCLUDE_CATEGORIES:-}
+      - MAX_PARALLEL_SOURCES=${MAX_PARALLEL_SOURCES:-}
+      - SCRAPE_WORKERS=${SCRAPE_WORKERS:-}
+      - PROXY_YOUTUBE=${PROXY_YOUTUBE:-}
     restart: unless-stopped
     # Unbounded json-file logging reached 87 MB and choked `docker logs` during the
     # 2026-08 incident investigation. 5x10 MB is roughly a fortnight at INFO.

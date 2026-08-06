@@ -990,3 +990,17 @@ def test_classify_http_error_uses_status() -> None:
 
 def test_classify_http_error_without_response_falls_back() -> None:
     assert _classify(requests.HTTPError()) == "conn-error"
+
+
+def test_scrape_workers_blank_means_unset(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """docker-compose forwards `${SCRAPE_WORKERS:-}` as "" when it isn't in .env —
+    that must take the default silently, not warn about a bad int."""
+    import os as _os
+
+    monkeypatch.setenv("SCRAPE_WORKERS", "")
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.fetch"):
+        result = resolve_scrape_workers()
+    assert result == min(16, (_os.cpu_count() or 2) * 4)
+    assert caplog.text == ""

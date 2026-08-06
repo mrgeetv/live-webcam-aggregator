@@ -115,6 +115,12 @@ The app is two phases, decoupled by a catalogue snapshot:
   failure (`build()` with `static_discovery=True` costs ~5 ms and no network). Note
   `videos.list` (1 unit) can succeed while `search.list` (100 units) fails, so "one
   YouTube call works" doesn't rule out quota.
+- **Every env var the docs promise must be in `docker-compose.yml`'s `environment:`
+  list**, or setting it in `.env` does nothing and silently falls back to the built-in
+  default — `SEARCH_QUERY` and `EXCLUDE_CATEGORIES` were missing for months. Compose
+  forwards `${VAR:-}` as an empty string when a var is absent, so `config._int_env`,
+  `_bool_env` and `fetch.resolve_scrape_workers` all treat **blank as unset**, not as an
+  invalid value to warn about.
 
 - Route ipcamlive **`player/player.php` URLs only** to the resolver; direct
   `s*.ipcamlive.com/.../stream.m3u8` (the majority) must fall through to `DirectHls`.

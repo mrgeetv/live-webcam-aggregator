@@ -32,7 +32,8 @@ def resolve_scrape_workers() -> int:
     SCRAPE_WORKERS env var (e.g. raise it on a small box where the build is slow)."""
     default = min(16, (os.cpu_count() or 2) * 4)
     raw = os.environ.get("SCRAPE_WORKERS")
-    if raw is None:
+    # Blank means unset (docker-compose forwards `${SCRAPE_WORKERS:-}` as ""), not bad.
+    if raw is None or not raw.strip():
         return default
     try:
         v = int(raw)

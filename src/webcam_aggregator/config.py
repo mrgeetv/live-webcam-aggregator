@@ -39,7 +39,9 @@ class Config:
 
 def _int_env(env: dict[str, str], key: str, default: int, minimum: int) -> int:
     raw = env.get(key)
-    if raw is None:
+    # Blank means unset, not invalid: docker-compose passes `FOO=${FOO:-}` through as an
+    # empty string when the var isn't in .env, and warning about that would be noise.
+    if raw is None or not raw.strip():
         return default
     try:
         return max(minimum, int(raw))

@@ -40,7 +40,12 @@ docker compose down && docker compose up -d --build
 
 ### Environment Variables
 
-Configure these in your `.env` file or pass directly to docker-compose:
+Configure these in your `.env` file or pass directly to docker-compose.
+
+> **Adding a new var?** It must also be added to `docker-compose.yml`'s `environment:`
+> list. Compose does **not** forward `.env` automatically — a var that's documented but
+> not listed there is silently ignored, and the app falls back to its built-in default.
+> Use the `${VAR:-}` form; blank is treated as unset, not as an invalid value.
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
