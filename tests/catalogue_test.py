@@ -48,12 +48,12 @@ class _Src:
         return self._c
 
 
-def _always_alive(_c: Candidate) -> bool:
-    return True
+def _always_alive(_c: Candidate) -> str | None:
+    return None
 
 
-def _never_alive(_c: Candidate) -> bool:
-    return False
+def _never_alive(_c: Candidate) -> str | None:
+    return "dead-manifest"
 
 
 def _no_yt_live(_ids: Iterable[str]) -> dict[str, str]:
@@ -181,8 +181,8 @@ def test_non_yt_dead_candidate_excluded() -> None:
         target="https://example.com/dead.m3u8",
     )
 
-    def is_alive(c: Candidate) -> bool:
-        return c.predisc_key == "hls:alive"
+    def is_alive(c: Candidate) -> str | None:
+        return None if c.predisc_key == "hls:alive" else "dead-manifest"
 
     src = _Src("worldcams", [alive_cand, dead_cand])
     result = build_catalogue(
@@ -487,10 +487,10 @@ def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
         source="cxtvlive", key="hls:ok", target="https://example.com/ok.m3u8"
     )
 
-    def _selective_alive(c: Candidate) -> bool:
+    def _selective_alive(c: Candidate) -> str | None:
         if "boom" in c.target_url:
             raise RuntimeError("liveness boom")
-        return True
+        return None
 
     history: dict[str, Hist] = {
         "worldcams": Hist(last_count=1, shrink_streak=0, last_kept=[boom])
@@ -705,3 +705,103 @@ def test_hist_records_fetches() -> None:
     assert history["skyline"].last_fetches == {
         "www.skylinewebcams.com": {"http-403": 11}
     }
+
+
+# ---------------------------------------------------------------------------
+# Liveness drop reasons — diagnosing the partial-degradation case (1700 -> 520)
+# ---------------------------------------------------------------------------
+
+
+def _drops(reason: str) -> Callable[[Candidate], str | None]:
+    def check(_c: Candidate) -> str | None:
+        return reason
+
+    return check
+
+
+def test_drop_breakdown_on_the_source_line(caplog: pytest.LogCaptureFixture) -> None:
+    cands = [_make_candidate(key=f"hls:{i}") for i in range(3)]
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("skyline", cands)],
+            is_alive=_drops("dead-manifest"),
+            youtube_live=_no_yt_live,
+            history={},
+        )
+    assert "skyline: 0 kept / 3 discovered" in caplog.text
+    assert "dropped 3 (3x dead-manifest)" in caplog.text
+
+
+def test_no_extractor_hosts_are_named(caplog: pytest.LogCaptureFixture) -> None:
+    """The top-hosts line tells you which extractor is worth writing next."""
+    cands = [
+        _make_candidate(key="hls:a", target="https://rtsp.me/a"),
+        _make_candidate(key="hls:b", target="https://rtsp.me/b"),
+        _make_candidate(key="hls:c", target="https://ivideon.com/c"),
+    ]
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("camscape", cands)],
+            is_alive=_drops("no-extractor"),
+            youtube_live=_no_yt_live,
+            history={},
+        )
+    assert "no extractor for 3 candidate(s)" in caplog.text
+    assert "2x rtsp.me" in caplog.text
+    assert "1x ivideon.com" in caplog.text
+
+
+def test_resolve_failure_detail_is_reported(caplog: pytest.LogCaptureFixture) -> None:
+    """Separates "yt-dlp is broken" from "the cam is off air"."""
+    cands = [_make_candidate(key=f"hls:{i}") for i in range(2)]
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("worldcams", cands)],
+            is_alive=_drops("resolve-failed:yt-dlp failed: Sign in to confirm"),
+            youtube_live=_no_yt_live,
+            history={},
+        )
+    assert "dropped 2 (2x resolve-failed)" in caplog.text
+    assert "top resolve failures" in caplog.text
+    assert "Sign in to confirm" in caplog.text
+
+
+def test_clean_source_logs_no_drop_suffix(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("explore", [_make_candidate(key="hls:x")])],
+            is_alive=_always_alive,
+            youtube_live=_no_yt_live,
+            history={},
+        )
+    assert "explore: 1 kept / 1 discovered" in caplog.text
+    assert "dropped" not in caplog.text
+
+
+def test_yt_offline_is_counted_as_a_reason() -> None:
+    """A YouTube API outage spikes this across every source at once."""
+    history: dict[str, Hist] = {}
+    cam = _make_candidate(
+        source="youtube-api",
+        key="yt:DEAD001",
+        target="https://www.youtube.com/watch?v=DEAD001",
+    )
+    build_catalogue(
+        [_Src("youtube-api", [cam])],
+        is_alive=_always_alive,
+        youtube_live=_no_yt_live,
+        history=history,
+    )
+    assert history["youtube-api"].drop_reasons == {"yt-offline": 1}
+
+
+def test_hist_records_drop_reasons_and_hosts() -> None:
+    history: dict[str, Hist] = {}
+    build_catalogue(
+        [_Src("camscape", [_make_candidate(key="hls:a", target="https://rtsp.me/a")])],
+        is_alive=_drops("no-extractor"),
+        youtube_live=_no_yt_live,
+        history=history,
+    )
+    assert history["camscape"].drop_reasons == {"no-extractor": 1}
+    assert history["camscape"].no_extractor_hosts == {"rtsp.me": 1}

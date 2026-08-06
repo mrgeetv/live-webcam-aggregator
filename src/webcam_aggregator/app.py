@@ -25,7 +25,13 @@ from .extractors.skyline import SkylineResolver
 from .extractors.ytdlp import YtDlpExtractor
 from .fetch import MANIFEST_MAX_BYTES, Fetcher, FetcherPostProtocol, FetchStats
 from .logging_redaction import RedactingFilter, scrub
-from .models import Candidate, CatalogueEntry
+from .models import (
+    DEAD_MANIFEST,
+    NO_EXTRACTOR,
+    RESOLVE_FAILED,
+    Candidate,
+    CatalogueEntry,
+)
 from .registry import Registry
 from .serving import render_playlist, serve_child_manifest, serve_segment, serve_stream
 from .sources.camscape import CamscapeSource
@@ -113,6 +119,13 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
     return Registry(rules)
 
 
+class NoExtractorError(ValueError):
+    """No registry rule matched the target URL.
+
+    Its own type so liveness can tell "we have no code for this site" (a gap to fill)
+    apart from "the extractor ran and failed" (a cam that is probably just off air)."""
+
+
 def make_resolve(
     registry: Registry, extractors: dict[str, Extractor]
 ) -> Callable[[str, str], Resolved]:
@@ -120,7 +133,7 @@ def make_resolve(
         name = registry.match(target_url)
         if name is None:
             log.debug("no extractor matched target %s", target_url)
-            raise ValueError(f"no extractor for {target_url}")
+            raise NoExtractorError(f"no extractor for {target_url}")
         return extractors[name].resolve(target_url)
 
     return resolve
@@ -142,27 +155,42 @@ class CatalogueStore:
         return self._snapshot
 
 
-def make_is_alive(
+# Reason labels live in models.py — see the note there. Returned instead of a bare
+# False so the catalogue can count them per source; a dropped cam used to be recorded
+# only in a per-cam DEBUG line, which meant nothing at all once DEBUG was off.
+_DETAIL_CHARS = 80
+
+
+def make_liveness_check(
     resolve: Callable[[str, str], Resolved],
     fetch: Callable[[str], str | None],
-) -> Callable[[Candidate], bool]:
-    def is_alive(c: Candidate) -> bool:
+) -> Callable[[Candidate], str | None]:
+    """Build the build-time liveness probe: None if the cam is live, else the reason
+    it was dropped."""
+
+    def check(c: Candidate) -> str | None:
         try:
             r = resolve("probe", c.target_url)
+        except NoExtractorError:
+            # Kept at DEBUG as well as counted: the aggregate says how many, but only
+            # the URLs tell you what to write an extractor FOR.
+            log.debug("no extractor for %s", c.target_url)
+            return NO_EXTRACTOR
         except Exception as exc:
             log.debug("liveness resolve failed for %s: %s", c.target_url, exc)
-            return False
+            # The detail separates "yt-dlp is broken" from "this cam is off air".
+            return f"{RESOLVE_FAILED}:{str(exc)[:_DETAIL_CHARS]}"
         if r.stream_type != "hls":
-            return True  # mp4/other: trust the resolve
+            return None  # mp4/other: trust the resolve
         # Actually fetch the HLS manifest — DirectHls/ipcamlive resolve without
         # fetching, so this is what catches offline (404) and DASH streams.
         manifest = fetch(r.url)
         if not manifest or "#EXTM3U" not in manifest:
             log.debug("liveness: dead/non-HLS manifest %s -> %s", c.target_url, r.url)
-            return False
-        return True
+            return DEAD_MANIFEST
+        return None
 
-    return is_alive
+    return check
 
 
 def make_handler(
@@ -314,6 +342,48 @@ def run_http_server(
     log.info("HTTP server listening on port %d", port)
 
 
+def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, Any]:
+    """The /health `sources` block: per-source RAW outcome of the last rebuild plus the
+    sources that failed this cycle (crashed, or 0 kept).
+
+    Values are the raw result even when the empty-guard is masking a failure in the
+    served playlist, so a dying source surfaces here immediately. Cold start (nothing
+    recorded yet) lists every source at zero; the top-level `ready` distinguishes that
+    from a real 0. Pure, so the payload shape is testable without building the app."""
+    sources: dict[str, Any] = {}
+    unhealthy: list[str] = []
+    for name in expected:
+        h = hist.get(name)
+        if h is None:
+            # Not attempted yet (cold start, before the first rebuild records it):
+            # placeholder zeros, never counted unhealthy — `ready` gates that window.
+            sources[name] = {
+                "kept": 0,
+                "discovered": 0,
+                "crashed": False,
+                "fetches": {},
+                "drop_reasons": {},
+                "no_extractor_hosts": {},
+            }
+            continue
+        sources[name] = {
+            "kept": h.last_raw_kept,
+            "discovered": h.last_discovered,
+            "crashed": h.last_crashed,
+            # Why, not just what: the fetch outcomes per host plus the liveness drop
+            # reasons, so an uptime check's response body is enough to diagnose a source
+            # without going to the logs. /health is LAN-only (the edge Caddyfile routes
+            # only /webcam/playlist and /webcam/stream/*), and FetchStats caps the host
+            # keys, so the detail is safe to expose. Copies, not live references.
+            "fetches": {host: dict(o) for host, o in h.last_fetches.items()},
+            "drop_reasons": dict(h.drop_reasons),
+            "no_extractor_hosts": dict(h.no_extractor_hosts),
+        }
+        if h.last_crashed or h.last_raw_kept == 0:
+            unhealthy.append(name)
+    return {"sources": sources, "unhealthy": unhealthy}
+
+
 def build_app(
     cfg: config.Config,
 ) -> tuple[
@@ -397,7 +467,7 @@ def build_app(
     # delay=0: liveness verify-fetches hit CDNs (not the scraped sites) and run
     # concurrently, so politeness spacing isn't needed here.
     probe_fetcher = Fetcher(delay=0.0, retries=1)
-    is_alive = make_is_alive(resolve, probe_fetcher.get)
+    is_alive = make_liveness_check(resolve, probe_fetcher.get)
 
     def youtube_live(ids: Any) -> dict[str, str]:
         if yt_source is None:
@@ -419,34 +489,13 @@ def build_app(
     expected_sources = [s.name for s in active_sources]
 
     def source_status() -> dict[str, Any]:
-        # Per-source RAW outcome of the last rebuild + the sources that failed this cycle
-        # (crashed, or 0 kept), for /health monitoring. The values are the raw result
-        # even when the empty-guard is masking a failure in the served playlist, so a
-        # dying source surfaces here immediately. Cold-start (nothing recorded yet) shows
-        # all sources at zero; the top-level `ready` distinguishes that from a real 0.
         # Copy defensively: build_catalogue mutates `history` from the rebuild thread,
         # so a live /health request must not crash on "changed size during iteration".
         try:
             hist = dict(history)
         except RuntimeError:
             hist = {}
-        sources: dict[str, Any] = {}
-        unhealthy: list[str] = []
-        for name in expected_sources:
-            h = hist.get(name)
-            if h is None:
-                # Not attempted yet (cold start, before the first rebuild records it):
-                # placeholder zeros, never counted unhealthy — `ready` gates that window.
-                sources[name] = {"kept": 0, "discovered": 0, "crashed": False}
-                continue
-            sources[name] = {
-                "kept": h.last_raw_kept,
-                "discovered": h.last_discovered,
-                "crashed": h.last_crashed,
-            }
-            if h.last_crashed or h.last_raw_kept == 0:
-                unhealthy.append(name)
-        return {"sources": sources, "unhealthy": unhealthy}
+        return _source_status_for(expected_sources, hist)
 
     def drain_source_stats(name: str) -> dict[str, dict[str, int]]:
         stats = source_stats.get(name)
