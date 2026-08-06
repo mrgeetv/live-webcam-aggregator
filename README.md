@@ -131,9 +131,17 @@ alert when `$.healthy` isn't `true`.
   "ready": true,
   "healthy": false,
   "streams": 812,
-  "unhealthy_sources": ["worldcams"],
+  "unhealthy_sources": ["skyline"],
   "sources": {
-    "worldcams": {"kept": 0, "discovered": 0, "crashed": true}
+    "skyline": {
+      "kept": 0,
+      "discovered": 0,
+      "crashed": false,
+      "status": "dead",
+      "fetches": {"www.skylinewebcams.com": {"http-403": 11}},
+      "drop_reasons": {},
+      "no_extractor_hosts": {}
+    }
   },
   "rss_mb": 210.4
 }
@@ -148,6 +156,19 @@ Fields:
   `kept` (passed liveness), `crashed` (`discover`/liveness threw). These stay raw even
   when the empty-guard is still serving a failed source's last good set, so a dying
   source surfaces immediately.
+- `sources.<name>.status` — `ok`, `degraded` (collapsed, guard serving the last good
+  set), `dead` (0 cams or crashed), or `unknown` before the first rebuild.
+- `sources.<name>.fetches` — that source's HTTP outcomes for the cycle, per host
+  (`{"host": {"http-403": 11}}`). This is **why** a source came back empty: `0 ok`
+  means blocked or unreachable, while all-`ok` alongside `discovered: 0` means the
+  fetches succeeded and nothing could be extracted (a challenge page returning 200, or
+  a site redesign).
+- `sources.<name>.drop_reasons` — why discovered candidates didn't make the catalogue:
+  `no-extractor`, `resolve-failed`, `dead-manifest`, `yt-offline`.
+- `sources.<name>.no_extractor_hosts` — hosts with no matching extractor, worst first.
+
+`/health` carries operational detail, so keep it off the public internet — expose only
+`/playlist.m3u8` and `/stream/*` at your reverse proxy.
 
 The states you'll see:
 

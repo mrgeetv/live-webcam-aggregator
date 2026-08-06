@@ -210,15 +210,72 @@ Available levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`
 
 ### Catalogue & resolve logging
 
-At `INFO`, each catalogue rebuild logs per-source `kept / discovered` counts and any
-source collapse (empty-guard). At `DEBUG`, it also logs dropped/failed resolves and
-liveness-probe failures. Live process memory (`rss_mb`) and the per-source **raw**
-outcome of the last rebuild (`kept`/`discovered`/`crashed`) are exposed on the `/health`
-endpoint, along with a `healthy` rollup (`ready` **and** no source crashed or returned 0
-this cycle) and `unhealthy_sources` for a single uptime check. The per-source counts stay
-raw even when the empty-guard is still serving a failed source's last good set, so a
-failure surfaces immediately. See the *Monitoring* section in the README for the payload
-shape and the state table.
+**`INFO` is enough to diagnose a failing source** — `DEBUG` is for writing extractors,
+not for incidents. Each rebuild logs one line per source carrying the fetch outcome and
+the drop breakdown:
+
+```text
+skyline: 1668 kept / 2566 discovered — dropped 898 (612x dead-manifest, 210x resolve-failed)
+skyline: no extractor for 76 candidate(s) — top hosts: 40x rtsp.me, 20x ivideon.com
+skyline: top resolve failures — 214x yt-dlp failed: Sign in to confirm you're not a bot
+```
+
+A source that comes back empty says **why**, at `WARNING`, in one of two shapes:
+
+```text
+skyline: 0 kept / 0 discovered — 11 fetched, 0 ok (11x http-403 www.skylinewebcams.com)
+skyline: 0 kept / 0 discovered — 11 fetched ok but extracted 0 URLs (site layout changed, or a soft block returning 200?)
+```
+
+The second is the one a pure failure counter can't see: a Cloudflare/consent
+interstitial is an HTTP 200, so "0 failed" would be true and completely misleading.
+It also covers a site redesign. Fetch outcomes are counted **per source** (each source
+has its own `Fetcher`), because a fully blocked source makes very few requests — skyline
+manages 11 — so a global "top failing hosts" view would rank it below healthy sources'
+routine dead-cam probes. Outcome labels: `ok`, `http-<status>`, `timeout`, `conn-error`,
+`dns-error`, `blocked-ip`, `bad-scheme`, `too-large`, `too-many-redirects`,
+`redirect-no-location`, `unexpected-redirect`.
+
+Each source also carries a coarse `status` (`ok` / `degraded` / `dead`). A **change**
+logs one line, so `grep WARNING` reads as an incident timeline rather than the same
+line every 6h — and a source at zero warns **every** cycle it stays there:
+
+```text
+skyline: ok -> dead (0 kept, was 1668)
+skyline: still dead (0 kept / 0 discovered)
+skyline: dead -> ok (1654 kept)
+```
+
+Liveness drop reasons are `no-extractor` (a gap in our coverage), `resolve-failed` (an
+extractor ran and failed), `dead-manifest` (resolved but the HLS is dead or isn't HLS)
+and `yt-offline` (the YouTube Data API says it isn't live — a spike across every source
+at once means a Data API problem, not a cam problem).
+
+At `DEBUG` you additionally get per-request access logging (minus `/health`) and the
+per-cam detail behind those counts: the specific target URLs with no extractor, each
+failed resolve, and each dead manifest. `DEBUG` also stops CDN session tokens being
+trimmed out of the serving warnings (see *Secrets in logs* below).
+
+Live process memory (`rss_mb`) and the per-source **raw** outcome of the last rebuild
+(`kept`/`discovered`/`crashed`/`status`, plus `fetches`, `drop_reasons` and
+`no_extractor_hosts`) are exposed on the `/health` endpoint, along with a `healthy`
+rollup (`ready` **and** no source crashed or returned 0 this cycle) and
+`unhealthy_sources` for a single uptime check. The per-source counts stay raw even when
+the empty-guard is still serving a failed source's last good set, so a failure surfaces
+immediately. See the *Monitoring* section in the README for the payload shape and the
+state table.
+
+### Secrets in logs
+
+`YOUTUBE_API_KEY` must never be logged, at any level. googleapiclient puts the developer
+key in the request URI and `HttpError.__str__` prints that URI, so `log.exception` on a
+Data API failure writes the key to disk — it did, once, on 2026-07-14. Log
+`type(exc).__name__` plus `logging_redaction.scrub(str(exc))` instead;
+`RedactingFilter` on the root handler is the backstop, not the primary defence.
+
+Third-party CDN tokens are treated differently: `serving.loggable()` trims resolved
+upstream URLs to `scheme://host/path` at `INFO`, and keeps the full URL at `DEBUG`,
+where the token is usually the thing you're debugging.
 
 A source category we have no mapping for logs a `WARNING` (once per distinct value) and
 the cam lands in the `Unmapped Category` group rather than `Other`; camscape and skyline

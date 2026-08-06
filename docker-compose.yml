@@ -14,3 +14,10 @@ services:
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
       - CATALOGUE_INTERVAL_HOURS=${CATALOGUE_INTERVAL_HOURS:-6}
     restart: unless-stopped
+    # Unbounded json-file logging reached 87 MB and choked `docker logs` during the
+    # 2026-08 incident investigation. 5x10 MB is roughly a fortnight at INFO.
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"

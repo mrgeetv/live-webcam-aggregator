@@ -75,6 +75,18 @@ The app is two phases, decoupled by a catalogue snapshot:
   guard raises if a rule names a category outside `ALL_CATEGORIES`. `EXCLUDE_CATEGORIES`
   (config) post-filters the built catalogue by mapped category, across all sources. The
   full excludable set is `categories.ALL_CATEGORIES` — a test guards the README list matches.
+- **Diagnostics come free** — failures aggregate at two seams, so a new source or
+  extractor is diagnosable without extra work. Each source gets its **own `Fetcher`
+  carrying its own `FetchStats`** (wired in `build_app._source_fetcher`; the keys must
+  match `Source.name` and a startup check raises if they don't), and `catalogue`
+  reports that source's fetch outcome on its own `kept / discovered` line. Per-source,
+  NOT global: a fully blocked source makes very few requests (skyline: 11), so a global
+  "top N failing hosts" view ranks it below healthy sources' routine dead-cam probes —
+  the worse the outage, the better it hides. The second seam is the liveness probe,
+  which returns a **reason** (`models.NO_EXTRACTOR` / `RESOLVE_FAILED` /
+  `DEAD_MANIFEST` / `YT_OFFLINE`, optionally `":<detail>"`) that `filter_source`
+  counts. Log **hostnames** in aggregates; full URLs only via `serving.loggable()`,
+  which keeps the query string at DEBUG only.
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and
   ALWAYS validate: a bad/unparseable value must log a `WARNING` at startup and fall
   back to the default, never crash or silently misbehave (e.g. `_int_env` warns on a
@@ -83,6 +95,22 @@ The app is two phases, decoupled by a catalogue snapshot:
   `.env.example`.
 
 **Hard-won lessons (don't relearn these):**
+
+- A host-level VPN (ProtonVPN DE, 2026-07-31 → 08-05) put egress in Germany.
+  skylinewebcams progressively blocked it — 1700 cams → ~520 → **0 for five consecutive
+  rebuilds** — and the logs said only `skyline: 0 kept / 0 discovered`, five times. That
+  silence is what the per-source fetch/liveness aggregation above exists to fix. Two
+  lessons stuck: a **total block produces very few requests**, so anything that ranks
+  failures globally hides the worst outages; and a block **can return HTTP 200** (a
+  challenge or consent page), so "0 failed" is not the same as "nothing wrong" —
+  fetched-ok-but-extracted-nothing needs its own warning. The gradual ramp rather than a
+  cliff is the tell for progressive challenge rather than a hard IP ban.
+- The same VPN wedged the **googleapiclient** socket: httplib2 raises `EPIPE` **without
+  closing the connection**, so a stale keep-alive kept failing instantly (~3 ms, no round
+  trip) for several 6-hourly cycles. The warning blamed API quota, which cost hours of
+  investigation. **Still unfixed** — a `num_retries` on `.execute()`, or rebuilding the
+  client per rebuild, would close it. Note `videos.list` (1 unit) can succeed while
+  `search.list` (100 units) fails, so "one YouTube call works" doesn't rule out quota.
 
 - Route ipcamlive **`player/player.php` URLs only** to the resolver; direct
   `s*.ipcamlive.com/.../stream.m3u8` (the majority) must fall through to `DirectHls`.
@@ -151,12 +179,13 @@ The app is two phases, decoupled by a catalogue snapshot:
   static HTML, or only a channel link) yield nothing and drop — so only the statically-
   extractable ones (~11) make it.
 
-**Security model:** every outbound fetch is validated by `fetch._resolve_validated_ip`
-(rejects non-http(s) and private/loopback/link-local/reserved IPs), an 8 MB cap, and
+**Security model:** every outbound fetch is validated by `fetch._validate_ip`
+(rejects non-http(s) and private/loopback/link-local/reserved IPs; `_resolve_validated_ip`
+is a thin wrapper for callers that don't need the rejection reason), an 8 MB cap, and
 **per-hop redirect re-validation** in the `requests` `Fetcher`; proxied `/m` and `/s`
 URLs are HMAC-signed (`signing.py`) so only server-emitted URLs are fetched.
 **DNS-rebinding TOCTOU is now closed in-app** (no firewall needed): the `Fetcher`
-resolves+validates the host once (`_resolve_validated_ip`) and then **pins the DNS
+resolves+validates the host once (`_validate_ip`) and then **pins the DNS
 resolution to that validated IP** for the connect, via a thread-local `getaddrinfo`
 override scoped by `_PinDNS` (the curl `--resolve` approach). urllib3 still connects
 to the hostname, so SNI, the `Host` header, and certificate validation stay bound to
@@ -167,6 +196,11 @@ fell back to the IP and Cloudflare 403'd it.) **Known residual** (mitigate by ru
 behind your own network controls): the **egress-proxy surface** — the proxy will sign
 and fetch any *public* host that appears in an upstream manifest; durable fix = a
 CDN-host allowlist on the rewritten `/m`/`/s` URLs.
+The rejection **reason** (`bad-scheme`/`dns-error`/`blocked-ip`) comes from that one
+lookup, never a second one — re-resolving to label a failure would be slow on the
+dead-domain long tail and, on flaky or round-robin DNS, could report a genuine
+unsafe-IP block as a transient `dns-error`, losing the only signal that says the guard
+fired.
 **Credentials must never reach the logs.** googleapiclient puts the developer key in
 the request URI and `HttpError.__str__` (which IS its `__repr__`) prints that URI — so
 `log.exception` on any Data API failure writes `YOUTUBE_API_KEY` to disk. It did, once,
