@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import threading
 import time
 import urllib.parse
 from http.server import ThreadingHTTPServer
 from typing import Any
+
+import pytest
 
 from webcam_aggregator.app import CatalogueStore, make_handler
 from webcam_aggregator.cache import ResolveCache
@@ -287,3 +290,44 @@ def test_health_not_healthy_during_cold_start() -> None:
         assert health["healthy"] is False
     finally:
         server.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Access log — the uptime check polls /health every 60s (4k lines/day)
+# ---------------------------------------------------------------------------
+
+
+def _raw_get(port: int, path: str) -> None:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request("GET", path)
+    conn.getresponse().read()
+    conn.close()
+
+
+def test_health_requests_are_not_access_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, _ = _make_store()
+    server, port = _start_server(store)
+    try:
+        with caplog.at_level(logging.DEBUG, logger="webcam-aggregator"):
+            _get_health(port)
+            _raw_get(port, "/playlist.m3u8")  # ordering barrier + positive control
+    finally:
+        server.shutdown()
+    assert "/health" not in caplog.text
+    assert "/playlist.m3u8" in caplog.text
+
+
+def test_health_suppression_cannot_be_triggered_by_a_crafted_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A raw-request-line substring test would let a client hide its own request."""
+    store, _ = _make_store()
+    server, port = _start_server(store)
+    try:
+        with caplog.at_level(logging.DEBUG, logger="webcam-aggregator"):
+            _raw_get(port, "/playlist.m3u8?x=/health")
+    finally:
+        server.shutdown()
+    assert "/playlist.m3u8" in caplog.text

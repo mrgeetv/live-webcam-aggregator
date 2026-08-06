@@ -318,6 +318,16 @@ def make_handler(
             self.wfile.write(body)
 
         @override
+        def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+            # The uptime check polls /health every 60s — 4k lines/day of pure noise
+            # that buries everything else whenever DEBUG is on to investigate.
+            # Match the PARSED path: testing a substring of the raw request line would
+            # let /stream/x?y=/health suppress its own access-log entry.
+            if urllib.parse.urlsplit(self.path).path == "/health":
+                return
+            super().log_request(code, size)
+
+        @override
         def log_message(self, format: str, *args: Any) -> None:
             log.debug(format, *args)
 

@@ -12,6 +12,24 @@ from .signing import sign, verify
 log = logging.getLogger("webcam-aggregator.serving")
 
 _HLS_CT = "application/vnd.apple.mpegurl"
+
+
+def loggable(url: str) -> str:
+    """An upstream URL trimmed to scheme://host/path for logging.
+
+    Resolved CDN URLs carry live session credentials in the query string —
+    skyline's `?a=<token>`, baltic's session URL, and with PROXY_YOUTUBE on a
+    googlevideo URL with its ~6h playback token. These warnings fire at the INFO
+    default and land in a log kept for weeks, so the query goes.
+
+    At DEBUG the full URL is kept: when you are actually debugging one stream, the
+    token is the point, and DEBUG is opt-in and short-lived."""
+    if log.isEnabledFor(logging.DEBUG):
+        return url
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
 _NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.M)
 
 # Hosts whose HLS sessions are bound to the IP that fetches the manifest. Proxying
@@ -229,7 +247,7 @@ def serve_stream(
         return (404, "text/plain", b"unknown stream")
     resolved = cache.get(entry_id, entry.target_url)
     if resolved is None:
-        log.warning("resolve failed: %s -> %s", entry_id, entry.target_url)
+        log.warning("resolve failed: %s -> %s", entry_id, loggable(entry.target_url))
         return (502, "text/plain", b"resolve failed")
     if resolved.stream_type == "mp4":
         return (302, resolved.url, b"")  # redirect; 2nd field is the Location
@@ -244,11 +262,11 @@ def serve_stream(
         return (302, resolved.url, b"")
     manifest = fetch(resolved.url)
     if manifest is None:
-        log.warning("manifest fetch failed: %s -> %s", entry_id, resolved.url)
+        log.warning("manifest fetch failed: %s -> %s", entry_id, loggable(resolved.url))
         return (502, "text/plain", b"upstream manifest fetch failed")
     if "#EXTM3U" not in manifest:
         # Not HLS (e.g. a DASH .mpd or an error page) — don't serve it as HLS.
-        log.warning("non-HLS manifest: %s -> %s", entry_id, resolved.url)
+        log.warning("non-HLS manifest: %s -> %s", entry_id, loggable(resolved.url))
         return (502, "text/plain", b"not an HLS stream")
     manifest = truncate_to_live_edge(manifest)
     body = rewrite_manifest(
@@ -299,6 +317,6 @@ def serve_segment(
         return (403, "text/plain", None, b"bad signature")
     result = fetch_segment(upstream_url, range_header)
     if result is None:
-        log.warning("segment fetch failed: %s -> %s", entry_id, upstream_url)
+        log.warning("segment fetch failed: %s -> %s", entry_id, loggable(upstream_url))
         return (502, "text/plain", None, b"segment fetch failed")
     return result
