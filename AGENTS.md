@@ -39,6 +39,11 @@ The app is two phases, decoupled by a catalogue snapshot:
 
 **`build_app()` in `app.py` is the wiring seam.** To extend:
 
+- **Candidates are normalised at the extraction seam** (`extract_candidates`): a
+  site-relative embed is resolved against its page (worldcams' `streams[]` array mixes
+  absolute iframes with paths), and a still-image target is dropped outright — a JPEG
+  "cam" can never be a stream, and counting it as `no-extractor` buries the hosts that
+  genuinely need one.
 - **Add a source** — implement the `Source` protocol (`sources/base.py`): a `name`
   and `discover() -> Iterable[Candidate]`. HTML scrapers subclass `HtmlScraperSource`
   (`sources/base.py`) and implement three hooks — `_page_urls()` (the cam detail-page
