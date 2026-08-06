@@ -96,23 +96,23 @@ The app is two phases, decoupled by a catalogue snapshot:
 
 **Hard-won lessons (don't relearn these):**
 
-- A host-level VPN (ProtonVPN DE, 2026-07-31 → 08-05) put egress in Germany.
-  skylinewebcams progressively blocked it — 1700 cams → ~520 → **0 for five consecutive
-  rebuilds** — and the logs said only `skyline: 0 kept / 0 discovered`, five times. That
-  silence is what the per-source fetch/liveness aggregation above exists to fix. Two
-  lessons stuck: a **total block produces very few requests**, so anything that ranks
-  failures globally hides the worst outages; and a block **can return HTTP 200** (a
-  challenge or consent page), so "0 failed" is not the same as "nothing wrong" —
-  fetched-ok-but-extracted-nothing needs its own warning. The gradual ramp rather than a
-  cliff is the tell for progressive challenge rather than a hard IP ban.
-- The same VPN wedged the **googleapiclient** socket. httplib2's `Http.request` evicts a
-  pooled connection **only** on `socket.timeout` — a `BrokenPipeError` leaves the dead
-  socket in `self.connections`, so every later call reuses it and fails instantly (~3 ms,
-  no round trip) for cycle after cycle. `num_retries` on `.execute()` does NOT fix this:
-  googleapiclient retries via `http.request()`, which pulls the same wedged connection
-  back out of that dict. The Http object has to be **replaced** — hence
-  `YoutubeApiSource` taking a client **factory** and calling `_drop_client()` on any
-  failure (`build()` with `static_discovery=True` costs ~5 ms and no network). Note
+- **Anything that changes the egress IP (a VPN, a new host, a proxy) can get a scraper
+  blocked**, and the block does not look like an error. Two properties make it easy to
+  miss, which is why the per-source fetch/liveness aggregation above exists: a **total
+  block produces very few requests** (a source that can't read its index never reaches
+  its cam pages — skyline manages 11 fetches), so anything ranking failures globally
+  buries the worst outages; and a block **can return HTTP 200** (a challenge or consent
+  page), so "0 failed" is not the same as "nothing wrong" — fetched-ok-but-extracted-
+  nothing needs its own warning. A gradual decline rather than a cliff points at
+  progressive challenge/rate-limiting rather than a hard IP ban.
+- **A wedged googleapiclient connection survives retries.** httplib2's `Http.request`
+  evicts a pooled connection **only** on `socket.timeout` — a `BrokenPipeError` leaves
+  the dead socket in `self.connections`, so every later call reuses it and fails
+  instantly with no round trip, for the life of the client. `num_retries` on `.execute()`
+  does NOT fix this: googleapiclient retries via `http.request()`, which pulls the same
+  wedged connection back out of that dict. The Http object has to be **replaced** —
+  hence `YoutubeApiSource` taking a client **factory** and calling `_drop_client()` on
+  any failure (`build()` with `static_discovery=True` costs ~5 ms and no network). Note
   `videos.list` (1 unit) can succeed while `search.list` (100 units) fails, so "one
   YouTube call works" doesn't rule out quota.
 - **Every env var the docs promise must be in `docker-compose.yml`'s `environment:`
@@ -213,8 +213,8 @@ unsafe-IP block as a transient `dns-error`, losing the only signal that says the
 fired.
 **Credentials must never reach the logs.** googleapiclient puts the developer key in
 the request URI and `HttpError.__str__` (which IS its `__repr__`) prints that URI — so
-`log.exception` on any Data API failure writes `YOUTUBE_API_KEY` to disk. It did, once,
-on 2026-07-14. Never `log.exception` a googleapiclient error and never `%s` one raw:
+`log.exception` on any Data API failure writes `YOUTUBE_API_KEY` to disk (a traceback
+ends in `str(exc)`). Never `log.exception` a googleapiclient error, and never `%s` one raw:
 log `type(exc).__name__` plus `logging_redaction.scrub(str(exc))`. `RedactingFilter`
 (installed on the root **handler** in `main()`, because a logger's filters only see
 records logged directly on it and every module uses a child logger) is the backstop,

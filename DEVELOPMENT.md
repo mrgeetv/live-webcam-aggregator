@@ -274,7 +274,7 @@ state table.
 
 `YOUTUBE_API_KEY` must never be logged, at any level. googleapiclient puts the developer
 key in the request URI and `HttpError.__str__` prints that URI, so `log.exception` on a
-Data API failure writes the key to disk — it did, once, on 2026-07-14. Log
+Data API failure writes the key to disk (a traceback ends in `str(exc)`). Log
 `type(exc).__name__` plus `logging_redaction.scrub(str(exc))` instead;
 `RedactingFilter` on the root handler is the backstop, not the primary defence.
 

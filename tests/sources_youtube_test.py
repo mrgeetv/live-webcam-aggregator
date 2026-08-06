@@ -110,8 +110,8 @@ class _LeakyError(Exception):
 def test_search_warning_names_the_real_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A BrokenPipeError must not be reported as an API quota problem — that guess
-    sent the 2026-08 outage investigation down the wrong path for hours."""
+    """A BrokenPipeError must not be reported as an API quota problem: it carries no
+    HTTP status at all, and the fix is completely different."""
     src = YoutubeApiSource(
         lambda: _FakeClient(search=[BrokenPipeError(32, "Broken pipe")]), query="cam"
     )
@@ -172,8 +172,8 @@ def test_live_ids_filters_offair() -> None:
 # ---------------------------------------------------------------------------
 # Wedged-connection recovery. httplib2 evicts a pooled connection only on
 # socket.timeout, so a BrokenPipeError leaves the dead socket in place and every
-# later call reuses it — that kept YouTube dead for five consecutive rebuilds on
-# 2026-08-04/05. num_retries can't help; the Http object has to be replaced.
+# later call reuses it, for the life of the client. num_retries can't help; the
+# Http object has to be replaced.
 # ---------------------------------------------------------------------------
 
 

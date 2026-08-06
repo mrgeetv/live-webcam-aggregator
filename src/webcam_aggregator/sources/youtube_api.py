@@ -36,10 +36,10 @@ class YoutubeApiSource:
     Takes a client FACTORY, not a client, and drops the cached client whenever a call
     fails. httplib2 evicts a connection from its pool only on `socket.timeout` — a
     `BrokenPipeError` leaves the dead socket in place, so every later call reuses it and
-    fails instantly (~3 ms, no round trip). That wedged YouTube for five consecutive
-    rebuilds during the 2026-08 incident, and `num_retries` cannot fix it because
-    googleapiclient retries through the same pooled connection. Replacing the client
-    replaces the Http object, and with it the pool.
+    fails instantly (no round trip) for as long as the client lives, which across a
+    long-lived process means cycle after cycle. `num_retries` does not help: googleapiclient
+    retries through that same pooled connection. Replacing the client replaces the Http
+    object, and with it the pool.
     """
 
     name: str = "youtube-api"
@@ -87,11 +87,11 @@ class YoutubeApiSource:
             try:
                 resp = self._client.search().list(**params).execute()
             except Exception as exc:
-                # Report what ACTUALLY went wrong. This used to blame API quota for every
-                # failure, which sent the 2026-08 outage investigation down the wrong
-                # path — the real cause was a BrokenPipeError on a stale keep-alive
-                # socket. NEVER format the exception raw: googleapiclient's HttpError
-                # __str__ prints the request URI, which carries the developer key.
+                # Report what ACTUALLY went wrong. Blaming API quota for every failure
+                # misdiagnoses the common ones — a wedged socket raises BrokenPipeError
+                # with no HTTP status at all. NEVER format the exception raw:
+                # googleapiclient's HttpError __str__ prints the request URI, which
+                # carries the developer key.
                 status = getattr(getattr(exc, "resp", None), "status", None)
                 hint = (
                     " — likely API quota; raise the quota or narrow SEARCH_QUERY"

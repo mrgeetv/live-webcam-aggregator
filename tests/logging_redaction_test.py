@@ -8,7 +8,7 @@ from googleapiclient.errors import HttpError
 
 from webcam_aggregator.logging_redaction import RedactingFilter, scrub
 
-# The exact key shape that leaked into the container log on 2026-07-14. Fake value.
+# A fake value in the real AIza… shape.
 _FAKE_KEY = "AIzaSyFAKEKEY_notarealkey_1234567890"
 
 

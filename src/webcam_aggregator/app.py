@@ -499,8 +499,8 @@ def build_app(
         except Exception as exc:
             # A YouTube quota/transient error must not abort the whole rebuild —
             # just treat YT cams as offline this cycle (scrapers still build).
-            # No log.exception: HttpError's str carries the developer key, and that is
-            # exactly how it leaked into the container log on 2026-07-14.
+            # No log.exception: a traceback ends in str(exc), and HttpError's str
+            # prints the request URI, which carries the developer key.
             log.warning(
                 "youtube live_ids failed; treating YT cams as offline — %s: %s",
                 type(exc).__name__,

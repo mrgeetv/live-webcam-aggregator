@@ -8,9 +8,8 @@ services:
     init: true
     ports:
       - "23457:8000"
-    # Every var README/DEVELOPMENT document must be forwarded, or setting it in .env
-    # does nothing at all and silently falls back to the built-in default. SEARCH_QUERY
-    # and EXCLUDE_CATEGORIES were missing, so a tuned query in .env was never applied.
+    # Compose does not forward .env automatically: every documented var must be listed
+    # here or setting it has no effect at all and the built-in default is used silently.
     # Blank (var absent from .env) is treated as unset by config.py, not as invalid.
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -23,8 +22,8 @@ services:
       - SCRAPE_WORKERS=${SCRAPE_WORKERS:-}
       - PROXY_YOUTUBE=${PROXY_YOUTUBE:-}
     restart: unless-stopped
-    # Unbounded json-file logging reached 87 MB and choked `docker logs` during the
-    # 2026-08 incident investigation. 5x10 MB is roughly a fortnight at INFO.
+    # json-file logging is unbounded by default and will grow until it fills the disk,
+    # long after it has become too large to read. 5x10 MB is ~a fortnight at INFO.
     logging:
       driver: json-file
       options:

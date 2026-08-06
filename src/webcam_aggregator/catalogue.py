@@ -280,9 +280,10 @@ def build_catalogue(
                 h.last_count if h.last_count is not None else "n/a",
             )
         elif status == "dead" and not warned:
-            # Still down, and nothing above said so. The empty-guard used to fall silent
-            # after AGREE_TO_ACCEPT cycles, so the 2026-08-05 outage logged NOTHING for a
-            # full day. A source at zero warns every single cycle it stays there.
+            # Still down, and nothing above said so. The empty-guard stops warning once
+            # it accepts the zero (after AGREE_TO_ACCEPT cycles), which would make a
+            # long outage go quiet exactly when it matters. A source at zero warns every
+            # single cycle it stays there.
             log.warning("%s: still dead (%d kept / %d discovered)", name, 0, discovered)
         h.status = status
         if crashed and h.last_kept:

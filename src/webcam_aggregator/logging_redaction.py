@@ -5,11 +5,11 @@ import re
 from typing import Any, override
 
 # googleapiclient puts the developer key in the request URI, and HttpError.__str__ (which
-# IS its __repr__) prints that URI — so logging such an exception writes the key to disk.
-# That already happened once, on 2026-07-14, via app.py's live_ids handler. The call
-# sites are fixed individually; this filter is the backstop so a future one can't regress
-# it. Unlike the CDN playback tokens in serving.py, this is OUR long-lived credential —
-# it is redacted at every level, including DEBUG.
+# IS its __repr__) prints that URI — so ANY log of such an exception writes the key to
+# disk. log.exception is the easiest way to do it by accident, since a traceback ends in
+# str(exc). Call sites are responsible for scrubbing; this filter is the backstop that
+# stops a new one regressing it. Unlike the CDN playback tokens in serving.py, this is
+# our own long-lived credential, so it is redacted at every level, DEBUG included.
 _KEY_PARAM = re.compile(r"(?i)((?:developer_?key|api_?key|key)=)[^&\s\"']+")
 
 

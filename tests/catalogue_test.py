@@ -592,7 +592,7 @@ def test_title_fallback_never_overrides_source_category() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-source fetch outcome — an empty source must say WHY (2026-08 incident)
+# Per-source fetch outcome — an empty source must say WHY
 # ---------------------------------------------------------------------------
 
 
@@ -610,7 +610,7 @@ def _stats(
 def test_blocked_source_names_the_host_and_status(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Skyline's real shape on 2026-08-04: 11 fetches, all 403, nothing discovered."""
+    """A blocked scraper's real shape: a handful of fetches, all 403, nothing found."""
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
         build_catalogue(
             [_Src("skyline", [])],
@@ -808,8 +808,8 @@ def test_hist_records_drop_reasons_and_hosts() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Source status — the empty-guard used to fall silent (2026-08-05: a full day
-# of zero-cam rebuilds logged nothing at all)
+# Source status — the empty-guard falls silent once it accepts a zero, which would
+# leave a long outage logging nothing at all
 # ---------------------------------------------------------------------------
 
 
