@@ -24,6 +24,7 @@ from .extractors.metatag import MetaTagExtractor
 from .extractors.skyline import SkylineResolver
 from .extractors.ytdlp import YtDlpExtractor
 from .fetch import MANIFEST_MAX_BYTES, Fetcher, FetcherPostProtocol
+from .logging_redaction import RedactingFilter, scrub
 from .models import Candidate, CatalogueEntry
 from .registry import Registry
 from .serving import render_playlist, serve_child_manifest, serve_segment, serve_stream
@@ -344,8 +345,14 @@ def build_app(
         yt_client = googleapiclient.discovery.build(
             "youtube", "v3", developerKey=cfg.youtube_api_key
         )
-    except Exception:
-        log.exception("YouTube client init failed; youtube-api source disabled")
+    except Exception as exc:
+        # No log.exception: the traceback's last line is str(exc), and googleapiclient
+        # puts the developer key in the discovery-doc URL it reports.
+        log.warning(
+            "YouTube client init failed; youtube-api source disabled — %s: %s",
+            type(exc).__name__,
+            scrub(str(exc)),
+        )
         yt_client = None
 
     yt_source = (
@@ -379,10 +386,16 @@ def build_app(
             return {}
         try:
             return yt_source.live_ids(ids)
-        except Exception:
+        except Exception as exc:
             # A YouTube quota/transient error must not abort the whole rebuild —
             # just treat YT cams as offline this cycle (scrapers still build).
-            log.exception("youtube live_ids failed; treating YT cams as offline")
+            # No log.exception: HttpError's str carries the developer key, and that is
+            # exactly how it leaked into the container log on 2026-07-14.
+            log.warning(
+                "youtube live_ids failed; treating YT cams as offline — %s: %s",
+                type(exc).__name__,
+                scrub(str(exc)),
+            )
             return {}
 
     expected_sources = [s.name for s in active_sources]
@@ -445,6 +458,11 @@ def main() -> None:
     logging.getLogger("webcam-aggregator").setLevel(
         getattr(logging, cfg.log_level, logging.INFO)
     )
+    # Backstop for credentials in log output. On the HANDLER, not the logger: a logger's
+    # filters only see records logged directly on it, and every module here logs through
+    # a child logger (webcam-aggregator.catalogue, .fetch, .sources.youtube, …).
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RedactingFilter())
     store, cache, rebuild_once, source_status = build_app(cfg)
 
     manifest_fetcher = Fetcher(delay=0.0, retries=1, byte_cap=MANIFEST_MAX_BYTES)

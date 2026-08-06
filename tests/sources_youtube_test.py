@@ -1,9 +1,12 @@
 import logging
-from typing import Any
+from typing import Any, override
 
 import pytest
 
 from webcam_aggregator.sources.youtube_api import YoutubeApiSource
+
+# Fake, non-functional key in the real AIza… shape.
+_FAKE_KEY = "AIzaSyFAKEKEY_notarealkey_1234567890"
 
 
 class _Req:
@@ -81,6 +84,60 @@ def test_discover_stops_on_quota_error(caplog: pytest.LogCaptureFixture) -> None
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
         assert list(src.discover()) == []
     assert "youtube search stopped" in caplog.text
+
+
+class _Resp403:
+    status: int = 403
+
+
+class _Denied(Exception):
+    resp: _Resp403 = _Resp403()
+
+
+class _LeakyError(Exception):
+    """An exception whose str carries a key, like googleapiclient's HttpError."""
+
+    @override
+    def __str__(self) -> str:
+        return (
+            "requesting https://youtube.googleapis.com/youtube/v3/search"
+            f"?q=cam&key={_FAKE_KEY}"
+        )
+
+
+def test_search_warning_names_the_real_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A BrokenPipeError must not be reported as an API quota problem — that guess
+    sent the 2026-08 outage investigation down the wrong path for hours."""
+    src = YoutubeApiSource(
+        _FakeClient(search=[BrokenPipeError(32, "Broken pipe")]), query="cam"
+    )
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
+        assert list(src.discover()) == []
+    assert "BrokenPipeError" in caplog.text
+    assert "Broken pipe" in caplog.text
+    assert "HTTP n/a" in caplog.text
+    assert "quota" not in caplog.text.lower()
+
+
+def test_search_warning_mentions_quota_only_on_403(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    src = YoutubeApiSource(_FakeClient(search=[_Denied("forbidden")]), query="cam")
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
+        assert list(src.discover()) == []
+    assert "HTTP 403" in caplog.text
+    assert "quota" in caplog.text.lower()
+
+
+def test_search_warning_scrubs_the_api_key(caplog: pytest.LogCaptureFixture) -> None:
+    """Non-vacuous: the exception's str CONTAINS a key and it must not survive."""
+    src = YoutubeApiSource(_FakeClient(search=[_LeakyError()]), query="cam")
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
+        assert list(src.discover()) == []
+    assert _FAKE_KEY not in caplog.text
+    assert "key=REDACTED" in caplog.text
 
 
 def test_live_ids_filters_offair() -> None:

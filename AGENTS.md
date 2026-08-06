@@ -167,6 +167,14 @@ fell back to the IP and Cloudflare 403'd it.) **Known residual** (mitigate by ru
 behind your own network controls): the **egress-proxy surface** — the proxy will sign
 and fetch any *public* host that appears in an upstream manifest; durable fix = a
 CDN-host allowlist on the rewritten `/m`/`/s` URLs.
+**Credentials must never reach the logs.** googleapiclient puts the developer key in
+the request URI and `HttpError.__str__` (which IS its `__repr__`) prints that URI — so
+`log.exception` on any Data API failure writes `YOUTUBE_API_KEY` to disk. It did, once,
+on 2026-07-14. Never `log.exception` a googleapiclient error and never `%s` one raw:
+log `type(exc).__name__` plus `logging_redaction.scrub(str(exc))`. `RedactingFilter`
+(installed on the root **handler** in `main()`, because a logger's filters only see
+records logged directly on it and every module uses a child logger) is the backstop,
+not the primary defence — fix the call site too.
 
 **Tests:** files are `*_test.py` (the `name-tests-test` hook rejects `test_*.py`).
 The suite is **fully offline** — no real-endpoint/live tests (sources, resolvers,

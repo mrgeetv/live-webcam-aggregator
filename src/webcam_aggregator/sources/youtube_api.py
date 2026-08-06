@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+from ..logging_redaction import scrub
 from ..models import Candidate
 
 log = logging.getLogger("webcam-aggregator.sources.youtube")
@@ -61,13 +62,24 @@ class YoutubeApiSource:
             try:
                 resp = self._c.search().list(**params).execute()
             except Exception as exc:
-                # Log the status only; the request URL carries the API key.
+                # Report what ACTUALLY went wrong. This used to blame API quota for every
+                # failure, which sent the 2026-08 outage investigation down the wrong
+                # path — the real cause was a BrokenPipeError on a stale keep-alive
+                # socket. NEVER format the exception raw: googleapiclient's HttpError
+                # __str__ prints the request URI, which carries the developer key.
                 status = getattr(getattr(exc, "resp", None), "status", None)
+                hint = (
+                    " — likely API quota; raise the quota or narrow SEARCH_QUERY"
+                    if status in (403, 429)
+                    else ""
+                )
                 log.warning(
-                    "youtube search stopped after %d items (HTTP %s). Likely API "
-                    "quota; raise the quota or narrow SEARCH_QUERY.",
+                    "youtube search stopped after %d items (HTTP %s) — %s: %s%s",
                     len(seen),
-                    status if status is not None else "?",
+                    status if status is not None else "n/a",
+                    type(exc).__name__,
+                    scrub(str(exc)),
+                    hint,
                 )
                 return
             items = resp.get("items", [])
