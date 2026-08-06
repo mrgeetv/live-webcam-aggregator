@@ -243,7 +243,7 @@ line every 6h — and a source at zero warns **every** cycle it stays there:
 ```text
 skyline: ok -> dead (0 kept, was 1668)
 skyline: still dead (0 kept / 0 discovered)
-skyline: dead -> ok (1654 kept)
+skyline: dead -> ok (1654 kept, was 0)
 ```
 
 Liveness drop reasons are `no-extractor` (a gap in our coverage), `resolve-failed` (an
