@@ -51,3 +51,20 @@ def test_unknown_extractor_name_fails_at_build():
     }
     with pytest.raises(ValueError):
         build_registry(incomplete)
+
+
+def test_bare_alias_landing_page_routes_to_the_resolver() -> None:
+    """Some camscape embeds point at the share page, https://www.ipcamlive.com/<alias>,
+    which carries no address/streamid — it used to fall through with no extractor."""
+    assert _route("https://www.ipcamlive.com/campusmartius") == "ipcamlive"
+    assert _route("https://www.ipcamlive.com/627b6e3cac4e9") == "ipcamlive"
+    assert _route("http://ipcamlive.com/68094c989e733") == "ipcamlive"
+    assert _route("https://www.ipcamlive.com/kobyla/") == "ipcamlive"
+
+
+def test_alias_rule_does_not_steal_direct_ipcamlive_m3u8() -> None:
+    """The alias rule must stay anchored to the apex/www host: the s*/g* subdomains
+    carry the direct m3u8s that have to reach DirectHls."""
+    assert _route("https://s79.ipcamlive.com/streams/abc/stream.m3u8") == "direct"
+    assert _route("https://s111.ipcamlive.com/streams/6f3obm/stream.m3u8") == "direct"
+    assert _route("http://s2.ipcamlive.com/streams/02mih6/stream.m3u8") == "direct"

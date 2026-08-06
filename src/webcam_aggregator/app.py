@@ -19,7 +19,7 @@ from .extractors.base import Extractor, Resolved
 from .extractors.baltic import BalticResolver
 from .extractors.direct_hls import DirectHls
 from .extractors.earthcam import EarthcamResolver
-from .extractors.ipcamlive import IpcamliveResolver
+from .extractors.ipcamlive import IpcamliveResolver, is_alias_page
 from .extractors.metatag import MetaTagExtractor
 from .extractors.skyline import SkylineResolver
 from .extractors.ytdlp import YtDlpExtractor
@@ -105,7 +105,10 @@ def _is_ytdlp(u: str) -> bool:
 def build_registry(extractors: dict[str, Extractor]) -> Registry:
     rules: list[tuple[Callable[[str], bool], str]] = [
         (lambda u: "balticlivecam.com" in u, "baltic"),
-        (lambda u: "ipcamlive.com/player/player.php" in u, "ipcamlive"),
+        (
+            lambda u: "ipcamlive.com/player/player.php" in u or is_alias_page(u),
+            "ipcamlive",
+        ),
         (lambda u: "webtv.feratel.com" in u, "metatag"),
         (lambda u: "skylinewebcams.com/en/webcam/" in u, "skyline"),
         (lambda u: "earthcam." in u, "earthcam"),

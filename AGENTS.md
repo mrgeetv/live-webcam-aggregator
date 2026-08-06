@@ -122,8 +122,12 @@ The app is two phases, decoupled by a catalogue snapshot:
   `_bool_env` and `fetch.resolve_scrape_workers` all treat **blank as unset**, not as an
   invalid value to warn about.
 
-- Route ipcamlive **`player/player.php` URLs only** to the resolver; direct
-  `s*.ipcamlive.com/.../stream.m3u8` (the majority) must fall through to `DirectHls`.
+- Route ipcamlive **`player/player.php` URLs and bare `www.ipcamlive.com/<alias>` share
+  pages** to the resolver; direct `s*.ipcamlive.com/.../stream.m3u8` (the majority) must
+  fall through to `DirectHls`, so the alias predicate is anchored to the apex/www host.
+  A share page carries neither `address`/`streamid` nor a link to the player (it builds
+  the player client-side), so the resolver rewrites it to
+  `g0.ipcamlive.com/player/player.php?alias=<alias>` rather than scraping it.
 - Baltic's admin-ajax POST needs `Referer` = the **site origin** (`origin_of`), not
   the ajax URL — wrong Referer 403s silently.
 - YouTube extraction needs the deno/yt-dlp-ejs stack (the n-challenge); the Dockerfile
