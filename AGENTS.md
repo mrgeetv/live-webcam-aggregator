@@ -27,8 +27,9 @@ The app is two phases, decoupled by a catalogue snapshot:
    through `/stream/<id>/m?u=…&sig=…`. Segments go **direct to the CDN by default**,
    with two per-host exceptions (their tokens are IP-bound to the fetcher):
    `_DIRECT_PLAYBACK_HOSTS` (pixelcaster) get a **302 passthrough** so the player
-   fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, skylinewebcams, earthcam)
-   get their **segments relayed** through `/stream/<id>/s?u=…&sig=…`.
+   fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, enhd.es,
+   skylinewebcams, earthcam, wetmet) get their **segments relayed** through
+   `/stream/<id>/s?u=…&sig=…`.
    **YouTube cams 302-redirect straight to googlevideo by default** (`PROXY_YOUTUBE`
    off): lower latency / less buffering on shallow live windows, but playback stops
    when the ~6h googlevideo token expires. `PROXY_YOUTUBE=true` proxies them like the
@@ -158,6 +159,18 @@ The app is two phases, decoupled by a catalogue snapshot:
   (server fetch gets only stub manifests, segments 404) + angelcam (auth) are
   unservable, dropped. Category + location come from the cam page's
   `/showing/<cat>` + `/location/<loc>` tags.
+- camscape/cxtvlive also embed **wetmet** widgets (`api.wetmet.net/widgets/stream/frame.php?uid=`);
+  the frame's inline script assigns the master playlist to `var vurl`, so `WetmetResolver`
+  just reads it. Wowza/Nimble signs it (`wmsAuthSign` + a `nimblesessionid` minted for
+  whoever fetched the manifest) and both propagate into the segment URLs — a segment
+  stripped of its query 404s — so `wetmet.net` is in `_PROXY_SEGMENT_HOSTS` and the
+  `Resolved` carries a short TTL rather than being cached indefinitely.
+- Re-probed and still unservable, so their candidates are expected `no-extractor` drops:
+  **ivideon** (`open.ivideon.com/embed/v3`, WebRTC — no HLS in the embed),
+  **rtsp.me** (builds the stream URL in a JS bundle at runtime; a server fetch gets only
+  stub manifests whose segments 404), **angelcam** (`v.angelcam.com/iframe`, JWT-gated),
+  **video.nest.com** (exposes only `nexusapi…/get_image`, a still JPEG, not a stream),
+  **console.rhombussystems.com** and **surfline** (403 without a Referer, 404 with).
 - EarthCam is a source via its **mapsearch JSON API** (no HTML scrape): `get_locations_network`
   (its own cams) + the global-bbox `get_locations` (the whole map, incl partners). It's a
   meta-aggregator — ~4000 mapped cams across 2400+ one-off sites — so `EarthCamSource._routable`

@@ -22,6 +22,7 @@ from .extractors.earthcam import EarthcamResolver
 from .extractors.ipcamlive import IpcamliveResolver, is_alias_page
 from .extractors.metatag import MetaTagExtractor
 from .extractors.skyline import SkylineResolver
+from .extractors.wetmet import WetmetResolver
 from .extractors.ytdlp import YtDlpExtractor
 from .fetch import MANIFEST_MAX_BYTES, Fetcher, FetcherPostProtocol, FetchStats
 from .logging_redaction import RedactingFilter, scrub
@@ -110,6 +111,7 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
             "ipcamlive",
         ),
         (lambda u: "webtv.feratel.com" in u, "metatag"),
+        (lambda u: "api.wetmet.net/widgets/stream/frame.php" in u, "wetmet"),
         (lambda u: "skylinewebcams.com/en/webcam/" in u, "skyline"),
         (lambda u: "earthcam." in u, "earthcam"),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
@@ -421,6 +423,7 @@ def build_app(
         "ipcamlive": IpcamliveResolver(rget),
         "skyline": SkylineResolver(rget),
         "earthcam": EarthcamResolver(rget),
+        "wetmet": WetmetResolver(rget),
     }
     registry = build_registry(extractors)
     resolve = make_resolve(registry, extractors)

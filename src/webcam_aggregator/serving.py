@@ -53,6 +53,7 @@ _PROXY_SEGMENT_HOSTS = (
     "enhd.es",
     "skylinewebcams.com",
     "earthcam.com",
+    "wetmet.net",
 )
 
 
