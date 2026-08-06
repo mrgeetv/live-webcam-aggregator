@@ -880,6 +880,25 @@ def test_one_outcome_per_call_not_per_retry() -> None:
     assert s.drain() == {"e.example": {"http-500": 1}}
 
 
+def test_failure_mid_redirect_attributed_to_the_failing_hop() -> None:
+    """An HTTPError raised on hop 2 of a redirect chain must be counted against the
+    host that failed, not the URL the caller asked for — otherwise the "0 ok (11x
+    http-403 …)" line names the wrong host."""
+    s = FetchStats()
+    f = Fetcher(delay=0.0, retries=1, stats=s)
+    resp = requests.Response()
+    resp.status_code = 403
+    resp.url = "https://cdn.example/blocked"
+    with (
+        patch.object(
+            Fetcher, "_fetch_following", side_effect=requests.HTTPError(response=resp)
+        ),
+        patch("webcam_aggregator.fetch.time.sleep"),
+    ):
+        assert f.get("https://origin.example/x") is None
+    assert s.drain() == {"cdn.example": {"http-403": 1}}
+
+
 def test_success_records_ok() -> None:
     s = FetchStats()
     f = Fetcher(delay=0.0, retries=1, stats=s)

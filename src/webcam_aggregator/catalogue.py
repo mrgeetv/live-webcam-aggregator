@@ -177,10 +177,23 @@ def _status_for(kept: int, crashed: bool, h: Hist) -> str:
     return "ok"
 
 
+@dataclass
+class _SourceResult:
+    """One source's raw cycle outcome, before the empty-guard gets a say."""
+
+    name: str
+    kept: list[Candidate]
+    discovered: int
+    crashed: bool
+    drop_reasons: dict[str, int] = field(default_factory=dict)
+    no_extractor_hosts: dict[str, int] = field(default_factory=dict)
+    resolve_details: dict[str, int] = field(default_factory=dict)
+
+
 def build_catalogue(
     sources: list[Source],
     *,
-    is_alive: Callable[[Candidate], str | None],
+    drop_reason_for: Callable[[Candidate], str | None],
     youtube_live: Callable[[Iterable[str]], Mapping[str, str]],
     history: dict[str, Hist],
     exclude_categories: frozenset[str] = _NO_EXCLUDE,
@@ -195,19 +208,14 @@ def build_catalogue(
     # are separate objects and no shared semaphore spans the nesting.
     yt_lock = threading.Lock()
 
-    def filter_source(
-        src: Source,
-    ) -> tuple[
-        str, list[Candidate], int, bool, dict[str, int], dict[str, int], dict[str, int]
-    ]:
-        # (name, kept, discovered, crashed, drop reasons, no-extractor hosts, resolve
-        # details). Never raises — a source that blows up reports crashed=True instead
-        # of sinking the whole build (and every other source with it).
+    def filter_source(src: Source) -> _SourceResult:
+        # Never raises — a source that blows up reports crashed=True instead of
+        # sinking the whole build (and every other source with it).
         try:
             cands = list(src.discover())
         except Exception:
             log.exception("source %s discover() failed", src.name)
-            return src.name, [], 0, True, {}, {}, {}
+            return _SourceResult(src.name, [], 0, True)
         try:
             yt_ids = [
                 c.predisc_key[3:]
@@ -218,16 +226,18 @@ def build_catalogue(
             with yt_lock:
                 live: Mapping[str, str] = youtube_live(yt_ids) if yt_ids else {}
 
-            def alive(c: Candidate, _live: Mapping[str, str] = live) -> str | None:
+            def drop_reason(
+                c: Candidate, _live: Mapping[str, str] = live
+            ) -> str | None:
                 if c.predisc_key and c.predisc_key.startswith("yt:"):
                     return None if c.predisc_key[3:] in _live else YT_OFFLINE
-                return is_alive(c)
+                return drop_reason_for(c)
 
             kept: list[Candidate] = []
             reasons: dict[str, int] = {}
             no_ext_hosts: dict[str, int] = {}
             details: dict[str, int] = {}
-            for c, reason in zip(cands, thread_map(alive, cands)):
+            for c, reason in zip(cands, thread_map(drop_reason, cands)):
                 if reason is None:
                     kept.append(_apply_yt_category(c, live))
                     continue
@@ -241,10 +251,12 @@ def build_catalogue(
                     no_ext_hosts[host] = no_ext_hosts.get(host, 0) + 1
                 elif detail:
                     details[detail] = details.get(detail, 0) + 1
-            return src.name, kept, len(cands), False, reasons, no_ext_hosts, details
+            return _SourceResult(
+                src.name, kept, len(cands), False, reasons, no_ext_hosts, details
+            )
         except Exception:
             log.exception("source %s liveness filter failed", src.name)
-            return src.name, [], len(cands), True, {}, {}, {}
+            return _SourceResult(src.name, [], len(cands), True)
 
     # Cap concurrent sources so total build concurrency stays ~max_parallel_sources ×
     # SCRAPE_WORKERS regardless of source count (extra sources batch through the pool).
@@ -253,15 +265,16 @@ def build_catalogue(
     # Per-source empty guard + cross-source dedup, serial (results keep source order, so
     # dedup priority is unchanged from the old sequential build).
     kept_all: list[Candidate] = []
-    for name, kept, discovered, crashed, reasons, no_ext_hosts, details in results:
+    for r in results:
+        name, kept, discovered, crashed = r.name, r.kept, r.discovered, r.crashed
         h = history.setdefault(name, Hist())
         h.last_fetches = fetch_stats(name) if fetch_stats else {}
-        h.drop_reasons = reasons
-        h.no_extractor_hosts = no_ext_hosts
+        h.drop_reasons = r.drop_reasons
+        h.no_extractor_hosts = r.no_extractor_hosts
         warned = _log_source_outcome(
-            name, len(kept), discovered, h.last_fetches, reasons
+            name, len(kept), discovered, h.last_fetches, r.drop_reasons
         )
-        _log_drop_detail(name, no_ext_hosts, details)
+        _log_drop_detail(name, r.no_extractor_hosts, r.resolve_details)
         # Record the RAW result before the guard can mask it — /health alerts on this
         # (crashed, or 0 kept) even when the guard keeps serving the last good set.
         h.last_discovered = discovered

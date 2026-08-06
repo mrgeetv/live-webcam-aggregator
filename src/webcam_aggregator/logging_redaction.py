@@ -10,7 +10,11 @@ from typing import Any, override
 # str(exc). Call sites are responsible for scrubbing; this filter is the backstop that
 # stops a new one regressing it. Unlike the CDN playback tokens in serving.py, this is
 # our own long-lived credential, so it is redacted at every level, DEBUG included.
-_KEY_PARAM = re.compile(r"(?i)((?:developer_?key|api_?key|key)=)[^&\s\"']+")
+# The lookbehind stops words that merely END in "key" (monkey=, turkey=) being eaten,
+# while an underscore still counts as a boundary so session_key=/auth_key= stay covered.
+_KEY_PARAM = re.compile(
+    r"(?i)(?<![a-z0-9])((?:developer_?key|api_?key|key)=)[^&\s\"']+"
+)
 
 
 def scrub(text: str) -> str:

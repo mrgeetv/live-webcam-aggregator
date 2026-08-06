@@ -281,7 +281,9 @@ Data API failure writes the key to disk (a traceback ends in `str(exc)`). Log
 
 Third-party CDN tokens are treated differently: `serving.loggable()` trims resolved
 upstream URLs to `scheme://host/path` at `INFO`, and keeps the full URL at `DEBUG`,
-where the token is usually the thing you're debugging.
+where the token is usually the thing you're debugging. The same rule covers the
+aggregated `top resolve failures` details: any URL an extractor error quotes has its
+query string stripped before the detail is counted.
 
 A source category we have no mapping for logs a `WARNING` (once per distinct value) and
 the cam lands in the `Unmapped Category` group rather than `Other`; camscape and skyline

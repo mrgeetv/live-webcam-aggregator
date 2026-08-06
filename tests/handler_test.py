@@ -55,7 +55,7 @@ def _make_store(ready: bool = True) -> tuple[CatalogueStore, str]:
     if ready:
         entries = build_catalogue(
             [_FakeSource()],
-            is_alive=lambda c: None,
+            drop_reason_for=lambda c: None,
             youtube_live=lambda ids: {i: i for i in ids},
             history={},
         )

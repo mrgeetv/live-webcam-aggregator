@@ -21,6 +21,10 @@ _STREAMID = re.compile(r'var\s+streamid\s*=\s*["\']([^"\']+)["\']')
 # client-side. The alias in the path is all the player URL needs, so rewrite to that
 # rather than trying to scrape the landing page. Anchored to the apex/www host so the
 # s*/g* subdomains can't match.
+# Any single-segment path on the apex/www host matches, so a non-cam page (/faq, say)
+# would route here and surface as resolve-failed rather than no-extractor. Accepted:
+# candidates only arrive from scraped embeds, and a denylist of the site's own pages
+# would be guesswork that rots.
 _ALIAS_URL = re.compile(r"^https?://(?:www\.)?ipcamlive\.com/([A-Za-z0-9_-]+)/?$", re.I)
 _PLAYER = "https://g0.ipcamlive.com/player/player.php?alias="
 

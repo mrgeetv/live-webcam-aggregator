@@ -332,6 +332,14 @@ class Fetcher:
                 break  # retrying cannot change this verdict
             except requests.RequestException as exc:
                 outcome = _classify(exc)
+                # Attribute a mid-redirect-chain failure to the hop that failed, not
+                # the URL the caller asked for. _FetchFailure carries its hop above;
+                # requests' exceptions carry the failing response/request instead.
+                hop = getattr(exc.response, "url", None) or getattr(
+                    exc.request, "url", None
+                )
+                if hop:
+                    host = urlsplit(hop).hostname or host
                 time.sleep(self._delay)
                 if attempt == self._retries - 1:
                     break

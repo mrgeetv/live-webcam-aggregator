@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import threading
 import time
@@ -165,6 +166,12 @@ class CatalogueStore:
 # only in a per-cam DEBUG line, which meant nothing at all once DEBUG was off.
 _DETAIL_CHARS = 80
 
+# An extractor error often embeds its target URL, query string and all — and a query
+# string can carry a session token. The details are aggregated at INFO, where the rule
+# is hostnames/paths only (full URLs live at DEBUG), so trim every embedded URL to
+# scheme://host/path before the detail is counted.
+_URL_QUERY = re.compile(r"(https?://[^\s?\"']+)\?\S*")
+
 
 def make_liveness_check(
     resolve: Callable[[str, str], Resolved],
@@ -184,7 +191,8 @@ def make_liveness_check(
         except Exception as exc:
             log.debug("liveness resolve failed for %s: %s", c.target_url, exc)
             # The detail separates "yt-dlp is broken" from "this cam is off air".
-            return f"{RESOLVE_FAILED}:{str(exc)[:_DETAIL_CHARS]}"
+            detail = _URL_QUERY.sub(r"\1", str(exc))[:_DETAIL_CHARS]
+            return f"{RESOLVE_FAILED}:{detail}"
         if r.stream_type != "hls":
             return None  # mp4/other: trust the resolve
         # Actually fetch the HLS manifest — DirectHls/ipcamlive resolve without
@@ -389,9 +397,9 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
             "status": h.status,
             # Why, not just what: the fetch outcomes per host plus the liveness drop
             # reasons, so an uptime check's response body is enough to diagnose a source
-            # without going to the logs. /health is LAN-only (the edge Caddyfile routes
-            # only /webcam/playlist and /webcam/stream/*), and FetchStats caps the host
-            # keys, so the detail is safe to expose. Copies, not live references.
+            # without going to the logs. Keep /health off the public internet — expose
+            # only the playlist/stream routes at your reverse proxy. FetchStats caps
+            # the host keys, so the payload stays bounded. Copies, not live references.
             "fetches": {host: dict(o) for host, o in h.last_fetches.items()},
             "drop_reasons": dict(h.drop_reasons),
             "no_extractor_hosts": dict(h.no_extractor_hosts),
@@ -495,7 +503,7 @@ def build_app(
     # delay=0: liveness verify-fetches hit CDNs (not the scraped sites) and run
     # concurrently, so politeness spacing isn't needed here.
     probe_fetcher = Fetcher(delay=0.0, retries=1)
-    is_alive = make_liveness_check(resolve, probe_fetcher.get)
+    drop_reason_for = make_liveness_check(resolve, probe_fetcher.get)
 
     def youtube_live(ids: Any) -> dict[str, str]:
         if yt_source is None:
@@ -534,7 +542,7 @@ def build_app(
         try:
             entries = build_catalogue(
                 active_sources,
-                is_alive=is_alive,
+                drop_reason_for=drop_reason_for,
                 youtube_live=youtube_live,
                 history=history,
                 exclude_categories=cfg.exclude_categories,

@@ -6,6 +6,11 @@
 
 @DEVELOPMENT.md
 
+**Every change must leave the repo better than it found it.** Fix what you touch —
+don't bolt new code onto known-bad old code, and don't leave a wart you noticed for
+the next person. (Surfacing a genuinely separate fix for a decision is fine; silently
+skipping it is not.)
+
 ## Architecture & Extension Points (v2)
 
 The app is two phases, decoupled by a catalogue snapshot:
@@ -15,7 +20,7 @@ The app is two phases, decoupled by a catalogue snapshot:
    build concurrency stays ~cap × `SCRAPE_WORKERS` no matter how many sources exist, and
    a source that crashes is isolated (reuses its last good set, the rest proceed). Each
    `Source.discover()` yields `Candidate`s → liveness filter (YouTube via the Data
-   API batch; everything else via a **fetch-verified probe** — `make_is_alive`
+   API batch; everything else via a **fetch-verified probe** — `make_liveness_check`
    actually fetches the HLS manifest and drops dead/404 and DASH cams) → per-source
    empty-guard (keeps the last good set if a source collapses ≥50%, needs 2 bad
    cycles to accept) → cross-source `dedupe()` (per-field merge) → YouTube cams get
@@ -92,7 +97,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   which returns a **reason** (`models.NO_EXTRACTOR` / `RESOLVE_FAILED` /
   `DEAD_MANIFEST` / `YT_OFFLINE`, optionally `":<detail>"`) that `filter_source`
   counts. Log **hostnames** in aggregates; full URLs only via `serving.loggable()`,
-  which keeps the query string at DEBUG only.
+  which keeps the query string at DEBUG only — and the `resolve-failed:<detail>`
+  strings have embedded URL query strings stripped (`app._URL_QUERY`) before they
+  reach the INFO aggregate, since an extractor error often quotes its target URL,
+  token and all.
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and
   ALWAYS validate: a bad/unparseable value must log a `WARNING` at startup and fall
   back to the default, never crash or silently misbehave (e.g. `_int_env` warns on a
@@ -243,6 +251,10 @@ records logged directly on it and every module uses a child logger) is the backs
 not the primary defence — fix the call site too.
 
 **Tests:** files are `*_test.py` (the `name-tests-test` hook rejects `test_*.py`).
+`tests/repo_hygiene_test.py` guards what ships in a public repo: shipped source must
+carry no dates, no named operator infrastructure (VPNs, uptime tooling, the edge
+proxy), and nothing matching the real Google-API-key shape — state the hazard in a
+comment, never the incident.
 The suite is **fully offline** — no real-endpoint/live tests (sources, resolvers,
 and the HTTP handler are exercised with injected fakes + real sockets on port 0).
 The gate is `pre-commit` (which runs `pytest` + a coverage floor as a `files:`-gated

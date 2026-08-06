@@ -123,6 +123,23 @@ def test_liveness_check_reports_resolver_detail() -> None:
     assert "Sign in to confirm" in reason
 
 
+def test_liveness_check_detail_strips_url_query_strings() -> None:
+    """An extractor error can embed its target URL, token-carrying query and all; the
+    detail is aggregated at INFO, where the rule is hostnames/paths only."""
+    from webcam_aggregator.app import make_liveness_check
+    from webcam_aggregator.extractors.base import Resolved
+
+    def resolve(_id: str, _url: str) -> Resolved:
+        raise ValueError(
+            "no address/streamid in https://g0.ipcamlive.com/player/player.php?alias=TOKEN"
+        )
+
+    reason = make_liveness_check(resolve, lambda u: None)(_probe_candidate())
+    assert reason is not None
+    assert "TOKEN" not in reason
+    assert "g0.ipcamlive.com/player/player.php" in reason
+
+
 def test_liveness_check_trusts_non_hls_resolve() -> None:
     from webcam_aggregator.app import make_liveness_check
     from webcam_aggregator.extractors.base import Resolved

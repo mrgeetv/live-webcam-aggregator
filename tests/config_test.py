@@ -3,6 +3,9 @@ import logging
 import pytest
 
 from webcam_aggregator import config
+from webcam_aggregator.config import (
+    _bool_env,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 def test_requires_api_key():
@@ -155,3 +158,10 @@ def test_blank_env_vars_mean_unset_not_invalid(
 def test_whitespace_only_env_var_also_means_unset() -> None:
     c = config.load({"YOUTUBE_API_KEY": "k", "MAX_PARALLEL_SOURCES": "   "})
     assert c.max_parallel_sources == 4
+
+
+def test_blank_bool_takes_the_default_not_false() -> None:
+    """Blank means UNSET for bools too — with PROXY_YOUTUBE defaulting False, "" ->
+    False looks right by coincidence; the trap is any future bool defaulting True."""
+    assert _bool_env({"X": ""}, "X", True) is True
+    assert _bool_env({"X": "  "}, "X", True) is True

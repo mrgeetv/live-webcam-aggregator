@@ -59,6 +59,16 @@ def test_scrub_stops_at_the_next_param() -> None:
     assert _FAKE_KEY not in out
 
 
+def test_scrub_does_not_eat_words_merely_ending_in_key() -> None:
+    assert scrub("https://e.example/x?monkey=banana") == (
+        "https://e.example/x?monkey=banana"
+    )
+
+
+def test_scrub_still_redacts_underscore_separated_keys() -> None:
+    assert scrub("session_key=abc123") == "session_key=REDACTED"
+
+
 def test_scrub_leaves_clean_text_untouched() -> None:
     msg = "youtube search stopped after 0 items"
     assert scrub(msg) == msg
