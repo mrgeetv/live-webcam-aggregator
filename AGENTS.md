@@ -105,12 +105,16 @@ The app is two phases, decoupled by a catalogue snapshot:
   challenge or consent page), so "0 failed" is not the same as "nothing wrong" —
   fetched-ok-but-extracted-nothing needs its own warning. The gradual ramp rather than a
   cliff is the tell for progressive challenge rather than a hard IP ban.
-- The same VPN wedged the **googleapiclient** socket: httplib2 raises `EPIPE` **without
-  closing the connection**, so a stale keep-alive kept failing instantly (~3 ms, no round
-  trip) for several 6-hourly cycles. The warning blamed API quota, which cost hours of
-  investigation. **Still unfixed** — a `num_retries` on `.execute()`, or rebuilding the
-  client per rebuild, would close it. Note `videos.list` (1 unit) can succeed while
-  `search.list` (100 units) fails, so "one YouTube call works" doesn't rule out quota.
+- The same VPN wedged the **googleapiclient** socket. httplib2's `Http.request` evicts a
+  pooled connection **only** on `socket.timeout` — a `BrokenPipeError` leaves the dead
+  socket in `self.connections`, so every later call reuses it and fails instantly (~3 ms,
+  no round trip) for cycle after cycle. `num_retries` on `.execute()` does NOT fix this:
+  googleapiclient retries via `http.request()`, which pulls the same wedged connection
+  back out of that dict. The Http object has to be **replaced** — hence
+  `YoutubeApiSource` taking a client **factory** and calling `_drop_client()` on any
+  failure (`build()` with `static_discovery=True` costs ~5 ms and no network). Note
+  `videos.list` (1 unit) can succeed while `search.list` (100 units) fails, so "one
+  YouTube call works" doesn't rule out quota.
 
 - Route ipcamlive **`player/player.php` URLs only** to the resolver; direct
   `s*.ipcamlive.com/.../stream.m3u8` (the majority) must fall through to `DirectHls`.

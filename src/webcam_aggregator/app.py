@@ -423,12 +423,22 @@ def build_app(
     resolve = make_resolve(registry, extractors)
     cache: ResolveCache = ResolveCache(resolve, clock=time.monotonic)
 
-    try:
+    def _new_yt_client() -> Any:
         import googleapiclient.discovery
 
-        yt_client = googleapiclient.discovery.build(
-            "youtube", "v3", developerKey=cfg.youtube_api_key
+        # static_discovery=True uses the bundled discovery document, so rebuilding the
+        # client after a wedged connection costs ~5 ms and no network call.
+        return googleapiclient.discovery.build(
+            "youtube",
+            "v3",
+            developerKey=cfg.youtube_api_key,
+            static_discovery=True,
+            cache_discovery=False,
         )
+
+    try:
+        _new_yt_client()  # fail fast at startup on a bad key/deps, as before
+        yt_available = True
     except Exception as exc:
         # No log.exception: the traceback's last line is str(exc), and googleapiclient
         # puts the developer key in the discovery-doc URL it reports.
@@ -437,10 +447,10 @@ def build_app(
             type(exc).__name__,
             scrub(str(exc)),
         )
-        yt_client = None
+        yt_available = False
 
     yt_source = (
-        YoutubeApiSource(yt_client, cfg.search_query) if yt_client is not None else None
+        YoutubeApiSource(_new_yt_client, cfg.search_query) if yt_available else None
     )
     # One Fetcher — and one FetchStats — PER SOURCE. A single shared fetcher made it
     # impossible to say which source's fetches failed, and a process-global counter

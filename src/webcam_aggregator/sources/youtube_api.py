@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 from ..logging_redaction import scrub
@@ -31,15 +31,40 @@ _YT_CATEGORIES: dict[str, str] = {
 
 
 class YoutubeApiSource:
+    """Discovery via the YouTube Data API.
+
+    Takes a client FACTORY, not a client, and drops the cached client whenever a call
+    fails. httplib2 evicts a connection from its pool only on `socket.timeout` — a
+    `BrokenPipeError` leaves the dead socket in place, so every later call reuses it and
+    fails instantly (~3 ms, no round trip). That wedged YouTube for five consecutive
+    rebuilds during the 2026-08 incident, and `num_retries` cannot fix it because
+    googleapiclient retries through the same pooled connection. Replacing the client
+    replaces the Http object, and with it the pool.
+    """
+
     name: str = "youtube-api"
-    _c: Any
+    _new_client: Callable[[], Any]
+    _c: Any | None
     _query: str
     _max: int
 
-    def __init__(self, client: Any, query: str, max_videos: int = 1000) -> None:
-        self._c = client
+    def __init__(
+        self, client_factory: Callable[[], Any], query: str, max_videos: int = 1000
+    ) -> None:
+        self._new_client = client_factory
+        self._c = None
         self._query = query
         self._max = max_videos
+
+    @property
+    def _client(self) -> Any:
+        if self._c is None:
+            self._c = self._new_client()
+        return self._c
+
+    def _drop_client(self) -> None:
+        """Discard the client so the next call builds a fresh connection pool."""
+        self._c = None
 
     def discover(self) -> Iterator[Candidate]:
         # YouTube caps an eventType=live search at ~100 results via pageToken (it
@@ -60,7 +85,7 @@ class YoutubeApiSource:
             if published_before:
                 params["publishedBefore"] = published_before
             try:
-                resp = self._c.search().list(**params).execute()
+                resp = self._client.search().list(**params).execute()
             except Exception as exc:
                 # Report what ACTUALLY went wrong. This used to blame API quota for every
                 # failure, which sent the 2026-08 outage investigation down the wrong
@@ -81,6 +106,9 @@ class YoutubeApiSource:
                     scrub(str(exc)),
                     hint,
                 )
+                # The connection may be wedged (see the class docstring) — bin the
+                # client so the next cycle starts from a clean pool.
+                self._drop_client()
                 return
             items = resp.get("items", [])
             if not items:
@@ -111,11 +139,17 @@ class YoutubeApiSource:
         live: dict[str, str] = {}
         for i in range(0, len(ids), 50):
             chunk = ids[i : i + 50]
-            resp = (
-                self._c.videos()
-                .list(part="snippet,liveStreamingDetails", id=",".join(chunk))
-                .execute()
-            )
+            try:
+                resp = (
+                    self._client.videos()
+                    .list(part="snippet,liveStreamingDetails", id=",".join(chunk))
+                    .execute()
+                )
+            except Exception:
+                # Same wedged-connection risk as discover(). Bin the client, then let
+                # the caller handle the failure as before (YT cams treated as offline).
+                self._drop_client()
+                raise
             for it in resp.get("items", []):
                 snip = it.get("snippet", {})
                 details = it.get("liveStreamingDetails", {})
