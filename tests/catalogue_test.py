@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+import logging
+from collections.abc import Callable, Iterable
+
+import pytest
 
 from webcam_aggregator.catalogue import (
     AGREE_TO_ACCEPT,
@@ -586,3 +589,119 @@ def test_title_fallback_never_overrides_source_category() -> None:
     cats = {e.title: e.category for e in result}
     assert cats["Times Square"] == "Animals"
     assert cats["Bear Beach"] == "Unmapped Category"
+
+
+# ---------------------------------------------------------------------------
+# Per-source fetch outcome — an empty source must say WHY (2026-08 incident)
+# ---------------------------------------------------------------------------
+
+
+def _stats(
+    canned: dict[str, dict[str, dict[str, int]]],
+) -> Callable[[str], dict[str, dict[str, int]]]:
+    """Build a fetch_stats accessor over canned {source: {host: {outcome: n}}}."""
+
+    def accessor(name: str) -> dict[str, dict[str, int]]:
+        return canned.get(name, {})
+
+    return accessor
+
+
+def test_blocked_source_names_the_host_and_status(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Skyline's real shape on 2026-08-04: 11 fetches, all 403, nothing discovered."""
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("skyline", [])],
+            is_alive=_always_alive,
+            youtube_live=_no_yt_live,
+            history={},
+            fetch_stats=_stats(
+                {"skyline": {"www.skylinewebcams.com": {"http-403": 11}}}
+            ),
+        )
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    assert "skyline: 0 kept / 0 discovered" in caplog.text
+    assert "11 fetched, 0 ok" in caplog.text
+    assert "www.skylinewebcams.com" in caplog.text
+    assert "http-403" in caplog.text
+
+
+def test_soft_block_returning_200_is_still_flagged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A Cloudflare challenge page is an HTTP 200 — a failure counter sees nothing
+    wrong. This is the case the whole per-host-failure approach could not detect."""
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("skyline", [])],
+            is_alive=_always_alive,
+            youtube_live=_no_yt_live,
+            history={},
+            fetch_stats=_stats({"skyline": {"www.skylinewebcams.com": {"ok": 11}}}),
+        )
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    assert "11 fetched ok but extracted 0 URLs" in caplog.text
+
+
+def test_healthy_source_logs_no_warning(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("explore", [_make_candidate(key="hls:x")])],
+            is_alive=_always_alive,
+            youtube_live=_no_yt_live,
+            history={},
+            fetch_stats=_stats({"explore": {"explore.org": {"ok": 1}}}),
+        )
+    assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+    assert "explore: 1 kept / 1 discovered" in caplog.text
+
+
+def test_partial_failures_are_reported_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """~35% dead cams is skyline's NORMAL state — informative, not a warning."""
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("skyline", [_make_candidate(key="hls:x")])],
+            is_alive=_always_alive,
+            youtube_live=_no_yt_live,
+            history={},
+            fetch_stats=_stats(
+                {"skyline": {"www.skylinewebcams.com": {"ok": 65, "http-404": 35}}}
+            ),
+        )
+    assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+    assert "100 fetched, 35 failed" in caplog.text
+
+
+def test_source_with_no_fetcher_is_not_misreported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """youtube-api uses googleapiclient, not Fetcher — no stats, and it must not be
+    described as "0 fetched" as though the network were the problem."""
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("youtube-api", [])],
+            is_alive=_always_alive,
+            youtube_live=_no_yt_live,
+            history={},
+            fetch_stats=_stats({}),
+        )
+    assert "youtube-api: 0 kept / 0 discovered" in caplog.text
+    assert "fetched" not in caplog.text
+
+
+def test_hist_records_fetches() -> None:
+    history: dict[str, Hist] = {}
+    build_catalogue(
+        [_Src("skyline", [])],
+        is_alive=_always_alive,
+        youtube_live=_no_yt_live,
+        history=history,
+        fetch_stats=_stats({"skyline": {"www.skylinewebcams.com": {"http-403": 11}}}),
+    )
+    assert history["skyline"].last_fetches == {
+        "www.skylinewebcams.com": {"http-403": 11}
+    }

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 
 from .categories import category_from_title, map_category
 from .dedup import dedupe
-from .fetch import thread_map
+from .fetch import OK, thread_map
 from .models import Candidate, CatalogueEntry, stable_id
 from .sources.base import Source
 
@@ -32,6 +32,9 @@ class Hist:
     last_discovered: int = 0
     last_raw_kept: int = 0
     last_crashed: bool = False
+    # This source's fetch outcomes for the cycle, {host: {outcome: count}} — what makes
+    # "0 discovered" self-explaining instead of silent. Exposed on /health.
+    last_fetches: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 def _to_entry(c: Candidate) -> CatalogueEntry:
@@ -61,6 +64,61 @@ def _apply_yt_category(c: Candidate, live: Mapping[str, str]) -> Candidate:
     return c
 
 
+def _log_source_outcome(
+    name: str, kept: int, discovered: int, fetches: dict[str, dict[str, int]]
+) -> None:
+    """One line per source, carrying the fetch outcome so an empty source says WHY.
+
+    A totally-blocked source makes very FEW requests (skyline: one category index plus
+    ten category pages, then it has no cam URLs left to try), so any global "top N
+    failing hosts" view ranks it below healthy sources' routine dead-cam probes — the
+    worse the outage, the better it hides. Reporting against the source is what makes
+    it visible."""
+    total = sum(sum(o.values()) for o in fetches.values())
+    ok_n = sum(o.get(OK, 0) for o in fetches.values())
+    failures = {
+        f"{outcome} {host}": n
+        for host, outcomes in fetches.items()
+        for outcome, n in outcomes.items()
+        if outcome != OK
+    }
+    if discovered == 0 and total:
+        if ok_n == 0:
+            detail = ", ".join(
+                f"{n}x {k}" for k, n in sorted(failures.items(), key=lambda kv: -kv[1])
+            )
+            log.warning(
+                "%s: 0 kept / 0 discovered — %d fetched, 0 ok (%s)", name, total, detail
+            )
+            return
+        # Fetches SUCCEEDED and we still extracted nothing. A failure counter cannot
+        # see this: a Cloudflare/consent interstitial is an HTTP 200, so "0 failed" is
+        # true and utterly misleading. It is also exactly what a site redesign looks
+        # like, so this one line covers both.
+        log.warning(
+            "%s: 0 kept / 0 discovered — %d fetched ok but extracted 0 URLs "
+            "(site layout changed, or a soft block returning 200?)",
+            name,
+            ok_n,
+        )
+        return
+    if failures:
+        detail = ", ".join(
+            f"{n}x {k}" for k, n in sorted(failures.items(), key=lambda kv: -kv[1])[:3]
+        )
+        log.info(
+            "%s: %d kept / %d discovered (%d fetched, %d failed: %s)",
+            name,
+            kept,
+            discovered,
+            total,
+            total - ok_n,
+            detail,
+        )
+        return
+    log.info("%s: %d kept / %d discovered", name, kept, discovered)
+
+
 def build_catalogue(
     sources: list[Source],
     *,
@@ -69,6 +127,7 @@ def build_catalogue(
     history: dict[str, Hist],
     exclude_categories: frozenset[str] = _NO_EXCLUDE,
     max_parallel_sources: int = 4,
+    fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None = None,
 ) -> list[CatalogueEntry]:
     # Sources discover + liveness-check CONCURRENTLY (each hits a different site), so the
     # build's wall-clock is the slowest source, not the sum. Each source's work is
@@ -119,8 +178,9 @@ def build_catalogue(
     # dedup priority is unchanged from the old sequential build).
     kept_all: list[Candidate] = []
     for name, kept, discovered, crashed in results:
-        log.info("%s: %d kept / %d discovered", name, len(kept), discovered)
         h = history.setdefault(name, Hist())
+        h.last_fetches = fetch_stats(name) if fetch_stats else {}
+        _log_source_outcome(name, len(kept), discovered, h.last_fetches)
         # Record the RAW result before the guard can mask it — /health alerts on this
         # (crashed, or 0 kept) even when the guard keeps serving the last good set.
         h.last_discovered = discovered

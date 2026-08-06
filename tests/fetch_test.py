@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
 import time
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from webcam_aggregator.fetch import (
     Fetcher,
+    FetchStats,
+    _classify,  # pyright: ignore[reportPrivateUsage]
+    _FetchFailure,  # pyright: ignore[reportPrivateUsage]
     _pin,  # pyright: ignore[reportPrivateUsage]
     _PinDNS,  # pyright: ignore[reportPrivateUsage]
     _referer_for,  # pyright: ignore[reportPrivateUsage]
     _resolve_validated_ip,  # pyright: ignore[reportPrivateUsage]
+    _validate_ip,  # pyright: ignore[reportPrivateUsage]
     resolve_scrape_workers,
 )
 
@@ -811,3 +817,176 @@ def test_fetcher_tls_verified_against_hostname_while_connecting_to_ip(
         httpd.shutdown()
         thread.join(timeout=5)
         tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Fetch outcome accounting — the seam that lets an empty source say WHY.
+# Every test here patches the resolver: the suite is fully offline.
+# ---------------------------------------------------------------------------
+
+
+def test_stats_are_per_instance_not_global() -> None:
+    a, b = FetchStats(), FetchStats()
+    a.record("one.example", "ok")
+    b.record("two.example", "timeout")
+    assert a.drain() == {"one.example": {"ok": 1}}
+    assert b.drain() == {"two.example": {"timeout": 1}}
+
+
+def test_stats_drain_clears() -> None:
+    s = FetchStats()
+    s.record("e.example", "ok")
+    assert s.drain() == {"e.example": {"ok": 1}}
+    assert s.drain() == {}
+
+
+def test_stats_record_is_threadsafe() -> None:
+    s = FetchStats()
+
+    def hammer() -> None:
+        for _ in range(200):
+            s.record("e.example", "ok")
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert s.drain() == {"e.example": {"ok": 1600}}
+
+
+def test_stats_caps_host_cardinality() -> None:
+    """Host keys come from scraped third-party HTML — they must not grow unbounded."""
+    s = FetchStats(max_hosts=3)
+    for i in range(10):
+        s.record(f"h{i}.example", "http-404")
+    drained = s.drain()
+    assert len(drained) == 4  # 3 real hosts + the "other" bucket
+    assert drained["other"]["http-404"] == 7
+
+
+def test_one_outcome_per_call_not_per_retry() -> None:
+    s = FetchStats()
+    f = Fetcher(delay=0.0, retries=3, stats=s)
+    resp = requests.Response()
+    resp.status_code = 500
+    with (
+        patch.object(
+            Fetcher, "_fetch_following", side_effect=requests.HTTPError(response=resp)
+        ),
+        patch("webcam_aggregator.fetch.time.sleep"),
+    ):
+        assert f.get("https://e.example/x") is None
+    assert s.drain() == {"e.example": {"http-500": 1}}
+
+
+def test_success_records_ok() -> None:
+    s = FetchStats()
+    f = Fetcher(delay=0.0, retries=1, stats=s)
+    with patch.object(Fetcher, "_fetch_following", return_value="body"):
+        assert f.get("https://e.example/x") == "body"
+    assert s.drain() == {"e.example": {"ok": 1}}
+
+
+def test_politeness_delay_still_runs_on_non_retryable_failure() -> None:
+    """A bot-wall serving redirect loops must NOT become unthrottled hammering: these
+    paths used to hit time.sleep(delay) via the success return, and must keep doing so.
+    """
+    s = FetchStats()
+    f = Fetcher(delay=1.0, retries=3, stats=s)
+    with (
+        patch.object(
+            Fetcher, "_fetch_following", side_effect=_FetchFailure("too-large")
+        ),
+        patch("webcam_aggregator.fetch.time.sleep") as slept,
+    ):
+        assert f.get("https://e.example/x") is None
+    assert any(c.args and c.args[0] == 1.0 for c in slept.call_args_list)
+
+
+def test_politeness_delay_runs_on_request_exception() -> None:
+    s = FetchStats()
+    f = Fetcher(delay=1.0, retries=1, stats=s)
+    with (
+        patch.object(
+            Fetcher, "_fetch_following", side_effect=requests.ConnectionError()
+        ),
+        patch("webcam_aggregator.fetch.time.sleep") as slept,
+    ):
+        assert f.get("https://e.example/x") is None
+    assert any(c.args and c.args[0] == 1.0 for c in slept.call_args_list)
+
+
+def test_validate_ip_distinguishes_all_rejection_causes() -> None:
+    assert _validate_ip("ftp://e.example/x") == (None, "bad-scheme")
+    assert _validate_ip("https:///nohost") == (None, "bad-scheme")
+    with patch(
+        "webcam_aggregator.fetch.socket.getaddrinfo", side_effect=socket.gaierror()
+    ):
+        assert _validate_ip("https://nx.example/x") == (None, "dns-error")
+    with patch(
+        "webcam_aggregator.fetch.socket.getaddrinfo",
+        return_value=_mock_getaddrinfo("10.0.0.1"),
+    ):
+        assert _validate_ip("https://internal.example/x") == (None, "blocked-ip")
+    with patch(
+        "webcam_aggregator.fetch.socket.getaddrinfo",
+        return_value=_mock_getaddrinfo("93.184.216.34"),
+    ):
+        assert _validate_ip("https://ok.example/x") == ("93.184.216.34", "ok")
+
+
+def test_blocked_ip_is_recorded_and_not_retried() -> None:
+    s = FetchStats()
+    f = Fetcher(delay=0.0, retries=3, stats=s)
+    with patch(
+        "webcam_aggregator.fetch.socket.getaddrinfo",
+        return_value=_mock_getaddrinfo("127.0.0.1"),
+    ) as resolver:
+        assert f.get("https://internal.example/x") is None
+    assert resolver.call_count == 1  # the verdict cannot change on a retry
+    assert s.drain() == {"internal.example": {"blocked-ip": 1}}
+
+
+def test_dns_failure_is_not_reported_as_a_security_block() -> None:
+    s = FetchStats()
+    f = Fetcher(delay=0.0, retries=3, stats=s)
+    with patch(
+        "webcam_aggregator.fetch.socket.getaddrinfo", side_effect=socket.gaierror()
+    ):
+        assert f.get("https://nx.example/x") is None
+    assert s.drain() == {"nx.example": {"dns-error": 1}}
+
+
+def test_post_is_instrumented() -> None:
+    s = FetchStats()
+    f = Fetcher(delay=0.0, retries=1, stats=s)
+    with patch(
+        "webcam_aggregator.fetch.socket.getaddrinfo",
+        return_value=_mock_getaddrinfo("127.0.0.1"),
+    ):
+        assert f.post("https://internal.example/ajax", {"a": "b"}) is None
+    assert s.drain() == {"internal.example": {"blocked-ip": 1}}
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (requests.ConnectTimeout(), "timeout"),
+        (requests.ReadTimeout(), "timeout"),
+        (requests.TooManyRedirects(), "too-many-redirects"),
+        (requests.ConnectionError(), "conn-error"),
+    ],
+)
+def test_classify_maps_exceptions(exc: Exception, expected: str) -> None:
+    assert _classify(exc) == expected
+
+
+def test_classify_http_error_uses_status() -> None:
+    resp = requests.Response()
+    resp.status_code = 403
+    assert _classify(requests.HTTPError(response=resp)) == "http-403"
+
+
+def test_classify_http_error_without_response_falls_back() -> None:
+    assert _classify(requests.HTTPError()) == "conn-error"

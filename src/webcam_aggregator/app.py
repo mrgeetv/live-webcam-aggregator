@@ -23,7 +23,7 @@ from .extractors.ipcamlive import IpcamliveResolver
 from .extractors.metatag import MetaTagExtractor
 from .extractors.skyline import SkylineResolver
 from .extractors.ytdlp import YtDlpExtractor
-from .fetch import MANIFEST_MAX_BYTES, Fetcher, FetcherPostProtocol
+from .fetch import MANIFEST_MAX_BYTES, Fetcher, FetcherPostProtocol, FetchStats
 from .logging_redaction import RedactingFilter, scrub
 from .models import Candidate, CatalogueEntry
 from .registry import Registry
@@ -322,7 +322,9 @@ def build_app(
     Callable[[], None],
     Callable[[], dict[str, Any]],
 ]:
-    fetcher = Fetcher()
+    # Sources get their own fetchers below (per-source stats). The resolver/probe
+    # fetchers are shared: their work is per-CANDIDATE, not per-source, so their
+    # failures surface as liveness drop reasons rather than per-source fetch counts.
     resolver_fetcher = Fetcher(delay=0.0, retries=2)
     rget = _resolver_get(resolver_fetcher)
 
@@ -358,21 +360,37 @@ def build_app(
     yt_source = (
         YoutubeApiSource(yt_client, cfg.search_query) if yt_client is not None else None
     )
+    # One Fetcher — and one FetchStats — PER SOURCE. A single shared fetcher made it
+    # impossible to say which source's fetches failed, and a process-global counter
+    # would also collect serve-time player traffic between rebuilds, so the line meant
+    # to explain an empty source would name hosts the build never touched.
+    source_stats: dict[str, FetchStats] = {}
+
+    def _source_fetcher(name: str) -> Fetcher:
+        stats = FetchStats()
+        source_stats[name] = stats
+        return Fetcher(stats=stats)
+
     active_sources: list[Any] = [
         s
         for s in (
-            yt_source,
-            WorldcamsSource(fetcher),
-            CxtvliveSource(fetcher),
-            SkylineSource(fetcher),
-            CamscapeSource(fetcher),
-            EarthCamSource(fetcher),
-            CamSecureSource(fetcher),
-            ExploreOrgSource(fetcher),
-            WildlifeTrustsSource(fetcher),
+            yt_source,  # googleapiclient, not Fetcher — no fetch stats to collect
+            WorldcamsSource(_source_fetcher("worldcams")),
+            CxtvliveSource(_source_fetcher("cxtvlive")),
+            SkylineSource(_source_fetcher("skyline")),
+            CamscapeSource(_source_fetcher("camscape")),
+            EarthCamSource(_source_fetcher("earthcam")),
+            CamSecureSource(_source_fetcher("camsecure")),
+            ExploreOrgSource(_source_fetcher("explore")),
+            WildlifeTrustsSource(_source_fetcher("wildlife-trusts")),
         )
         if s is not None
     ]
+    # The stats keys must match each source's own .name, or the per-source fetch line
+    # silently reports nothing. Fail loudly at startup instead.
+    unmapped = {s.name for s in active_sources} - set(source_stats) - {"youtube-api"}
+    if unmapped:
+        raise ValueError(f"source_stats key mismatch: {sorted(unmapped)}")
 
     store = CatalogueStore()
     history: dict[str, Hist] = {}
@@ -430,16 +448,28 @@ def build_app(
                 unhealthy.append(name)
         return {"sources": sources, "unhealthy": unhealthy}
 
+    def drain_source_stats(name: str) -> dict[str, dict[str, int]]:
+        stats = source_stats.get(name)
+        return stats.drain() if stats is not None else {}
+
     def rebuild_once() -> None:
         log.info("starting catalogue rebuild")
-        entries = build_catalogue(
-            active_sources,
-            is_alive=is_alive,
-            youtube_live=youtube_live,
-            history=history,
-            exclude_categories=cfg.exclude_categories,
-            max_parallel_sources=cfg.max_parallel_sources,
-        )
+        try:
+            entries = build_catalogue(
+                active_sources,
+                is_alive=is_alive,
+                youtube_live=youtube_live,
+                history=history,
+                exclude_categories=cfg.exclude_categories,
+                max_parallel_sources=cfg.max_parallel_sources,
+                fetch_stats=drain_source_stats,
+            )
+        finally:
+            # Drain whatever the aborted cycle managed to record. Without this a rebuild
+            # that raises leaves its counters to merge into the next cycle's totals —
+            # precisely when the numbers matter most.
+            for name in source_stats:
+                drain_source_stats(name)
         store.swap(entries)
         log.info("catalogue rebuilt: %d entries", len(entries))
 
