@@ -252,12 +252,19 @@ every religion and sports cam regardless of which source it came from.
 The available categories are:
 
 ```text
-Airports, Animals, Aquariums, Bars & Nightlife, Beaches, Cities, Education,
-Entertainment, Hotels, Landmarks, Mountains, Music, Nature & Parks, News & Politics,
-Nonprofits & Activism, Other, People & Blogs, Ports & Ships, Religion,
-Science & Technology, Seasonal, Space, Sports, Studios, Traffic, Trains & Railways,
-Travel & Events, Unmapped Category, Water & Waterways, Weather
+Airports, Animals, Aquariums, Bars & Nightlife, Beaches, Cities, Comedy, Education,
+Entertainment, Film & Animation, Gaming, Hotels, Howto & Style, Landmarks, Mountains,
+Music, Nature & Parks, News & Politics, Nonprofits & Activism, Other, People & Blogs,
+Ports & Ships, Religion, Science & Technology, Seasonal, Space, Sports, Studios,
+Traffic, Trains & Railways, Travel & Events, Unmapped Category, Water & Waterways,
+Weather
 ```
+
+`Gaming`, `Film & Animation`, `Howto & Style` and `Comedy` come from YouTube's own
+taxonomy and are the usual culprits for junk sneaking through the search — live game
+streams, 24/7 cartoon loops, lottery-draw channels. `EXCLUDE_CATEGORIES` is the reliable
+way to drop them; `SEARCH_QUERY`'s `-gaming`-style exclusions only filter on title text,
+so they miss anything that doesn't say so in its title.
 
 `Other` is for cams a source left uncategorised *and* whose title gave no usable hint —
 when a source provides no category, the title is checked for a keyword (a species,

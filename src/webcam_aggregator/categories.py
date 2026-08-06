@@ -52,6 +52,12 @@ _MAP: dict[str, str] = {
     "High Definition Hd": "Other",
     "Other": "Other",
 }
+# YouTube Data API category names that pass through as their own group. This MUST cover
+# every value in sources.youtube_api._YT_CATEGORIES that _MAP doesn't remap, or those
+# cams land in "Unmapped Category" — one undifferentiated bucket the user can only take
+# or leave wholesale. Gaming, Film & Animation, Howto & Style and Comedy were missing,
+# which is why 24/7 cartoon loops, Roblox giveaways and lottery draws couldn't be
+# excluded separately. A test guards the two tables against drifting apart again.
 _NATIVE_YT: set[str] = {
     "Entertainment",
     "Travel & Events",
@@ -59,6 +65,10 @@ _NATIVE_YT: set[str] = {
     "News & Politics",
     "Science & Technology",
     "Nonprofits & Activism",
+    "Gaming",
+    "Film & Animation",
+    "Howto & Style",
+    "Comedy",
 }
 
 
