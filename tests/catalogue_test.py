@@ -805,3 +805,115 @@ def test_hist_records_drop_reasons_and_hosts() -> None:
     )
     assert history["camscape"].drop_reasons == {"no-extractor": 1}
     assert history["camscape"].no_extractor_hosts == {"rtsp.me": 1}
+
+
+# ---------------------------------------------------------------------------
+# Source status — the empty-guard used to fall silent (2026-08-05: a full day
+# of zero-cam rebuilds logged nothing at all)
+# ---------------------------------------------------------------------------
+
+
+def test_zero_source_warns_every_single_cycle(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    history: dict[str, Hist] = {}
+    good = _Src("skyline", [_make_candidate(key=f"hls:{i}") for i in range(10)])
+    build_catalogue(
+        [good], is_alive=_always_alive, youtube_live=_no_yt_live, history=history
+    )
+    dead = _Src("skyline", [])
+    for cycle in range(AGREE_TO_ACCEPT + 3):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
+            build_catalogue(
+                [dead],
+                is_alive=_always_alive,
+                youtube_live=_no_yt_live,
+                history=history,
+            )
+        assert any(
+            r.levelno == logging.WARNING and "skyline" in r.getMessage()
+            for r in caplog.records
+        ), f"cycle {cycle} logged nothing"
+
+
+def test_status_transition_logged_once(caplog: pytest.LogCaptureFixture) -> None:
+    history: dict[str, Hist] = {}
+    dead = _Src("skyline", [])
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [dead], is_alive=_always_alive, youtube_live=_no_yt_live, history=history
+        )
+    assert "-> dead" in caplog.text
+    assert history["skyline"].status == "dead"
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [dead], is_alive=_always_alive, youtube_live=_no_yt_live, history=history
+        )
+    assert "-> dead" not in caplog.text  # unchanged status: no repeat transition
+    assert "still dead" in caplog.text  # but it still says something
+
+
+def test_recovery_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    history: dict[str, Hist] = {}
+    build_catalogue(
+        [_Src("skyline", [])],
+        is_alive=_always_alive,
+        youtube_live=_no_yt_live,
+        history=history,
+    )
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("skyline", [_make_candidate(key="hls:back")])],
+            is_alive=_always_alive,
+            youtube_live=_no_yt_live,
+            history=history,
+        )
+    assert "dead -> ok" in caplog.text
+    assert history["skyline"].status == "ok"
+
+
+def test_still_dead_does_not_stack_on_the_fetch_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the fetch line already explains the outage, don't repeat a vaguer one."""
+    history: dict[str, Hist] = {}
+    dead = _Src("skyline", [])
+    stats = _stats({"skyline": {"www.skylinewebcams.com": {"http-403": 11}}})
+    build_catalogue(
+        [dead],
+        is_alive=_always_alive,
+        youtube_live=_no_yt_live,
+        history=history,
+        fetch_stats=stats,
+    )
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [dead],
+            is_alive=_always_alive,
+            youtube_live=_no_yt_live,
+            history=history,
+            fetch_stats=stats,
+        )
+    assert "11 fetched, 0 ok" in caplog.text
+    assert "still dead" not in caplog.text
+
+
+def test_degraded_status_is_tracked() -> None:
+    history: dict[str, Hist] = {}
+    build_catalogue(
+        [_Src("skyline", [_make_candidate(key=f"hls:{i}") for i in range(10)])],
+        is_alive=_always_alive,
+        youtube_live=_no_yt_live,
+        history=history,
+    )
+    build_catalogue(
+        [_Src("skyline", [_make_candidate(key=f"hls:{i}") for i in range(2)])],
+        is_alive=_always_alive,
+        youtube_live=_no_yt_live,
+        history=history,
+    )
+    assert history["skyline"].status == "degraded"

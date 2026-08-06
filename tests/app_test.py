@@ -173,6 +173,7 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
             "kept": 0,
             "discovered": 0,
             "crashed": False,
+            "status": "unknown",
             "fetches": {},
             "drop_reasons": {},
             "no_extractor_hosts": {},

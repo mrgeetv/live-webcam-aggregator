@@ -46,6 +46,8 @@ class Hist:
     # no extractor for (the "write this extractor next" signal). Both on /health.
     drop_reasons: dict[str, int] = field(default_factory=dict)
     no_extractor_hosts: dict[str, int] = field(default_factory=dict)
+    # Coarse health, for transition logging and /health: "ok" | "degraded" | "dead".
+    status: str = "ok"
 
 
 def _to_entry(c: Candidate) -> CatalogueEntry:
@@ -104,8 +106,9 @@ def _log_source_outcome(
     discovered: int,
     fetches: dict[str, dict[str, int]],
     reasons: dict[str, int],
-) -> None:
+) -> bool:
     """One line per source, carrying the fetch outcome so an empty source says WHY.
+    Returns True if it warned, so the caller can avoid stacking a second warning.
 
     A totally-blocked source makes very FEW requests (skyline: one category index plus
     ten category pages, then it has no cam URLs left to try), so any global "top N
@@ -128,7 +131,7 @@ def _log_source_outcome(
                 total,
                 _top(failures, 5),
             )
-            return
+            return True
         # Fetches SUCCEEDED and we still extracted nothing. A failure counter cannot
         # see this: a Cloudflare/consent interstitial is an HTTP 200, so "0 failed" is
         # true and utterly misleading. It is also exactly what a site redesign looks
@@ -139,7 +142,7 @@ def _log_source_outcome(
             name,
             ok_n,
         )
-        return
+        return True
     parts: list[str] = []
     if failures:
         parts.append(f"{total} fetched, {total - ok_n} failed: {_top(failures, 3)}")
@@ -154,8 +157,24 @@ def _log_source_outcome(
             discovered,
             "; ".join(parts),
         )
-        return
+        return False
     log.info("%s: %d kept / %d discovered", name, kept, discovered)
+    return False
+
+
+def _status_for(kept: int, crashed: bool, h: Hist) -> str:
+    """Coarse health from the RAW result: dead (nothing, or it blew up), degraded (a
+    collapse the guard is masking), or ok. Drives the one-line transition log, so an
+    incident reads as a timeline rather than the same line repeated every 6h."""
+    if crashed or kept == 0:
+        return "dead"
+    if (
+        h.last_count is not None
+        and h.last_count > 0
+        and kept < h.last_count * (1 - DROP_THRESHOLD)
+    ):
+        return "degraded"
+    return "ok"
 
 
 def build_catalogue(
@@ -239,13 +258,33 @@ def build_catalogue(
         h.last_fetches = fetch_stats(name) if fetch_stats else {}
         h.drop_reasons = reasons
         h.no_extractor_hosts = no_ext_hosts
-        _log_source_outcome(name, len(kept), discovered, h.last_fetches, reasons)
+        warned = _log_source_outcome(
+            name, len(kept), discovered, h.last_fetches, reasons
+        )
         _log_drop_detail(name, no_ext_hosts, details)
         # Record the RAW result before the guard can mask it — /health alerts on this
         # (crashed, or 0 kept) even when the guard keeps serving the last good set.
         h.last_discovered = discovered
         h.last_raw_kept = len(kept)
         h.last_crashed = crashed
+        # Status is computed from the RAW result, before the guard branches below can
+        # `continue` past it, so a masked failure still registers.
+        status = _status_for(len(kept), crashed, h)
+        if status != h.status:
+            log.warning(
+                "%s: %s -> %s (%d kept, was %s)",
+                name,
+                h.status,
+                status,
+                len(kept),
+                h.last_count if h.last_count is not None else "n/a",
+            )
+        elif status == "dead" and not warned:
+            # Still down, and nothing above said so. The empty-guard used to fall silent
+            # after AGREE_TO_ACCEPT cycles, so the 2026-08-05 outage logged NOTHING for a
+            # full day. A source at zero warns every single cycle it stays there.
+            log.warning("%s: still dead (%d kept / %d discovered)", name, 0, discovered)
+        h.status = status
         if crashed and h.last_kept:
             # A crash is not a genuine "0 cams" result — reuse the last good set and leave
             # history untouched, so two consecutive crashes can't get accepted as an empty

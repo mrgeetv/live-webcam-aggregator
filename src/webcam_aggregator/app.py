@@ -361,6 +361,7 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
                 "kept": 0,
                 "discovered": 0,
                 "crashed": False,
+                "status": "unknown",
                 "fetches": {},
                 "drop_reasons": {},
                 "no_extractor_hosts": {},
@@ -370,6 +371,7 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
             "kept": h.last_raw_kept,
             "discovered": h.last_discovered,
             "crashed": h.last_crashed,
+            "status": h.status,
             # Why, not just what: the fetch outcomes per host plus the liveness drop
             # reasons, so an uptime check's response body is enough to diagnose a source
             # without going to the logs. /health is LAN-only (the edge Caddyfile routes
