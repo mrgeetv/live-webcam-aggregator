@@ -119,7 +119,7 @@ mapping can sit in front. The only requirement is that the front door forwards
 | ---- | ------- |
 | `/playlist.m3u8` | The channel list |
 | `/stream/<id>` | On-demand resolve + HLS manifest proxy (302 for MP4 sources) |
-| `/health` | JSON status: readiness, `healthy` rollup, per-source outcome, memory |
+| `/health` | JSON status: readiness, `healthy` rollup, per-source outcome, build duration, memory |
 
 ### Monitoring
 
@@ -133,16 +133,9 @@ alert when `$.healthy` isn't `true`.
   "streams": 812,
   "unhealthy_sources": ["skyline"],
   "sources": {
-    "skyline": {
-      "kept": 0,
-      "discovered": 0,
-      "crashed": false,
-      "status": "dead",
-      "fetches": {"www.skylinewebcams.com": {"http-403": 11}},
-      "drop_reasons": {},
-      "no_extractor_hosts": {}
-    }
+    "skyline": {"kept": 0, "discovered": 0, "crashed": false, "status": "dead"}
   },
+  "last_build_seconds": 912.4,
   "rss_mb": 210.4
 }
 ```
@@ -158,14 +151,12 @@ Fields:
   source surfaces immediately.
 - `sources.<name>.status` — `ok`, `degraded` (collapsed, guard serving the last good
   set), `dead` (0 cams or crashed), or `unknown` before the first rebuild.
-- `sources.<name>.fetches` — that source's HTTP outcomes for the cycle, per host
-  (`{"host": {"http-403": 11}}`). This is **why** a source came back empty: `0 ok`
-  means blocked or unreachable, while all-`ok` alongside `discovered: 0` means the
-  fetches succeeded and nothing could be extracted (a challenge page returning 200, or
-  a site redesign).
-- `sources.<name>.drop_reasons` — why discovered candidates didn't make the catalogue:
-  `no-extractor`, `resolve-failed`, `dead-manifest`, `yt-offline`.
-- `sources.<name>.no_extractor_hosts` — hosts with no matching extractor, worst first.
+- `last_build_seconds` — wall-clock duration of the last catalogue build attempt
+  (`null` until the first attempt finishes).
+
+The payload answers *what happened*; the *why* — per-host fetch outcomes, drop
+reasons, hosts with no extractor, pacing/backoff counters — is on the log lines each
+rebuild writes (see `DEVELOPMENT.md`, *Catalogue & resolve logging*).
 
 `/health` carries operational detail, so keep it off the public internet — expose only
 `/playlist.m3u8` and `/stream/*` at your reverse proxy.
@@ -204,7 +195,7 @@ All via environment variables (see `.env.example`):
 | `MAX_PARALLEL_SOURCES` | `4` | How many sources discover + liveness-check at once (min 1). Total build concurrency ≈ this × `SCRAPE_WORKERS`; extra sources queue |
 | `PROXY_YOUTUBE` | `false` | `false` redirects players straight to YouTube (lower latency, but playback stops when YouTube's ~6h stream token expires — reselect to resume). `true` proxies YouTube through the server so it keeps playing past that, at a small latency cost |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Externally-reachable base for the emitted URLs |
-| `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness during the catalogue build (sources also run concurrently). Lower it to reduce peak build-time memory (at the cost of a slower build) |
+| `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness during the catalogue build (sources also run concurrently). Lower it to reduce peak build-time memory (at the cost of a slower build). A host that starts rate-limiting (429/503) is backed off adaptively per host, so the effective rate to that host can drop below what this implies |
 | `SEARCH_QUERY` | built-in webcam query | YouTube search terms (`\|`=OR, space=AND, `-`=exclude) |
 | `YOUTUBE_API_KEY` | (required) | YouTube Data API v3 key |
 

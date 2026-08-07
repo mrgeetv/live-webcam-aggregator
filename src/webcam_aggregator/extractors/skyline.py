@@ -23,7 +23,11 @@ class SkylineResolver:
         body = self._fetch(target_url)
         m = _TOKEN.search(body)
         if not m:
-            raise ValueError(f"skyline: no stream token (offline?) in {target_url}")
+            # No URL in the message: it becomes an aggregated INFO detail, where a
+            # URL is both a log-policy leak (paths stay at DEBUG) and a bucket
+            # splitter (details truncate, so URLs shatter one failure mode into
+            # per-prefix counts). Liveness logs the URL at DEBUG already.
+            raise ValueError("skyline: no stream token (offline?)")
         # Short TTL: the token expires, so re-resolve the page periodically (cheap).
         return Resolved(
             url=f"{_MANIFEST}{m.group(1)}", stream_type="hls", ttl_seconds=300

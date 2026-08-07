@@ -696,18 +696,20 @@ def test_source_with_no_fetcher_is_not_misreported(
     assert "fetched" not in caplog.text
 
 
-def test_hist_records_fetches() -> None:
-    history: dict[str, Hist] = {}
-    build_catalogue(
-        [_Src("skyline", [])],
-        drop_reason_for=_always_alive,
-        youtube_live=_no_yt_live,
-        history=history,
-        fetch_stats=_stats({"skyline": {"www.skylinewebcams.com": {"http-403": 11}}}),
-    )
-    assert history["skyline"].last_fetches == {
-        "www.skylinewebcams.com": {"http-403": 11}
-    }
+def test_fetch_stats_reach_the_source_line(caplog: pytest.LogCaptureFixture) -> None:
+    """Per-source fetch outcomes surface on the log line — /health does not carry
+    them, so the line is the only place a blocked source explains itself."""
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("skyline", [])],
+            drop_reason_for=_always_alive,
+            youtube_live=_no_yt_live,
+            history={},
+            fetch_stats=_stats(
+                {"skyline": {"www.skylinewebcams.com": {"http-403": 11}}}
+            ),
+        )
+    assert "11 fetched, 0 ok (11x http-403 www.skylinewebcams.com)" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -781,33 +783,21 @@ def test_clean_source_logs_no_drop_suffix(caplog: pytest.LogCaptureFixture) -> N
     assert "dropped" not in caplog.text
 
 
-def test_yt_offline_is_counted_as_a_reason() -> None:
+def test_yt_offline_is_counted_as_a_reason(caplog: pytest.LogCaptureFixture) -> None:
     """A YouTube API outage spikes this across every source at once."""
-    history: dict[str, Hist] = {}
     cam = _make_candidate(
         source="youtube-api",
         key="yt:DEAD001",
         target="https://www.youtube.com/watch?v=DEAD001",
     )
-    build_catalogue(
-        [_Src("youtube-api", [cam])],
-        drop_reason_for=_always_alive,
-        youtube_live=_no_yt_live,
-        history=history,
-    )
-    assert history["youtube-api"].drop_reasons == {"yt-offline": 1}
-
-
-def test_hist_records_drop_reasons_and_hosts() -> None:
-    history: dict[str, Hist] = {}
-    build_catalogue(
-        [_Src("camscape", [_make_candidate(key="hls:a", target="https://rtsp.me/a")])],
-        drop_reason_for=_drops("no-extractor"),
-        youtube_live=_no_yt_live,
-        history=history,
-    )
-    assert history["camscape"].drop_reasons == {"no-extractor": 1}
-    assert history["camscape"].no_extractor_hosts == {"rtsp.me": 1}
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        build_catalogue(
+            [_Src("youtube-api", [cam])],
+            drop_reason_for=_always_alive,
+            youtube_live=_no_yt_live,
+            history={},
+        )
+    assert "dropped 1 (1x yt-offline)" in caplog.text
 
 
 # ---------------------------------------------------------------------------

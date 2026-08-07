@@ -55,7 +55,7 @@ Configure these in your `.env` file or pass directly to docker-compose.
 | `MAX_PARALLEL_SOURCES` | `4` | How many sources discover + liveness-check at once (min 1); total build concurrency ≈ this × `SCRAPE_WORKERS` |
 | `PROXY_YOUTUBE` | `false` | `true` proxies YouTube through the server (survives the ~6h token expiry, trims DVR to the live edge); `false` (default) redirects players direct to YouTube (lower latency, stops at token expiry) |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Base URL used in playlist and manifest links |
-| `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness; sources also run in parallel, so build-peak concurrency ≈ this × the number running at once |
+| `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness; sources also run in parallel, so build-peak concurrency ≈ this × the number running at once. A host answering 429/503 is backed off adaptively (see *Per-host pacing*), so the effective rate to that host can drop below what this implies |
 | `SEARCH_QUERY` | built-in webcam query | YouTube search terms (`\|`=OR, space=AND, `-`=exclude) |
 | `YOUTUBE_API_KEY` | (required) | YouTube Data API v3 key |
 
@@ -240,7 +240,9 @@ has its own `Fetcher`), because a fully blocked source makes very few requests �
 manages 11 — so a global "top failing hosts" view would rank it below healthy sources'
 routine dead-cam probes. Outcome labels: `ok`, `http-<status>`, `timeout`, `conn-error`,
 `dns-error`, `blocked-ip`, `bad-scheme`, `too-large`, `too-many-redirects`,
-`redirect-no-location`, `unexpected-redirect`.
+`redirect-no-location`, `unexpected-redirect`, `host-backoff` (refused without a
+request — the host's backoff breaker is open, or the wait would exceed ~30s; see
+*Per-host pacing* below).
 
 Each source also carries a coarse `status` (`ok` / `degraded` / `dead`). A **change**
 logs one line, so `grep WARNING` reads as an incident timeline rather than the same
@@ -262,14 +264,46 @@ per-cam detail behind those counts: the specific target URLs with no extractor, 
 failed resolve, and each dead manifest. `DEBUG` also stops CDN session tokens being
 trimmed out of the serving warnings (see *Secrets in logs* below).
 
-Live process memory (`rss_mb`) and the per-source **raw** outcome of the last rebuild
-(`kept`/`discovered`/`crashed`/`status`, plus `fetches`, `drop_reasons` and
-`no_extractor_hosts`) are exposed on the `/health` endpoint, along with a `healthy`
-rollup (`ready` **and** no source crashed or returned 0 this cycle) and
-`unhealthy_sources` for a single uptime check. The per-source counts stay raw even when
-the empty-guard is still serving a failed source's last good set, so a failure surfaces
-immediately. See the *Monitoring* section in the README for the payload shape and the
-state table.
+Live process memory (`rss_mb`), the per-source **raw** outcome of the last rebuild
+(`kept`/`discovered`/`crashed`/`status`), a `healthy` rollup (`ready` **and** no
+source crashed or returned 0 this cycle), `unhealthy_sources` and
+`last_build_seconds` are exposed on the `/health` endpoint. The payload is
+deliberately WHAT-only — the per-host/per-reason detail above lives on the log
+lines. The per-source counts stay raw even when the empty-guard is still serving a
+failed source's last good set, so a failure surfaces immediately. See the
+*Monitoring* section in the README for the payload shape and the state table.
+
+### Per-host pacing
+
+Every build-side fetcher (the source scrapers, the liveness resolver, the manifest
+probe) shares one reactive per-host pacer. It does nothing until a host answers
+**429/503**; from then on requests to that host are spaced (halving the rate per
+consecutive shedding episode) and retries are gated past a growing cooldown window,
+so a rate-limited fetch usually **succeeds on its retry** instead of firing straight
+back into the burst and losing the cam. Sustained shedding escalates: once a wait
+would exceed ~30s, requests fail fast with the `host-backoff` outcome rather than
+queueing, and at the breaker threshold everything fails fast except one probe per
+decay period — so a hard-blocked site costs the build minutes, not hours, at the
+price of that source mostly sitting the cycle out (the empty-guard then serves its
+last good set). A scrape-phase `host-backoff` appears on that source's own log
+line; a resolver/probe one on the cross-source `liveness` line. Serve-time
+fetchers (player manifest/segment traffic and on-play resolves) are deliberately
+unpaced — a build-inflicted cooldown must never stall playback.
+
+Per cycle, each backoff episode logs at `DEBUG`; a breaker trip, or an oversized
+`Retry-After` being honoured, logs a `WARNING`; and the rebuild logs one aggregate
+line per liveness fetcher with failures plus one for pacing:
+
+```text
+liveness resolver: 2518 fetched, 1 failed: 1x http-404 www.skylinewebcams.com
+pacing: 39x www.skylinewebcams.com (310s backoff)
+```
+
+Because a recovered retry still counts as `ok` in the fetch outcomes (and a 503
+whose retry was then refused records `host-backoff`, not `http-503`), the `pacing`
+counters — not the `http-503` counts — are the honest measure of how much a host is
+shedding: a rate-limited build shows near-zero failed fetches but non-zero
+`penalties`, exactly as above.
 
 ### Secrets in logs
 

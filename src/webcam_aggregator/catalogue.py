@@ -39,14 +39,9 @@ class Hist:
     last_discovered: int = 0
     last_raw_kept: int = 0
     last_crashed: bool = False
-    # This source's fetch outcomes for the cycle, {host: {outcome: count}} — what makes
-    # "0 discovered" self-explaining instead of silent. Exposed on /health.
-    last_fetches: dict[str, dict[str, int]] = field(default_factory=dict)
-    # Why this cycle's candidates were dropped, {reason: count}, and the hosts we have
-    # no extractor for (the "write this extractor next" signal). Both on /health.
-    drop_reasons: dict[str, int] = field(default_factory=dict)
-    no_extractor_hosts: dict[str, int] = field(default_factory=dict)
     # Coarse health, for transition logging and /health: "ok" | "degraded" | "dead".
+    # No per-host/per-reason detail here: that goes to the per-cycle log lines,
+    # /health carries only these counts.
     status: str = "ok"
 
 
@@ -77,10 +72,22 @@ def _apply_yt_category(c: Candidate, live: Mapping[str, str]) -> Candidate:
     return c
 
 
-def _top(counts: dict[str, int], n: int) -> str:
-    """ "3x a, 2x b" for the n biggest counts, largest first."""
+def top_counts(counts: dict[str, int], n: int) -> str:
+    """ "3x a, 2x b" for the n biggest counts, largest first. Shared with app's
+    cross-source liveness/pacing lines so every aggregate reads the same."""
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
     return ", ".join(f"{v}x {k}" for k, v in ranked)
+
+
+def failure_counts(fetches: dict[str, dict[str, int]]) -> dict[str, int]:
+    """Flatten {host: {outcome: n}} to {"<outcome> <host>": n}, OK excluded —
+    the shape every fetch-failure log line ranks and prints."""
+    return {
+        f"{outcome} {host}": n
+        for host, outcomes in fetches.items()
+        for outcome, n in outcomes.items()
+        if outcome != OK
+    }
 
 
 def _log_drop_detail(
@@ -94,10 +101,10 @@ def _log_drop_detail(
             "%s: no extractor for %d candidate(s) — top hosts: %s",
             name,
             sum(no_ext_hosts.values()),
-            _top(no_ext_hosts, 5),
+            top_counts(no_ext_hosts, 5),
         )
     if details:
-        log.info("%s: top resolve failures — %s", name, _top(details, 3))
+        log.info("%s: top resolve failures — %s", name, top_counts(details, 3))
 
 
 def _log_source_outcome(
@@ -117,19 +124,14 @@ def _log_source_outcome(
     it visible."""
     total = sum(sum(o.values()) for o in fetches.values())
     ok_n = sum(o.get(OK, 0) for o in fetches.values())
-    failures = {
-        f"{outcome} {host}": n
-        for host, outcomes in fetches.items()
-        for outcome, n in outcomes.items()
-        if outcome != OK
-    }
+    failures = failure_counts(fetches)
     if discovered == 0 and total:
         if ok_n == 0:
             log.warning(
                 "%s: 0 kept / 0 discovered — %d fetched, 0 ok (%s)",
                 name,
                 total,
-                _top(failures, 5),
+                top_counts(failures, 5),
             )
             return True
         # Fetches SUCCEEDED and we still extracted nothing. A failure counter cannot
@@ -145,10 +147,12 @@ def _log_source_outcome(
         return True
     parts: list[str] = []
     if failures:
-        parts.append(f"{total} fetched, {total - ok_n} failed: {_top(failures, 3)}")
+        parts.append(
+            f"{total} fetched, {total - ok_n} failed: {top_counts(failures, 3)}"
+        )
     dropped = sum(reasons.values())
     if dropped:
-        parts.append(f"dropped {dropped} ({_top(reasons, 4)})")
+        parts.append(f"dropped {dropped} ({top_counts(reasons, 4)})")
     if parts:
         log.info(
             "%s: %d kept / %d discovered — %s",
@@ -205,7 +209,10 @@ def build_catalogue(
     # self-contained and returns its kept candidates; the per-source empty guard and the
     # cross-source dedup run serially in the main thread afterwards, so there are no
     # shared-state races. The nested thread_map (inner liveness pool) is safe: the pools
-    # are separate objects and no shared semaphore spans the nesting.
+    # are separate objects, and the one thing that DOES span the nesting — the shared
+    # HostPacer — holds nothing while a thread waits (pacing is sleep-only), so it can
+    # slow a pool down but can never deadlock it. Keep it that way: nothing a fetch
+    # path acquires may be held while waiting on another thread.
     yt_lock = threading.Lock()
 
     def filter_source(src: Source) -> _SourceResult:
@@ -268,11 +275,11 @@ def build_catalogue(
     for r in results:
         name, kept, discovered, crashed = r.name, r.kept, r.discovered, r.crashed
         h = history.setdefault(name, Hist())
-        h.last_fetches = fetch_stats(name) if fetch_stats else {}
-        h.drop_reasons = r.drop_reasons
-        h.no_extractor_hosts = r.no_extractor_hosts
+        # Drained per cycle for the log line only — the WHY lives in the logs, not
+        # on Hist (see the field comment there).
+        fetches = fetch_stats(name) if fetch_stats else {}
         warned = _log_source_outcome(
-            name, len(kept), discovered, h.last_fetches, r.drop_reasons
+            name, len(kept), discovered, fetches, r.drop_reasons
         )
         _log_drop_detail(name, r.no_extractor_hosts, r.resolve_details)
         # Record the RAW result before the guard can mask it — /health alerts on this

@@ -15,7 +15,7 @@ import psutil
 
 from . import config
 from .cache import ResolveCache
-from .catalogue import Hist, build_catalogue
+from .catalogue import Hist, build_catalogue, failure_counts, top_counts
 from .extractors.base import Extractor, Resolved
 from .extractors.baltic import BalticResolver
 from .extractors.direct_hls import DirectHls
@@ -25,7 +25,13 @@ from .extractors.metatag import MetaTagExtractor
 from .extractors.skyline import SkylineResolver
 from .extractors.wetmet import WetmetResolver
 from .extractors.ytdlp import YtDlpExtractor
-from .fetch import MANIFEST_MAX_BYTES, Fetcher, FetcherPostProtocol, FetchStats
+from .fetch import (
+    MANIFEST_MAX_BYTES,
+    Fetcher,
+    FetcherPostProtocol,
+    FetchStats,
+    HostPacer,
+)
 from .logging_redaction import RedactingFilter, scrub
 from .models import (
     DEAD_MANIFEST,
@@ -75,7 +81,11 @@ def _resolver_get(fetcher: Fetcher) -> Callable[[str], str]:
     def get_text(url: str) -> str:
         body = fetcher.get(url)
         if body is None:
-            raise ValueError(f"resolver fetch failed: {url}")
+            # No URL in the message: it feeds the aggregated resolve-failure detail
+            # at INFO, where a URL would leak query tokens AND split one failure
+            # mode into per-URL-prefix buckets (the detail is truncated), making
+            # the count unreadable. The URL is already logged at DEBUG by liveness.
+            raise ValueError("resolver fetch failed")
         return body
 
     return get_text
@@ -91,7 +101,9 @@ def _baltic_post(fetcher: FetcherPostProtocol) -> Callable[[str, dict[str, str]]
             headers={"X-Requested-With": "XMLHttpRequest", "Referer": origin_of(url)},
         )
         if body is None:
-            raise ValueError(f"resolver post failed: {url}")
+            # No URL for the same reason as _resolver_get: the message becomes an
+            # aggregated INFO detail.
+            raise ValueError("resolver post failed")
         return body
 
     return post
@@ -316,6 +328,7 @@ def make_handler(
                     "streams": len(snapshot),
                     "unhealthy_sources": unhealthy,
                     "sources": st["sources"],
+                    "last_build_seconds": st["last_build_seconds"],
                     "rss_mb": round(_total_rss() / 1048576, 1),
                 }
                 self._respond(200, "application/json", json.dumps(payload).encode())
@@ -372,7 +385,10 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
     Values are the raw result even when the empty-guard is masking a failure in the
     served playlist, so a dying source surfaces here immediately. Cold start (nothing
     recorded yet) lists every source at zero; the top-level `ready` distinguishes that
-    from a real 0. Pure, so the payload shape is testable without building the app."""
+    from a real 0. Pure, so the payload shape is testable without building the app.
+
+    WHAT-only (kept/discovered/crashed/status): the WHY — per-host fetch outcomes,
+    drop reasons, no-extractor hosts, pacing — lives on the per-cycle log lines."""
     sources: dict[str, Any] = {}
     unhealthy: list[str] = []
     for name in expected:
@@ -385,9 +401,6 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
                 "discovered": 0,
                 "crashed": False,
                 "status": "unknown",
-                "fetches": {},
-                "drop_reasons": {},
-                "no_extractor_hosts": {},
             }
             continue
         sources[name] = {
@@ -395,14 +408,6 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
             "discovered": h.last_discovered,
             "crashed": h.last_crashed,
             "status": h.status,
-            # Why, not just what: the fetch outcomes per host plus the liveness drop
-            # reasons, so an uptime check's response body is enough to diagnose a source
-            # without going to the logs. Keep /health off the public internet — expose
-            # only the playlist/stream routes at your reverse proxy. FetchStats caps
-            # the host keys, so the payload stays bounded. Copies, not live references.
-            "fetches": {host: dict(o) for host, o in h.last_fetches.items()},
-            "drop_reasons": dict(h.drop_reasons),
-            "no_extractor_hosts": dict(h.no_extractor_hosts),
         }
         if h.last_crashed or h.last_raw_kept == 0:
             unhealthy.append(name)
@@ -417,25 +422,46 @@ def build_app(
     Callable[[], None],
     Callable[[], dict[str, Any]],
 ]:
-    # Sources get their own fetchers below (per-source stats). The resolver/probe
-    # fetchers are shared: their work is per-CANDIDATE, not per-source, so their
-    # failures surface as liveness drop reasons rather than per-source fetch counts.
-    resolver_fetcher = Fetcher(delay=0.0, retries=2)
-    rget = _resolver_get(resolver_fetcher)
+    # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
+    # probe). Reactive: it is a no-op until a host answers 429/503, then that host
+    # is spaced and its retries are gated past the shedding window so they succeed
+    # instead of re-entering the burst. Serve-side fetchers stay unpaced.
+    pacer = HostPacer()
 
-    extractors: dict[str, Extractor] = {
-        "ytdlp": YtDlpExtractor(),
-        "direct": DirectHls(),
-        "metatag": MetaTagExtractor(rget),
-        "baltic": BalticResolver(rget, _baltic_post(resolver_fetcher)),
-        "ipcamlive": IpcamliveResolver(rget),
-        "skyline": SkylineResolver(rget),
-        "earthcam": EarthcamResolver(rget),
-        "wetmet": WetmetResolver(rget),
-    }
-    registry = build_registry(extractors)
-    resolve = make_resolve(registry, extractors)
-    cache: ResolveCache = ResolveCache(resolve, clock=time.monotonic)
+    # The resolve path exists TWICE, from one factory: the build-time set (paced,
+    # stats-wired — liveness hammers a source's own site a second time, so it must
+    # be measured and paced) and the serve-time set (unpaced, stats deliberately
+    # unwired as before — a build-inflicted cooldown must never stall a player's
+    # /stream request, which holds a ResolveCache per-entry lock while resolving).
+    serve_fetcher = Fetcher(delay=0.0, retries=2)
+    resolver_stats = FetchStats()
+    build_fetcher = Fetcher(delay=0.0, retries=2, stats=resolver_stats, pacer=pacer)
+
+    ytdlp = YtDlpExtractor()  # stateless, shared across both sets
+    direct = DirectHls()
+
+    def _extractor_set(f: Fetcher) -> dict[str, Extractor]:
+        # BOTH extractor sets come from this one factory, so an extractor added
+        # here exists for the build-time liveness resolve AND the serve-time
+        # resolve — two hand-maintained dicts would let one silently drift.
+        rget = _resolver_get(f)
+        return {
+            "ytdlp": ytdlp,
+            "direct": direct,
+            "metatag": MetaTagExtractor(rget),
+            "baltic": BalticResolver(rget, _baltic_post(f)),
+            "ipcamlive": IpcamliveResolver(rget),
+            "skyline": SkylineResolver(rget),
+            "earthcam": EarthcamResolver(rget),
+            "wetmet": WetmetResolver(rget),
+        }
+
+    serve_extractors = _extractor_set(serve_fetcher)
+    build_extractors = _extractor_set(build_fetcher)
+    registry = build_registry(serve_extractors)  # same keys in both (one factory)
+    resolve_serve = make_resolve(registry, serve_extractors)
+    resolve_build = make_resolve(registry, build_extractors)
+    cache: ResolveCache = ResolveCache(resolve_serve, clock=time.monotonic)
 
     def _new_yt_client() -> Any:
         import googleapiclient.discovery
@@ -475,7 +501,7 @@ def build_app(
     def _source_fetcher(name: str) -> Fetcher:
         stats = FetchStats()
         source_stats[name] = stats
-        return Fetcher(stats=stats)
+        return Fetcher(stats=stats, pacer=pacer)
 
     active_sources: list[Any] = [
         s
@@ -501,9 +527,19 @@ def build_app(
     store = CatalogueStore()
     history: dict[str, Hist] = {}
     # delay=0: liveness verify-fetches hit CDNs (not the scraped sites) and run
-    # concurrently, so politeness spacing isn't needed here.
-    probe_fetcher = Fetcher(delay=0.0, retries=1)
-    drop_reason_for = make_liveness_check(resolve, probe_fetcher.get)
+    # concurrently, so politeness spacing isn't needed here. retries=2 so a paced
+    # 503 gets its post-cooldown retry (range(retries) means retries=1 is ZERO
+    # retries), but retry_only_shedding keeps the dead-cam long tail (404s,
+    # 20s timeouts) at one attempt each, exactly as before.
+    probe_stats = FetchStats()
+    probe_fetcher = Fetcher(
+        delay=0.0,
+        retries=2,
+        stats=probe_stats,
+        pacer=pacer,
+        retry_only_shedding=True,
+    )
+    drop_reason_for = make_liveness_check(resolve_build, probe_fetcher.get)
 
     def youtube_live(ids: Any) -> dict[str, str]:
         if yt_source is None:
@@ -524,6 +560,11 @@ def build_app(
 
     expected_sources = [s.name for s in active_sources]
 
+    # The one cross-source number /health carries; everything else the build-side
+    # diagnostics produce (liveness fetch outcomes, pacing counters) goes to the
+    # per-cycle log lines only — see _source_status_for on why.
+    diag: dict[str, Any] = {"last_build_seconds": None}
+
     def source_status() -> dict[str, Any]:
         # Copy defensively: build_catalogue mutates `history` from the rebuild thread,
         # so a live /health request must not crash on "changed size during iteration".
@@ -531,14 +572,46 @@ def build_app(
             hist = dict(history)
         except RuntimeError:
             hist = {}
-        return _source_status_for(expected_sources, hist)
+        out = _source_status_for(expected_sources, hist)
+        out.update(diag)
+        return out
 
     def drain_source_stats(name: str) -> dict[str, dict[str, int]]:
         stats = source_stats.get(name)
         return stats.drain() if stats is not None else {}
 
+    def _report_build_diag() -> None:
+        # The liveness fetchers and pacer are cross-source, so they report here
+        # rather than on a source's own line. One aggregate INFO line each, only
+        # when something failed — a healthy cycle adds no noise.
+        liveness = {"resolver": resolver_stats.drain(), "probe": probe_stats.drain()}
+        pacing = pacer.drain()
+        for label, fetches in liveness.items():
+            failures = failure_counts(fetches)
+            if failures:
+                total = sum(sum(o.values()) for o in fetches.values())
+                log.info(
+                    "liveness %s: %d fetched, %d failed: %s",
+                    label,
+                    total,
+                    sum(failures.values()),
+                    top_counts(failures, 3),
+                )
+        if pacing:
+            top_pace = sorted(
+                pacing.items(), key=lambda kv: (-kv[1]["penalties"], kv[0])
+            )[:3]
+            log.info(
+                "pacing: %s",
+                ", ".join(
+                    f"{int(v['penalties'])}x {h} ({v['backoff_seconds']:.0f}s backoff)"
+                    for h, v in top_pace
+                ),
+            )
+
     def rebuild_once() -> None:
         log.info("starting catalogue rebuild")
+        t0 = time.monotonic()
         try:
             entries = build_catalogue(
                 active_sources,
@@ -555,8 +628,14 @@ def build_app(
             # precisely when the numbers matter most.
             for name in source_stats:
                 drain_source_stats(name)
+            _report_build_diag()
+            diag["last_build_seconds"] = round(time.monotonic() - t0, 1)
         store.swap(entries)
-        log.info("catalogue rebuilt: %d entries", len(entries))
+        log.info(
+            "catalogue rebuilt: %d entries in %.0fs",
+            len(entries),
+            time.monotonic() - t0,
+        )
 
     return store, cache, rebuild_once, source_status
 
@@ -580,6 +659,9 @@ def main() -> None:
         handler.addFilter(RedactingFilter())
     store, cache, rebuild_once, source_status = build_app(cfg)
 
+    # Unpaced by design: this is the serve-time hot path (manifest refreshes every
+    # few seconds per viewer, plus segment relay) — per-host pacing here would stall
+    # playback, and CDN traffic is not what the pacer protects against.
     manifest_fetcher = Fetcher(delay=0.0, retries=1, byte_cap=MANIFEST_MAX_BYTES)
     handler_cls = make_handler(
         store,

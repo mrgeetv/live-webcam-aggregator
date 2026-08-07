@@ -275,6 +275,7 @@ def test_get_retries_on_request_exception(
     class _GoodResp:
         is_redirect: bool = False
         is_permanent_redirect: bool = False
+        status_code: int = 200
 
         def raise_for_status(self) -> None: ...
 
@@ -349,6 +350,7 @@ def test_get_oversized_body_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
     class _BigResp:
         is_redirect: bool = False
         is_permanent_redirect: bool = False
+        status_code: int = 200
 
         def raise_for_status(self) -> None: ...
 
@@ -377,6 +379,7 @@ def test_get_respects_custom_byte_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     class _BigResp:
         is_redirect: bool = False
         is_permanent_redirect: bool = False
+        status_code: int = 200
 
         def raise_for_status(self) -> None: ...
 
@@ -474,6 +477,7 @@ def test_post_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     class _OkResp:
         is_redirect: bool = False
         is_permanent_redirect: bool = False
+        status_code: int = 200
 
         def raise_for_status(self) -> None: ...
 
@@ -522,6 +526,7 @@ def test_post_caller_can_override_content_type(
     class _OkResp:
         is_redirect: bool = False
         is_permanent_redirect: bool = False
+        status_code: int = 200
 
         def raise_for_status(self) -> None: ...
 
@@ -636,6 +641,7 @@ def test_pin_dns_pins_getaddrinfo_then_clears() -> None:
 class _PinStubResp:
     is_redirect: bool = False
     is_permanent_redirect: bool = False
+    status_code: int = 200
 
     def raise_for_status(self) -> None: ...
 
