@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.11.2](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.1...v2.11.2) (2026-08-07)
+
+### Bug Fixes
+
+* **scraper:** reject empty HLS playlists and outlive skyline's token lapse ([#111](https://github.com/mrgeetv/live-webcam-aggregator/issues/111)) ([39091fa](https://github.com/mrgeetv/live-webcam-aggregator/commit/39091fad892eccfa35fd393c24a2c70489f0496a)), closes [#EXTM3U](https://github.com/mrgeetv/live-webcam-aggregator/issues/EXTM3U) [#EXT-X-ENDLIST](https://github.com/mrgeetv/live-webcam-aggregator/issues/EXT-X-ENDLIST) [#EXTM3U](https://github.com/mrgeetv/live-webcam-aggregator/issues/EXTM3U)
+
 ## [2.11.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.0...v2.11.1) (2026-08-07)
 
 ### Bug Fixes
