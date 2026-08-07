@@ -58,7 +58,8 @@ The app is two phases, decoupled by a catalogue snapshot:
   ladder (e.g. Skyline's Clappr token / a `videoId` JS var → a page or watch URL).
   Add the instance to `active_sources` in `build_app`. Set `Candidate.predisc_key` so
   dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
-  `None` = never merged).
+  `None` = never merged). Add the site to the README *Sources* table and the module
+  to DEVELOPMENT's project-structure tree in the same change.
 - **Add an extractor** — implement the `Extractor` protocol (`extractors/base.py`):
   `resolve(target_url) -> Resolved(url, stream_type, ttl_seconds)`. Add it to the
   `_extractor_set` factory in `build_app` AND a predicate to `build_registry`
@@ -69,7 +70,16 @@ The app is two phases, decoupled by a catalogue snapshot:
   holds a `ResolveCache` per-entry lock). Never hand-maintain the sets separately.
   If the CDN's tokens are IP-bound, ALSO add its host to `_DIRECT_PLAYBACK_HOSTS`
   (passthrough) or `_PROXY_SEGMENT_HOSTS` (segment relay) in `serving.py`, or
-  segments will 403.
+  segments will 403. Three rules for the extractor body: raised error messages
+  carry NO URL (they feed the aggregated `resolve-failed` detail at INFO — a URL
+  leaks paths/tokens and shatters one failure mode into per-prefix buckets when the
+  detail truncates; liveness already logs the URL at DEBUG); `ttl_seconds` must sit
+  BELOW the upstream token's real lifetime (`ResolveCache` serves the entry for
+  ttl × 0.8, and `None` means ~8 min — a too-long TTL hands players a token that
+  lapsed while nobody watched; short is cheap, a re-resolve is one fetch on the
+  unpaced serve path); and if the page or CDN gates on `Referer`, add the host to
+  `_REFERER_HOSTS` in `fetch.py` (a missing Referer can 403 — or worse, serve a
+  decoy 200).
 - **Category mapping** lives in `categories.py` (`_MAP`); YouTube categories come
   from the Data API (`videos.list` categoryId) and pass through, everything else
   maps to the unified taxonomy. `map_category` splits the two miss cases: a source

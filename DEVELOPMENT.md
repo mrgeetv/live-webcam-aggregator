@@ -156,13 +156,13 @@ live-webcam-aggregator/
 │       ├── app.py              # App wiring and main loop
 │       ├── config.py           # Environment variable config
 │       ├── models.py           # Data contracts and stream models
-│       ├── fetch.py            # HTTP fetch helpers
+│       ├── fetch.py            # HTTP fetch: SSRF guard, per-host pacing, stats
 │       ├── registry.py         # Extractor registry
 │       ├── dedup.py            # Deduplication and field merge
 │       ├── categories.py       # Category taxonomy mapping
 │       ├── catalogue.py        # Catalogue builder and liveness validation
 │       ├── cache.py            # Resolve cache (TTL, LRU, negative caching)
-│       ├── serving.py          # Serving logic (playlist render, manifest/segment proxy)
+│       ├── serving.py          # Playlist render, manifest gate + manifest/segment proxy
 │       ├── signing.py          # HMAC signing of proxied manifest/segment URLs
 │       ├── extractors/         # Stream URL extractors
 │       │   ├── ytdlp.py        # yt-dlp extractor
