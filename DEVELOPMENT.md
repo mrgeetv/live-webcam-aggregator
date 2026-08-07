@@ -275,11 +275,10 @@ would exceed ~30s, requests fail fast with the `host-backoff` outcome rather tha
 queueing, and at the breaker threshold everything fails fast except one probe per
 decay period — so a hard-blocked site costs the build minutes, not hours, at the
 price of that source mostly sitting the cycle out (the empty-guard then serves its
-last good set). A scrape-phase `host-backoff` appears in that source's own
-`fetches`; a resolver/probe one appears in the cross-source `liveness_fetches`
-block instead. Serve-time fetchers (player manifest/segment traffic and on-play
-resolves) are deliberately unpaced — a build-inflicted cooldown must never stall
-playback.
+last good set). A scrape-phase `host-backoff` appears on that source's own log
+line; a resolver/probe one on the cross-source `liveness` line. Serve-time
+fetchers (player manifest/segment traffic and on-play resolves) are deliberately
+unpaced — a build-inflicted cooldown must never stall playback.
 
 Per cycle, each backoff episode logs at `DEBUG`; a breaker trip, or an oversized
 `Retry-After` being honoured, logs a `WARNING`; and the rebuild logs one aggregate
@@ -296,16 +295,14 @@ counters — not the `http-503` counts — are the honest measure of how much a 
 shedding: after this change a rate-limited build shows near-zero failed fetches but
 non-zero `penalties`.
 
-Live process memory (`rss_mb`) and the per-source **raw** outcome of the last rebuild
-(`kept`/`discovered`/`crashed`/`status`, plus `fetches`, `drop_reasons` and
-`no_extractor_hosts`) are exposed on the `/health` endpoint, along with a `healthy`
-rollup (`ready` **and** no source crashed or returned 0 this cycle),
-`unhealthy_sources` for a single uptime check, and the cross-source build diagnostics:
-`liveness_fetches` (the resolver/probe fetchers' HTTP outcomes per host), `pacing`
-(per-host penalty/backoff counters) and `last_build_seconds`. The per-source counts
-stay raw even when the empty-guard is still serving a failed source's last good set,
-so a failure surfaces immediately. See the *Monitoring* section in the README for the
-payload shape and the state table.
+Live process memory (`rss_mb`), the per-source **raw** outcome of the last rebuild
+(`kept`/`discovered`/`crashed`/`status`), a `healthy` rollup (`ready` **and** no
+source crashed or returned 0 this cycle), `unhealthy_sources` and
+`last_build_seconds` are exposed on the `/health` endpoint. The payload is
+deliberately WHAT-only — the per-host/per-reason detail above lives on the log
+lines. The per-source counts stay raw even when the empty-guard is still serving a
+failed source's last good set, so a failure surfaces immediately. See the
+*Monitoring* section in the README for the payload shape and the state table.
 
 ### Secrets in logs
 

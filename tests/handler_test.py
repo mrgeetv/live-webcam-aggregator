@@ -92,8 +92,6 @@ def _healthy_status(name: str = "fake", kept: int = 1) -> dict[str, Any]:
     return {
         "sources": {name: {"kept": kept, "discovered": kept, "crashed": False}},
         "unhealthy": [],
-        "liveness_fetches": {"resolver": {}, "probe": {}},
-        "pacing": {},
         "last_build_seconds": None,
     }
 
@@ -254,15 +252,21 @@ def test_health_returns_correct_json() -> None:
         assert isinstance(health["streams"], int)
         assert health["streams"] >= 1
         assert "rss_mb" in health
-        # Cross-source build diagnostics ride along so an uptime check's response
-        # body is enough to see pacing/liveness trouble without the logs.
-        assert health["liveness_fetches"] == {"resolver": {}, "probe": {}}
-        assert health["pacing"] == {}
         assert health["last_build_seconds"] is None
         assert health["sources"]["fake"] == {
             "kept": 3,
             "discovered": 3,
             "crashed": False,
+        }
+        # The exact payload shape — diagnostic detail belongs in the logs.
+        assert set(health) == {
+            "ready",
+            "healthy",
+            "streams",
+            "unhealthy_sources",
+            "sources",
+            "last_build_seconds",
+            "rss_mb",
         }
     finally:
         server.shutdown()
@@ -276,8 +280,6 @@ def test_health_unhealthy_when_source_failed() -> None:
     status = {
         "sources": {"fake": {"kept": 0, "discovered": 0, "crashed": True}},
         "unhealthy": ["fake"],
-        "liveness_fetches": {"resolver": {}, "probe": {}},
-        "pacing": {},
         "last_build_seconds": None,
     }
     server, port = _start_server(store, source_status=status)

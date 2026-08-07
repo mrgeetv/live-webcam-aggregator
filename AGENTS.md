@@ -109,8 +109,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   detail bucket instead of thousands of URL-prefix ones. A third seam covers what
   the per-source stats can't see: the cross-source liveness fetchers (resolver +
   probe) carry their own named `FetchStats`, and the pacer counts per-host
-  penalties/backoff — both drained per rebuild into one INFO line each and the
-  `/health` `liveness_fetches` / `pacing` blocks (plus `last_build_seconds`).
+  penalties/backoff — both drained per rebuild into one INFO line each. All of this
+  detail is LOG-ONLY: `/health` stays a compact WHAT summary (per-source
+  `kept`/`discovered`/`crashed`/`status`, plus `last_build_seconds`).
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and
   ALWAYS validate: a bad/unparseable value must log a `WARNING` at startup and fall
   back to the default, never crash or silently misbehave (e.g. `_int_env` warns on a
@@ -137,9 +138,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   reactive `fetch.HostPacer`: idle until a host sheds, then per-host spacing plus a
   growing cooldown that gates the RETRY past the shedding window (that recovery is the
   whole mechanism — a retry that fires straight back into the burst just loses the cam
-  twice), escalating to a fail-fast breaker (`host-backoff` outcome — in the SOURCE's
-  `fetches` for the scrape phase, but in the cross-source `liveness_fetches` block for
-  the resolver/probe phase) so a hard-blocked host costs minutes, not an unbounded
+  twice), escalating to a fail-fast breaker (`host-backoff` outcome — on the SOURCE's
+  log line for the scrape phase, on the cross-source `liveness` line for the
+  resolver/probe phase) so a hard-blocked host costs minutes, not an unbounded
   build. Three scope rules that must survive refactors: serve-time fetchers stay UNPACED (a build-inflicted cooldown must not
   stall playback — hence the build/serve extractor-set split); `get_segment` is never
   paced; and yt-dlp/googleapiclient traffic doesn't pass through `Fetcher`, so the

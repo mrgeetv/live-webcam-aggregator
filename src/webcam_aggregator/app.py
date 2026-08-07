@@ -328,11 +328,6 @@ def make_handler(
                     "streams": len(snapshot),
                     "unhealthy_sources": unhealthy,
                     "sources": st["sources"],
-                    # Cross-source build diagnostics: the liveness fetchers' HTTP
-                    # outcomes per host, the pacer's per-host penalty/backoff
-                    # counters, and how long the last catalogue build took.
-                    "liveness_fetches": st["liveness_fetches"],
-                    "pacing": st["pacing"],
                     "last_build_seconds": st["last_build_seconds"],
                     "rss_mb": round(_total_rss() / 1048576, 1),
                 }
@@ -390,7 +385,10 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
     Values are the raw result even when the empty-guard is masking a failure in the
     served playlist, so a dying source surfaces here immediately. Cold start (nothing
     recorded yet) lists every source at zero; the top-level `ready` distinguishes that
-    from a real 0. Pure, so the payload shape is testable without building the app."""
+    from a real 0. Pure, so the payload shape is testable without building the app.
+
+    WHAT-only (kept/discovered/crashed/status): the WHY — per-host fetch outcomes,
+    drop reasons, no-extractor hosts, pacing — lives on the per-cycle log lines."""
     sources: dict[str, Any] = {}
     unhealthy: list[str] = []
     for name in expected:
@@ -403,9 +401,6 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
                 "discovered": 0,
                 "crashed": False,
                 "status": "unknown",
-                "fetches": {},
-                "drop_reasons": {},
-                "no_extractor_hosts": {},
             }
             continue
         sources[name] = {
@@ -413,14 +408,6 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
             "discovered": h.last_discovered,
             "crashed": h.last_crashed,
             "status": h.status,
-            # Why, not just what: the fetch outcomes per host plus the liveness drop
-            # reasons, so an uptime check's response body is enough to diagnose a source
-            # without going to the logs. Keep /health off the public internet — expose
-            # only the playlist/stream routes at your reverse proxy. FetchStats caps
-            # the host keys, so the payload stays bounded. Copies, not live references.
-            "fetches": {host: dict(o) for host, o in h.last_fetches.items()},
-            "drop_reasons": dict(h.drop_reasons),
-            "no_extractor_hosts": dict(h.no_extractor_hosts),
         }
         if h.last_crashed or h.last_raw_kept == 0:
             unhealthy.append(name)
@@ -573,13 +560,10 @@ def build_app(
 
     expected_sources = [s.name for s in active_sources]
 
-    # Build-side diagnostics that are cross-source (the liveness fetchers and the
-    # pacer serve every source), refreshed each rebuild and exposed on /health.
-    diag: dict[str, Any] = {
-        "liveness_fetches": {},
-        "pacing": {},
-        "last_build_seconds": None,
-    }
+    # The one cross-source number /health carries; everything else the build-side
+    # diagnostics produce (liveness fetch outcomes, pacing counters) goes to the
+    # per-cycle log lines only — see _source_status_for on why.
+    diag: dict[str, Any] = {"last_build_seconds": None}
 
     def source_status() -> dict[str, Any]:
         # Copy defensively: build_catalogue mutates `history` from the rebuild thread,
@@ -602,8 +586,6 @@ def build_app(
         # when something failed — a healthy cycle adds no noise.
         liveness = {"resolver": resolver_stats.drain(), "probe": probe_stats.drain()}
         pacing = pacer.drain()
-        diag["liveness_fetches"] = liveness
-        diag["pacing"] = pacing
         for label, fetches in liveness.items():
             failures = failure_counts(fetches)
             if failures:

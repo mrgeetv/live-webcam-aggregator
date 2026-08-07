@@ -39,14 +39,9 @@ class Hist:
     last_discovered: int = 0
     last_raw_kept: int = 0
     last_crashed: bool = False
-    # This source's fetch outcomes for the cycle, {host: {outcome: count}} — what makes
-    # "0 discovered" self-explaining instead of silent. Exposed on /health.
-    last_fetches: dict[str, dict[str, int]] = field(default_factory=dict)
-    # Why this cycle's candidates were dropped, {reason: count}, and the hosts we have
-    # no extractor for (the "write this extractor next" signal). Both on /health.
-    drop_reasons: dict[str, int] = field(default_factory=dict)
-    no_extractor_hosts: dict[str, int] = field(default_factory=dict)
     # Coarse health, for transition logging and /health: "ok" | "degraded" | "dead".
+    # No per-host/per-reason detail here: that goes to the per-cycle log lines,
+    # /health carries only these counts.
     status: str = "ok"
 
 
@@ -280,11 +275,11 @@ def build_catalogue(
     for r in results:
         name, kept, discovered, crashed = r.name, r.kept, r.discovered, r.crashed
         h = history.setdefault(name, Hist())
-        h.last_fetches = fetch_stats(name) if fetch_stats else {}
-        h.drop_reasons = r.drop_reasons
-        h.no_extractor_hosts = r.no_extractor_hosts
+        # Drained per cycle for the log line only — the WHY lives in the logs, not
+        # on Hist (see the field comment there).
+        fetches = fetch_stats(name) if fetch_stats else {}
         warned = _log_source_outcome(
-            name, len(kept), discovered, h.last_fetches, r.drop_reasons
+            name, len(kept), discovered, fetches, r.drop_reasons
         )
         _log_drop_detail(name, r.no_extractor_hosts, r.resolve_details)
         # Record the RAW result before the guard can mask it — /health alerts on this

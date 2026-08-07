@@ -119,7 +119,7 @@ mapping can sit in front. The only requirement is that the front door forwards
 | ---- | ------- |
 | `/playlist.m3u8` | The channel list |
 | `/stream/<id>` | On-demand resolve + HLS manifest proxy (302 for MP4 sources) |
-| `/health` | JSON status: readiness, `healthy` rollup, per-source outcome, build diagnostics, memory |
+| `/health` | JSON status: readiness, `healthy` rollup, per-source outcome, build duration, memory |
 
 ### Monitoring
 
@@ -133,21 +133,8 @@ alert when `$.healthy` isn't `true`.
   "streams": 812,
   "unhealthy_sources": ["skyline"],
   "sources": {
-    "skyline": {
-      "kept": 0,
-      "discovered": 0,
-      "crashed": false,
-      "status": "dead",
-      "fetches": {"www.skylinewebcams.com": {"http-403": 11}},
-      "drop_reasons": {},
-      "no_extractor_hosts": {}
-    }
+    "skyline": {"kept": 0, "discovered": 0, "crashed": false, "status": "dead"}
   },
-  "liveness_fetches": {
-    "resolver": {"www.skylinewebcams.com": {"ok": 2497, "http-503": 21}},
-    "probe": {"hd-auth.skylinewebcams.com": {"ok": 1930}}
-  },
-  "pacing": {"www.skylinewebcams.com": {"penalties": 21, "backoff_seconds": 84.0}},
   "last_build_seconds": 912.4,
   "rss_mb": 210.4
 }
@@ -164,25 +151,12 @@ Fields:
   source surfaces immediately.
 - `sources.<name>.status` — `ok`, `degraded` (collapsed, guard serving the last good
   set), `dead` (0 cams or crashed), or `unknown` before the first rebuild.
-- `sources.<name>.fetches` — that source's HTTP outcomes for the cycle, per host
-  (`{"host": {"http-403": 11}}`). This is **why** a source came back empty: `0 ok`
-  means blocked or unreachable, while all-`ok` alongside `discovered: 0` means the
-  fetches succeeded and nothing could be extracted (a challenge page returning 200, or
-  a site redesign).
-- `sources.<name>.drop_reasons` — why discovered candidates didn't make the catalogue:
-  `no-extractor`, `resolve-failed`, `dead-manifest`, `yt-offline`.
-- `sources.<name>.no_extractor_hosts` — hosts with no matching extractor, worst first.
-- `liveness_fetches` — HTTP outcomes of the build's cross-source liveness fetchers
-  (`resolver` re-fetches source pages to resolve streams, `probe` verifies the HLS
-  manifests), per host, capped like the per-source block. This is where a source site
-  rate-limiting the build shows up.
-- `pacing` — per-host backoff counters from the last build: `penalties` (429/503
-  responses fed back to the pacer) and `backoff_seconds` (thread-seconds spent waiting
-  behind that host's gate). Non-empty means a host was shedding load and the build
-  slowed itself down for it; `penalties` is the honest "are we hammering them" signal,
-  since a fetch that recovers on its gated retry still counts as `ok`.
 - `last_build_seconds` — wall-clock duration of the last catalogue build (`null`
   until the first one completes).
+
+The payload answers *what happened*; the *why* — per-host fetch outcomes, drop
+reasons, hosts with no extractor, pacing/backoff counters — is on the log lines each
+rebuild writes (see `DEVELOPMENT.md`, *Catalogue & resolve logging*).
 
 `/health` carries operational detail, so keep it off the public internet — expose only
 `/playlist.m3u8` and `/stream/*` at your reverse proxy.

@@ -184,10 +184,8 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
     st = source_status()
     assert st["unhealthy"] == []
     assert st["sources"], "expected the source roster to be listed at cold start"
-    # The /health handler indexes these unguarded — losing them from the real
+    # The /health handler indexes this unguarded — losing it from the real
     # source_status() would be a 500 on /health with an otherwise green suite.
-    assert st["liveness_fetches"] == {}
-    assert st["pacing"] == {}
     assert st["last_build_seconds"] is None
     assert all(
         s
@@ -196,48 +194,25 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
             "discovered": 0,
             "crashed": False,
             "status": "unknown",
-            "fetches": {},
-            "drop_reasons": {},
-            "no_extractor_hosts": {},
         }
         for s in st["sources"].values()
     )
 
 
-def test_health_sources_carry_the_diagnosis() -> None:
-    """The uptime check's response body should be enough to diagnose a dead source
-    without going to the logs."""
+def test_health_sources_stay_lean() -> None:
+    """Per-source payload is kept/discovered/crashed/status only; the diagnostic
+    detail lives on the per-cycle log lines."""
     from webcam_aggregator.app import (
         _source_status_for,  # pyright: ignore[reportPrivateUsage]
     )
     from webcam_aggregator.catalogue import Hist
 
-    history = {
-        "skyline": Hist(
-            last_raw_kept=0,
-            last_discovered=0,
-            last_crashed=False,
-            last_fetches={"www.skylinewebcams.com": {"http-403": 11}},
-            drop_reasons={"dead-manifest": 12},
-            no_extractor_hosts={"rtsp.me": 3},
-        )
-    }
+    history = {"skyline": Hist(last_raw_kept=0, last_discovered=11, last_crashed=False)}
     st = _source_status_for(["skyline"], history)
-    src = st["sources"]["skyline"]
-    assert src["fetches"] == {"www.skylinewebcams.com": {"http-403": 11}}
-    assert src["drop_reasons"] == {"dead-manifest": 12}
-    assert src["no_extractor_hosts"] == {"rtsp.me": 3}
+    assert st["sources"]["skyline"] == {
+        "kept": 0,
+        "discovered": 11,
+        "crashed": False,
+        "status": "ok",
+    }
     assert st["unhealthy"] == ["skyline"]
-
-
-def test_health_detail_is_a_copy_not_a_live_reference() -> None:
-    """A /health request must not hand out the rebuild thread's mutable state."""
-    from webcam_aggregator.app import (
-        _source_status_for,  # pyright: ignore[reportPrivateUsage]
-    )
-    from webcam_aggregator.catalogue import Hist
-
-    h = Hist(last_raw_kept=1, drop_reasons={"dead-manifest": 1})
-    st = _source_status_for(["skyline"], {"skyline": h})
-    h.drop_reasons["dead-manifest"] = 999
-    assert st["sources"]["skyline"]["drop_reasons"] == {"dead-manifest": 1}

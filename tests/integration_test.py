@@ -96,8 +96,6 @@ def test_end_to_end_server() -> None:
         source_status=lambda: {
             "sources": {"youtube-api": {"kept": 1, "discovered": 1, "crashed": False}},
             "unhealthy": [],
-            "liveness_fetches": {"resolver": {}, "probe": {}},
-            "pacing": {},
             "last_build_seconds": None,
         },
         segment_fetch=lambda u, r: (200, "video/mp2t", None, b"seg"),
