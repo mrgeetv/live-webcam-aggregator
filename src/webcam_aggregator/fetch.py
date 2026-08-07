@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar
 from urllib.parse import urlencode, urljoin, urlsplit
 
@@ -85,6 +86,7 @@ TOO_LARGE = "too-large"
 TOO_MANY_REDIRECTS = "too-many-redirects"
 REDIRECT_NO_LOCATION = "redirect-no-location"
 UNEXPECTED_REDIRECT = "unexpected-redirect"
+HOST_BACKOFF = "host-backoff"  # refused by the HostPacer: host is shedding load
 
 
 def _validate_ip(url: str) -> tuple[str | None, str]:
@@ -268,6 +270,248 @@ class FetchStats:
         return out
 
 
+# --- reactive per-host pacing -------------------------------------------------
+# A catalogue build aims a whole thread pool at one host (a scraper's pages, and the
+# liveness resolver's second pass, all live on that source's domain), and a host that
+# starts shedding load (429/503) turns that into a burst of self-inflicted failures —
+# each a cam silently missing from the playlist. The pacer is the feedback loop:
+# invisible until a host actually sheds, then it spaces requests and gates retries
+# past the shedding window so they succeed instead of re-entering the burst.
+
+_PACE_INTERVAL = 0.125  # spacing after one strike (8 req/s), doubling per strike
+_PACE_INTERVAL_CAP = 4.0
+_PACE_COOLDOWN = 2.0  # gate after a penalty, doubling per strike
+_PACE_COOLDOWN_CAP = 60.0
+_PACE_RETRY_AFTER_CAP = 300.0  # honour an explicit Retry-After up to this long
+_PACE_DECAY = 30.0  # ungated quiet seconds that shed one strike
+_PACE_BREAK_AT = 8  # strikes at which acquire() fails fast (one probe per period)
+_PACE_MAX_WAIT = 30.0  # never queue a request longer than this — refuse instead
+_PACE_MAX_HOSTS = 1024  # host names come from scraped HTML — bound them
+_SHEDDING_STATUSES = (429, 503)  # the responses that mean "you, specifically: slower"
+_SHEDDING_OUTCOMES = tuple(f"http-{c}" for c in _SHEDDING_STATUSES)
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Parse a seconds-form Retry-After header. The HTTP-date form is deliberately
+    ignored: it is rare on the hosts we meet, and a misparsed date is worse than
+    letting the adaptive ladder find the window itself."""
+    if not value:
+        return None
+    try:
+        secs = float(value.strip())
+    except ValueError:
+        return None
+    return secs if secs > 0 else None
+
+
+@dataclass
+class _HostPace:
+    strikes: int = 0
+    gen: int = 0  # window generation: one escalation per burst, not per failure
+    cooldown_until: float = 0.0
+    next_allowed: float = 0.0  # the next reserved send slot while throttled
+    quiet_since: float = 0.0  # decay anchor: quiet time accrues from here
+    penalties: int = 0
+    backoff_seconds: float = 0.0  # thread-seconds slept behind this host's gate
+
+
+class HostPacer:
+    """Reactive per-host politeness, shared by every build-side Fetcher.
+
+    Purely sleep-based: a waiting thread holds nothing, so an exception path cannot
+    leak capacity and no deadlock is possible even though the pacer spans nested
+    thread pools. A host that has never been penalised is a dict miss — zero
+    overhead and zero state until it answers 429/503.
+
+    On a penalty the host gets a cooldown window (doubling per strike, capped) and
+    subsequent requests are spaced (interval doubling per strike). A send slot is
+    reserved AT OR AFTER the window end, so queued waiters release one interval
+    apart instead of all firing the moment the window expires — the release burst
+    is what re-trips a limiter, and slot spacing removes it without jitter. Strikes
+    shed one per _PACE_DECAY of UNGATED quiet — never during a window, or a long
+    window would decay its own strikes and the ladder could never reach the
+    breaker. At _PACE_BREAK_AT strikes, or when a request would queue longer than
+    _PACE_MAX_WAIT, acquire() refuses instead of waiting: the bulk of a
+    hard-blocked source fails fast (as it did before pacing existed) while one
+    probe per decay period keeps testing for recovery."""
+
+    _clock: Callable[[], float]
+    _sleep: Callable[[float], None]
+    _lock: threading.Lock
+    _hosts: dict[str, _HostPace]
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = threading.Lock()
+        self._hosts = {}
+
+    @staticmethod
+    def _interval(strikes: int) -> float:
+        return min(_PACE_INTERVAL * 2 ** (strikes - 1), _PACE_INTERVAL_CAP)
+
+    @staticmethod
+    def _window(strikes: int) -> float:
+        return min(_PACE_COOLDOWN * 2 ** (strikes - 1), _PACE_COOLDOWN_CAP)
+
+    @staticmethod
+    def _decay(s: _HostPace, now: float) -> None:
+        # The anchor advances by whole periods (not to `now`): jumping it to `now`
+        # would discard the remainder and silently slow every subsequent decay.
+        if s.strikes and now > s.quiet_since:
+            shed = int((now - s.quiet_since) / _PACE_DECAY)
+            if shed:
+                s.strikes = max(0, s.strikes - shed)
+                s.quiet_since += shed * _PACE_DECAY
+                if s.strikes == 0:
+                    # A stale reservation must not poison the next episode.
+                    s.next_allowed = 0.0
+
+    @staticmethod
+    def _rollback(s: _HostPace, my_slot: float | None, my_end: float) -> None:
+        # Give back a reservation that will never be used — but only when we are
+        # still the LAST reservation (nobody queued behind us). A refused request
+        # that left its slot behind would build a phantom queue: one long window
+        # can strand a whole pool's reservations, refuse the wave behind them off
+        # the phantom depth, and fail-fast the source with no breaker and no
+        # warning. Rolling back only-if-last keeps the common case exact without
+        # tracking a queue.
+        if my_slot is not None and s.next_allowed == my_end:
+            s.next_allowed = my_slot
+
+    def acquire(self, host: str) -> int | None:
+        """Block until a request to `host` may start. Returns the generation stamp
+        to hand back to penalise(), or None to refuse (fail fast): the breaker is
+        open, or the wait would exceed _PACE_MAX_WAIT. That bound is per WAIT, not
+        per call — successive new windows can extend a caller — but sustained
+        shedding escalates to the breaker, which is what bounds the total."""
+        my_slot: float | None = None
+        my_end = 0.0
+        while True:
+            with self._lock:
+                s = self._hosts.get(host)
+                if s is None:
+                    return 0  # never penalised: gen 0 matches a fresh entry's gen
+                now = self._clock()
+                self._decay(s, now)
+                if s.strikes == 0:
+                    return s.gen
+                if s.strikes >= _PACE_BREAK_AT:
+                    self._rollback(s, my_slot, my_end)
+                    # Breaker open: fail fast, except one probe per decay period —
+                    # without the probe, recovery could only be discovered by the
+                    # NEXT build. next_allowed doubles as the probe spacer here
+                    # (the normal queue is empty while everything is refused; a
+                    # still-live pre-breaker reservation just delays the first
+                    # probe by one interval, which is harmless).
+                    if now >= s.cooldown_until and now >= s.next_allowed:
+                        s.next_allowed = now + _PACE_DECAY
+                        return s.gen
+                    return None
+                if my_slot is None or s.cooldown_until > my_slot:
+                    # Reserve a send slot AT OR AFTER the window end, so waiters
+                    # release one interval apart instead of bursting at expiry.
+                    # Re-reserve only when a NEW window has invalidated our slot
+                    # (rolling the stale one back if we were last); refusing
+                    # happens WITHOUT reserving, which is what bounds the queue —
+                    # a refused request must not push next_allowed further out.
+                    self._rollback(s, my_slot, my_end)
+                    slot = max(now, s.next_allowed, s.cooldown_until)
+                    if slot - now > _PACE_MAX_WAIT:
+                        return None
+                    my_slot = slot
+                    my_end = slot + self._interval(s.strikes)
+                    s.next_allowed = my_end
+                if now >= my_slot:
+                    # The gen stamp is read HERE, at the final gate pass — stamped
+                    # any earlier, a request that waited through a window would
+                    # carry a stale gen and its failure could never escalate.
+                    return s.gen
+                wait = my_slot - now
+                # Charged at decision time; a wait later invalidated by a new
+                # window slightly overstates. Diagnostics, not billing.
+                s.backoff_seconds += wait
+            self._sleep(wait)
+
+    def penalise(
+        self, host: str, gen: int, retry_after: float | None = None
+    ) -> tuple[int, float, bool]:
+        """Record a 429/503 from `host`. Returns (strikes, window_seconds,
+        escalated) for the caller to log OUTSIDE the pacer's lock."""
+        with self._lock:
+            now = self._clock()
+            s = self._hosts.get(host)
+            if s is None:
+                if len(self._hosts) >= _PACE_MAX_HOSTS:
+                    self._prune(now)
+                if len(self._hosts) >= _PACE_MAX_HOSTS:
+                    return (0, 0.0, False)  # absurd cardinality: stop tracking
+                s = self._hosts[host] = _HostPace()
+            self._decay(s, now)
+            s.penalties += 1
+            escalated = gen == s.gen
+            if escalated:
+                # First failure of a new burst. A straggler from an earlier burst
+                # (stale gen) refreshes the window below but never escalates: its
+                # failure is evidence about conditions at its START, and that
+                # burst has already been counted. Capped just past the breaker so
+                # failing probes pin the breaker open without inflating the
+                # recovery time (decay is linear in strikes).
+                s.strikes = min(s.strikes + 1, _PACE_BREAK_AT + 1)
+                s.gen += 1
+            elif s.strikes == 0:
+                # A stale-gen failure landing on a fresh (or fully decayed) entry
+                # still proves the host shed recently — without a strike, the
+                # window set below would be ignored by acquire's fast path.
+                s.strikes = 1
+            window = self._window(max(s.strikes, 1))
+            if retry_after is not None and retry_after > window:
+                # An explicit "come back later" is respected up to the cap; it
+                # never trips the breaker by itself (one stray edge node must not
+                # kill the host for the whole build) — repeats climb the ladder.
+                window = min(retry_after, _PACE_RETRY_AFTER_CAP)
+            s.cooldown_until = max(s.cooldown_until, now + window)
+            # Quiet time starts when the window ENDS — never let a window decay
+            # its own strikes, or the breaker becomes unreachable.
+            s.quiet_since = s.cooldown_until
+            return (s.strikes, window, escalated)
+
+    def _prune(self, now: float) -> None:
+        # Called with the lock held, only when a new host would exceed the cap.
+        # Frees hosts that recovered AND had their counters drained — so between
+        # drains it may free nothing; the cap (stop tracking new hosts) is the
+        # real bound, and drain() is what reclaims each cycle.
+        for host, s in list(self._hosts.items()):
+            self._decay(s, now)
+            if s.strikes == 0 and not s.penalties and not s.backoff_seconds:
+                del self._hosts[host]
+
+    def drain(self) -> dict[str, dict[str, float]]:
+        """Snapshot and reset the per-host counters, as
+        {host: {"penalties": n, "backoff_seconds": s}} (backoff is thread-seconds
+        slept behind the gate). Fully-recovered entries are dropped, which is what
+        bounds the map across cycles."""
+        out: dict[str, dict[str, float]] = {}
+        with self._lock:
+            now = self._clock()
+            for host, s in list(self._hosts.items()):
+                self._decay(s, now)
+                if s.penalties or s.backoff_seconds:
+                    out[host] = {
+                        "penalties": s.penalties,
+                        "backoff_seconds": round(s.backoff_seconds, 1),
+                    }
+                    s.penalties = 0
+                    s.backoff_seconds = 0.0
+                if s.strikes == 0:
+                    del self._hosts[host]
+        return out
+
+
 def _classify(exc: BaseException) -> str:
     """Map a requests exception to a stable outcome label.
 
@@ -290,6 +534,8 @@ class Fetcher:
     _retries: int
     _byte_cap: int
     _stats: FetchStats
+    _pacer: HostPacer | None
+    _retry_only_shedding: bool
 
     def __init__(
         self,
@@ -297,11 +543,19 @@ class Fetcher:
         retries: int = 3,
         byte_cap: int = MAX_BYTES,
         stats: FetchStats | None = None,
+        pacer: HostPacer | None = None,
+        retry_only_shedding: bool = False,
     ) -> None:
         self._delay = delay
         self._retries = retries
         self._byte_cap = byte_cap
         self._stats = stats if stats is not None else FetchStats()
+        # None = unpaced (the serve-time fetchers: a build-inflicted cooldown must
+        # never stall a player request). retry_only_shedding restricts retries to
+        # 429/503 — the probe fetcher's dead-cam long tail (404s, timeouts) must
+        # cost one attempt, while a shedding host earns the post-cooldown retry.
+        self._pacer = pacer
+        self._retry_only_shedding = retry_only_shedding
         self._session = requests.Session()
         self._session.headers["User-Agent"] = UA
         # Size the connection pool to the worker count so concurrent fetches to one host
@@ -328,7 +582,11 @@ class Fetcher:
                 # (these cases returned None down the success path); dropping it would
                 # let a bot-wall serving redirect loops turn into unthrottled hammering
                 # across every worker — the fastest way to earn a hard block.
-                time.sleep(self._delay)
+                # EXCEPT a pacer refusal: no request was made, and a source failing
+                # fast makes thousands of them — delaying each would burn minutes of
+                # pool time being polite about requests that never happened.
+                if exc.reason != HOST_BACKOFF:
+                    time.sleep(self._delay)
                 break  # retrying cannot change this verdict
             except requests.RequestException as exc:
                 outcome = _classify(exc)
@@ -343,6 +601,8 @@ class Fetcher:
                 time.sleep(self._delay)
                 if attempt == self._retries - 1:
                     break
+                if self._retry_only_shedding and outcome not in _SHEDDING_OUTCOMES:
+                    break  # a dead cam costs one attempt; only shedding earns more
                 time.sleep(2**attempt)
         self._stats.record(host, outcome)
         return None
@@ -354,6 +614,14 @@ class Fetcher:
         current = url
         for _hop in range(_MAX_REDIRECTS):
             host = urlsplit(current).hostname or ""
+            # Pace BEFORE the DNS check: a request may queue behind a cooldown for
+            # seconds, and a resolution done first would be stale by the connect.
+            gen = 0
+            if self._pacer is not None:
+                acquired = self._pacer.acquire(host)
+                if acquired is None:
+                    raise _FetchFailure(HOST_BACKOFF, host=host)
+                gen = acquired
             ip, reason = _validate_ip(current)
             if ip is None:
                 raise _FetchFailure(reason, host=host)
@@ -373,6 +641,12 @@ class Fetcher:
                         raise _FetchFailure(REDIRECT_NO_LOCATION, host=host)
                     current = urljoin(current, location)
                     continue
+                if resp.status_code >= 400:
+                    # Streamed response: close before raising, or the pooled
+                    # connection is only returned by GC — a shedding episode would
+                    # leak one per failure against a pool of SCRAPE_WORKERS.
+                    resp.close()
+                    self._penalise_if_shedding(resp, host, gen)
                 resp.raise_for_status()
                 chunks: list[bytes] = []
                 total = 0
@@ -384,6 +658,40 @@ class Fetcher:
                     chunks.append(chunk)
                 return b"".join(chunks).decode("utf-8", "replace")
         raise _FetchFailure(TOO_MANY_REDIRECTS, host=urlsplit(current).hostname or "")
+
+    def _penalise_if_shedding(
+        self, resp: requests.Response, host: str, gen: int
+    ) -> None:
+        """Feed a 429/503 back to the pacer; log outside its lock. The WARNINGs fire
+        once per breaker trip / oversized Retry-After, not per refused request —
+        refusals themselves are counted as host-backoff outcomes in the stats."""
+        if self._pacer is None or resp.status_code not in _SHEDDING_STATUSES:
+            return
+        strikes, window, escalated = self._pacer.penalise(
+            host, gen, _retry_after_seconds(resp.headers.get("Retry-After"))
+        )
+        if escalated and strikes == _PACE_BREAK_AT:
+            # == not >=: failing breaker probes sit at the cap (BREAK_AT + 1) and
+            # would otherwise re-log this for the whole outage. Only the 7 -> 8
+            # transition — the trip itself — warns; a re-trip after decay warns
+            # again, so a long outage reads as a timeline, not a firehose.
+            log.warning(
+                "%s: %d consecutive shedding windows — failing fast (host-backoff)",
+                host,
+                strikes,
+            )
+        elif escalated and window > _PACE_COOLDOWN_CAP:
+            # Only an explicit Retry-After can exceed the ladder's cap; honouring
+            # it means refusing this host for minutes, which deserves a WARNING —
+            # behaviourally a breaker trip, just an obedient one. `escalated`
+            # keeps the burst's stragglers from each re-warning.
+            log.warning(
+                "%s: Retry-After %.0fs — refusing the host until it passes",
+                host,
+                window,
+            )
+        else:
+            log.debug("%s: http-%d — backing off %.1fs", host, resp.status_code, window)
 
     def get_segment(
         self, url: str, range_header: str | None = None
@@ -433,10 +741,6 @@ class Fetcher:
         timeout: float = 20.0,
     ) -> str | None:
         host = urlsplit(url).hostname or ""
-        ip, reason = _validate_ip(url)
-        if ip is None:
-            self._stats.record(host, reason)
-            return None
         body = urlencode(data).encode()
         # Sending pre-encoded bytes means requests won't auto-set the form Content-Type,
         # and servers (e.g. WordPress admin-ajax) then 400 — can't parse $_POST. Set it
@@ -445,6 +749,19 @@ class Fetcher:
         post_headers.update(headers or {})
         outcome = CONN_ERROR
         for attempt in range(self._retries):
+            gen = 0
+            if self._pacer is not None:
+                acquired = self._pacer.acquire(host)
+                if acquired is None:
+                    outcome = HOST_BACKOFF
+                    break
+                gen = acquired
+            # Validate AFTER the acquire, like get(): a request can queue behind a
+            # cooldown for seconds, and a resolution done first would be stale.
+            ip, reason = _validate_ip(url)
+            if ip is None:
+                outcome = reason
+                break
             try:
                 with _PinDNS(host, ip):
                     resp = self._session.post(
@@ -455,11 +772,13 @@ class Fetcher:
                         stream=True,
                         allow_redirects=False,
                     )
-                    time.sleep(self._delay)
                     if resp.is_redirect or resp.is_permanent_redirect:
                         resp.close()
                         # admin-ajax POSTs shouldn't redirect; refuse
                         raise _FetchFailure(UNEXPECTED_REDIRECT, host=host)
+                    if resp.status_code >= 400:
+                        resp.close()  # streamed: release the pooled connection
+                        self._penalise_if_shedding(resp, host, gen)
                     resp.raise_for_status()
                     chunks: list[bytes] = []
                     total = 0
@@ -470,14 +789,21 @@ class Fetcher:
                             raise _FetchFailure(TOO_LARGE, host=host)
                         chunks.append(chunk)
                     self._stats.record(host, OK)
+                    # Politeness delay AFTER the body, like get() — it used to run
+                    # mid-response, which held the connection through the sleep.
+                    time.sleep(self._delay)
                     return b"".join(chunks).decode("utf-8", "replace")
             except _FetchFailure as exc:
                 outcome = exc.reason
+                time.sleep(self._delay)  # failures pay the politeness delay too
                 break  # retrying cannot change this verdict
             except requests.RequestException as exc:
                 outcome = _classify(exc)
+                time.sleep(self._delay)
                 if attempt == self._retries - 1:
                     break
+                if self._retry_only_shedding and outcome not in _SHEDDING_OUTCOMES:
+                    break  # same contract as get(): the flag is Fetcher-wide
                 time.sleep(2**attempt)
         self._stats.record(host, outcome)
         return None

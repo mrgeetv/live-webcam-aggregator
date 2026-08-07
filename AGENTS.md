@@ -61,8 +61,12 @@ The app is two phases, decoupled by a catalogue snapshot:
   `None` = never merged).
 - **Add an extractor** — implement the `Extractor` protocol (`extractors/base.py`):
   `resolve(target_url) -> Resolved(url, stream_type, ttl_seconds)`. Add it to the
-  `extractors` dict in `build_app` AND a predicate to `build_registry` (startup
-  validation raises if a rule names an extractor not in the dict). If the CDN's
+  `_extractor_set` factory in `build_app` AND a predicate to `build_registry`
+  (startup validation raises if a rule names an extractor not in the dict). The one
+  factory builds TWO sets: the build-time one (its fetcher is paced + stats-wired,
+  because liveness re-fetches source sites en masse) and the serve-time one (unpaced
+  — a build-inflicted cooldown must never stall a player's `/stream` resolve, which
+  holds a `ResolveCache` per-entry lock). Never hand-maintain the sets separately. If the CDN's
   tokens are IP-bound, ALSO add its host to `_DIRECT_PLAYBACK_HOSTS` (passthrough)
   or `_PROXY_SEGMENT_HOSTS` (segment relay) in `serving.py`, or segments will 403.
 - **Category mapping** lives in `categories.py` (`_MAP`); YouTube categories come
@@ -100,7 +104,13 @@ The app is two phases, decoupled by a catalogue snapshot:
   which keeps the query string at DEBUG only — and the `resolve-failed:<detail>`
   strings have embedded URL query strings stripped (`app._URL_QUERY`) before they
   reach the INFO aggregate, since an extractor error often quotes its target URL,
-  token and all.
+  token and all — and the shared resolver error messages (`app._resolver_get` /
+  `_baltic_post`) deliberately carry NO URL, so one failure mode aggregates as one
+  detail bucket instead of thousands of URL-prefix ones. A third seam covers what
+  the per-source stats can't see: the cross-source liveness fetchers (resolver +
+  probe) carry their own named `FetchStats`, and the pacer counts per-host
+  penalties/backoff — both drained per rebuild into one INFO line each and the
+  `/health` `liveness_fetches` / `pacing` blocks (plus `last_build_seconds`).
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and
   ALWAYS validate: a bad/unparseable value must log a `WARNING` at startup and fall
   back to the default, never crash or silently misbehave (e.g. `_int_env` warns on a
@@ -119,6 +129,24 @@ The app is two phases, decoupled by a catalogue snapshot:
   page), so "0 failed" is not the same as "nothing wrong" — fetched-ok-but-extracted-
   nothing needs its own warning. A gradual decline rather than a cliff points at
   progressive challenge/rate-limiting rather than a hard IP ban.
+- **A build can rate-limit itself off its biggest source.** A source's whole worker
+  pool aims at ONE host, and the liveness phase then re-fetches the same site through
+  the resolver at zero delay — the site sheds load (429/503) and every shed response
+  is a cam silently missing from the playlist, with the resolver phase (not the polite
+  scrape) as the bigger offender. Every build-side `Fetcher` therefore shares a
+  reactive `fetch.HostPacer`: idle until a host sheds, then per-host spacing plus a
+  growing cooldown that gates the RETRY past the shedding window (that recovery is the
+  whole mechanism — a retry that fires straight back into the burst just loses the cam
+  twice), escalating to a fail-fast breaker (`host-backoff` outcome — in the SOURCE's
+  `fetches` for the scrape phase, but in the cross-source `liveness_fetches` block for
+  the resolver/probe phase) so a hard-blocked host costs minutes, not an unbounded
+  build. Three scope rules that must survive refactors: serve-time fetchers stay UNPACED (a build-inflicted cooldown must not
+  stall playback — hence the build/serve extractor-set split); `get_segment` is never
+  paced; and yt-dlp/googleapiclient traffic doesn't pass through `Fetcher`, so the
+  pacer doesn't cover it. Because a fetch that recovers on its gated retry records
+  `ok`, the `pacing` penalty counters — not `http-503` counts — are the honest measure
+  of how hard a host is shedding. The pacer holds nothing while a thread waits
+  (sleep-only), which is why it may safely span the nested build pools.
 - **A wedged googleapiclient connection survives retries.** httplib2's `Http.request`
   evicts a pooled connection **only** on `socket.timeout` — a `BrokenPipeError` leaves
   the dead socket in `self.connections`, so every later call reuses it and fails

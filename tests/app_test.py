@@ -184,6 +184,11 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
     st = source_status()
     assert st["unhealthy"] == []
     assert st["sources"], "expected the source roster to be listed at cold start"
+    # The /health handler indexes these unguarded — losing them from the real
+    # source_status() would be a 500 on /health with an otherwise green suite.
+    assert st["liveness_fetches"] == {}
+    assert st["pacing"] == {}
+    assert st["last_build_seconds"] is None
     assert all(
         s
         == {
