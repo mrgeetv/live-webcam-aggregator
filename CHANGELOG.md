@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.11.3](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.2...v2.11.3) (2026-08-07)
+
+### Bug Fixes
+
+* **scraper:** drop analytics iframes at the extraction seam ([#113](https://github.com/mrgeetv/live-webcam-aggregator/issues/113)) ([2e19ae1](https://github.com/mrgeetv/live-webcam-aggregator/commit/2e19ae1818df1cf486a2cf20a95552d674ca9e6b)), closes [#109](https://github.com/mrgeetv/live-webcam-aggregator/issues/109)
+
 ## [2.11.2](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.1...v2.11.2) (2026-08-07)
 
 ### Bug Fixes
