@@ -26,6 +26,18 @@ _IFRAME_TAG = re.compile(r'<iframe[^>]+src=["\']([^"\']+)["\']', re.I)
 # EarthCam long tail). Matched on the URL PATH so a query string can't false-trigger.
 _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.I)
 
+# Iframes that can never carry a stream: the tag-manager/consent frames pages embed
+# alongside their real player (GTM's <noscript> ns.html is the common one). The
+# extraction ladder treats any iframe as a possible embed, so without this they
+# become candidates and then `no-extractor` drops — noise in the very list that is
+# supposed to say which extractor to write next.
+#
+# Add a host here ONLY if it serves no video at all. A video embed we merely can't
+# play (ivideon, rtsp.me, angelcam) must NOT go here: it is a real coverage gap, and
+# its place is the `no-extractor` report where it stays visible as work someone
+# could pick up.
+_NEVER_A_STREAM_HOSTS = ("googletagmanager.com",)
+
 # Strips entire "Source: <a ...>...</a>" attribution block (including the URL inside)
 _ATTRIBUTION_BLOCK = re.compile(
     r"Source:\s*(?:&nbsp;\s*)?<a\b[^>]*>.*?</a>", re.I | re.S
@@ -40,6 +52,13 @@ class Source(Protocol):
 
 def _strip_attribution(html: str) -> str:
     return _ATTRIBUTION_BLOCK.sub("", html)
+
+
+def _is_never_a_stream(url: str) -> bool:
+    """True for hosts that cannot serve video at all (tag managers, consent frames).
+    Subdomain-aware, so `www.`/`ns.` variants match without listing each one."""
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in _NEVER_A_STREAM_HOSTS)
 
 
 def _angle_targets(html: str) -> list[tuple[str | None, str]]:
@@ -152,6 +171,10 @@ def extract_candidates(html: str, *, page_url: str, source: str) -> Iterator[Can
         # long tail both list JPEG cams alongside real ones. Drop them here so they
         # don't inflate the "no extractor" counts that say which extractor to write next.
         if _IMAGE_EXT.search(urlsplit(target).path):
+            continue
+        # Same reasoning for the analytics/consent iframes a page carries beside its
+        # player (see _NEVER_A_STREAM_HOSTS).
+        if _is_never_a_stream(target):
             continue
         if target in seen:
             continue
