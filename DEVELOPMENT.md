@@ -255,7 +255,9 @@ skyline: dead -> ok (1654 kept, was 0)
 ```
 
 Liveness drop reasons are `no-extractor` (a gap in our coverage), `resolve-failed` (an
-extractor ran and failed), `dead-manifest` (resolved but the HLS is dead or isn't HLS)
+extractor ran and failed), `dead-manifest` (resolved, but the manifest is dead, isn't
+HLS, or is an *empty* playlist — an expired CDN token typically answers 200 with a
+well-formed HLS document listing no segments, so content is checked, not the header)
 and `yt-offline` (the YouTube Data API says it isn't live — a spike across every source
 at once means a Data API problem, not a cam problem).
 

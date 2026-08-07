@@ -14,6 +14,26 @@ log = logging.getLogger("webcam-aggregator.serving")
 _HLS_CT = "application/vnd.apple.mpegurl"
 
 
+def is_playable_manifest(text: str | None) -> bool:
+    """True only for an HLS playlist that actually points at something: a media
+    playlist carrying segments, or a master playlist carrying variants.
+
+    The `#EXTM3U` header alone is NOT enough, and testing only for it is how a dead
+    cam gets listed. A CDN handed an expired or bogus token typically answers
+    **HTTP 200 with a well-formed but empty playlist** rather than a 404 — skyline
+    returns exactly that for a lapsed token (`#EXT-X-ENDLIST`, zero segments), so a
+    header-only check reads it as live, ships it in the playlist, then serves the
+    player something it cannot start. This is the same shape as the rtsp.me stub
+    that is currently dodged by skipping that host by URL; deciding on content
+    catches the whole class instead of one domain at a time.
+
+    Accepting either tag matters: requiring segments alone would reject every
+    master playlist (variants, no `#EXTINF`), which is most CDN top-level URLs."""
+    if not text or "#EXTM3U" not in text:
+        return False
+    return "#EXTINF" in text or "#EXT-X-STREAM-INF" in text
+
+
 def loggable(url: str) -> str:
     """An upstream URL trimmed to scheme://host/path for logging.
 
@@ -265,10 +285,12 @@ def serve_stream(
     if manifest is None:
         log.warning("manifest fetch failed: %s -> %s", entry_id, loggable(resolved.url))
         return (502, "text/plain", b"upstream manifest fetch failed")
-    if "#EXTM3U" not in manifest:
-        # Not HLS (e.g. a DASH .mpd or an error page) — don't serve it as HLS.
-        log.warning("non-HLS manifest: %s -> %s", entry_id, loggable(resolved.url))
-        return (502, "text/plain", b"not an HLS stream")
+    if not is_playable_manifest(manifest):
+        # Not HLS (a DASH .mpd, an error page), or HLS with nothing in it — the
+        # empty playlist a CDN returns for an expired token. Refusing beats
+        # handing the player a manifest it cannot start.
+        log.warning("unplayable manifest: %s -> %s", entry_id, loggable(resolved.url))
+        return (502, "text/plain", b"not a playable HLS stream")
     manifest = truncate_to_live_edge(manifest)
     body = rewrite_manifest(
         manifest,

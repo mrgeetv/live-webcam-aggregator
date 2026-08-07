@@ -9,6 +9,7 @@ from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import CatalogueEntry
 from webcam_aggregator.serving import (
+    is_playable_manifest,
     loggable,
     rewrite_manifest,
     render_playlist,
@@ -204,6 +205,67 @@ def test_serve_stream_cache_miss_returns_502() -> None:
     assert status == 502
 
 
+_EMPTY_STUB = (
+    # What hd-auth.skylinewebcams.com returns for a lapsed/bogus token: HTTP 200,
+    # well-formed HLS, and nothing in it. A #EXTM3U-only check reads this as live.
+    "#EXTM3U\n"
+    "#EXT-X-VERSION:3\n"
+    "#EXT-X-ALLOW-CACHE:NO\n"
+    "#EXT-X-TARGETDURATION:0\n"
+    "#EXT-X-MEDIA-SEQUENCE:0\n"
+    "#EXT-X-ENDLIST\n"
+)
+_MEDIA = "#EXTM3U\n#EXT-X-TARGETDURATION:3\n#EXTINF:3.000,\nhttps://cdn.x/1.ts\n"
+_MASTER = (
+    "#EXTM3U\n"
+    "#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\nlow.m3u8\n"
+    "#EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1280x720\nhigh.m3u8\n"
+)
+
+
+def test_is_playable_manifest_needs_content_not_just_a_header() -> None:
+    assert is_playable_manifest(_MEDIA)  # media playlist: has segments
+    assert is_playable_manifest(_MASTER)  # master playlist: has variants
+    # The whole point: an expired token's empty playlist must NOT read as live.
+    assert not is_playable_manifest(_EMPTY_STUB)
+    assert not is_playable_manifest("<?xml version='1.0'?><MPD></MPD>")  # DASH
+    assert not is_playable_manifest("")
+    assert not is_playable_manifest(None)
+
+
+def test_serve_stream_empty_playlist_returns_502() -> None:
+    """An expired token yields a 200 + empty playlist upstream; serving it would
+    hand the player a stream it can never start."""
+    resolved = Resolved(
+        url="https://hd-auth.x/live.m3u8?a=stale", stream_type="hls", ttl_seconds=60
+    )
+    status, _, body = serve_stream(
+        ENTRY_ID,
+        catalogue={ENTRY_ID: _entry()},
+        cache=_make_cache(resolved),
+        fetch=lambda _u: _EMPTY_STUB,
+        base_url=BASE,
+    )
+    assert status == 502
+    assert b"playable" in body
+
+
+def test_serve_stream_serves_a_master_playlist() -> None:
+    """The stub check must not reject master playlists — they carry variants, not
+    segments, and are what most CDN top-level URLs return."""
+    resolved = Resolved(
+        url="https://cdn.x/master.m3u8", stream_type="hls", ttl_seconds=60
+    )
+    status, _, _body = serve_stream(
+        ENTRY_ID,
+        catalogue={ENTRY_ID: _entry()},
+        cache=_make_cache(resolved),
+        fetch=lambda _u: _MASTER,
+        base_url=BASE,
+    )
+    assert status == 200
+
+
 def test_serve_stream_non_hls_manifest_returns_502() -> None:
     # a DASH .mpd / XML / error body must not be served as HLS
     resolved = Resolved(
@@ -253,7 +315,7 @@ def test_serve_stream_youtube_proxied_when_enabled() -> None:
 
 
 def test_serve_stream_hls_returns_200_rewritten_body() -> None:
-    manifest = "#EXTM3U\nrelative_chunk.m3u8\n"
+    manifest = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nrelative_chunk.m3u8\n"
     resolved = Resolved(
         url="https://cdn.x/cam/playlist.m3u8",
         stream_type="hls",
@@ -473,7 +535,7 @@ def test_rewrite_manifest_default_proxy_segments_same_as_false() -> None:
 # 8. serve_stream — baltic segments proxied through /s
 # ---------------------------------------------------------------------------
 
-BALTIC_MANIFEST = "#EXTM3U\nseg_001.ts\n"
+BALTIC_MANIFEST = "#EXTM3U\n#EXTINF:6.000,\nseg_001.ts\n"
 BALTIC_URL = "https://edge01.balticlivecam.com/stream/cam/playlist.m3u8"
 
 

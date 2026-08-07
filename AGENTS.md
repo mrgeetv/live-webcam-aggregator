@@ -150,6 +150,17 @@ The app is two phases, decoupled by a catalogue snapshot:
   `ok`, the `pacing` penalty counters — not `http-503` counts — are the honest measure
   of how hard a host is shedding. The pacer holds nothing while a thread waits
   (sleep-only), which is why it may safely span the nested build pools.
+- **An expired token usually answers 200, not 404 — with an EMPTY playlist.** Handed a
+  lapsed or bogus token, a CDN commonly returns a well-formed HLS document listing
+  nothing (skyline: `#EXTM3U` + `#EXT-X-ENDLIST`, zero segments, 109 bytes). Testing for
+  the `#EXTM3U` header therefore reads a dead stream as live — the cam ships in the
+  playlist and the player gets something it can never start. Both gates
+  (`app.make_liveness_check` and `serving.serve_stream`) judge on CONTENT via
+  `serving.is_playable_manifest`: a media playlist with `#EXTINF`, or a master playlist
+  with `#EXT-X-STREAM-INF`. Accepting either matters — requiring segments alone would
+  reject every master playlist, which is what most CDN top-level URLs return. This is
+  the same failure shape as the rtsp.me stub that is dodged by skipping that host by
+  URL; content-based detection catches the class rather than one domain at a time.
 - **A wedged googleapiclient connection survives retries.** httplib2's `Http.request`
   evicts a pooled connection **only** on `socket.timeout` — a `BrokenPipeError` leaves
   the dead socket in `self.connections`, so every later call reuses it and fails
@@ -189,11 +200,18 @@ The app is two phases, decoupled by a catalogue snapshot:
 - Skyline cam pages carry NO per-cam category — it lives only in which category page
   lists the cam, so `SkylineSource` crawls the category pages for `cam -> category`
   then BFS's country/region pages for the rest (uncategorised -> "Other"). Two embed
-  types: own Clappr HLS (`source:'livee.m3u8?a=<token>'`, token regenerated per
-  page-load so `SkylineResolver` re-resolves the page at serve-time to
-  `hd-auth.skylinewebcams.com`) and "from the web" YouTube (`videoId:'…'` → watch URL,
-  dedups via `yt:`). Names come from the **breadcrumb** (English geo), not the URL path
-  (native: italia/espana).
+  types: own Clappr HLS (`source:'livee.m3u8?a=<token>'`, resolved at serve-time by
+  `SkylineResolver` to `hd-auth.skylinewebcams.com`) and "from the web" YouTube
+  (`videoId:'…'` → watch URL, dedups via `yt:`). Names come from the **breadcrumb**
+  (English geo), not the URL path (native: italia/espana).
+  The Clappr token is **not** regenerated per page-load (an earlier note here said it
+  was): the same page returns the same token string for at least tens of minutes. What
+  lapses is its AUTHORISATION — left unused it stops working in ~1-2 minutes (measured:
+  alive at 60s, dead by 150s across several cams), and re-fetching the page is what
+  re-arms it. So serve-time must still re-resolve the page, its `Resolved.ttl_seconds`
+  must stay under that lapse (60 → ~48s cached), and a discovery-time token is useless
+  to the liveness phase minutes later — which is why skyline's cam pages are
+  deliberately fetched twice per build and that cost is not a bug to optimise away.
 - camscape aggregates from many providers — the cam page's `"streams":[{…}]` JSON is the
   source of truth (the rendered iframe shows only the active angle), one candidate per
   stream `url`. Most route to existing extractors (YouTube, ipcamlive, m3u8, feratel);

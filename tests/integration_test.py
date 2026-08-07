@@ -41,7 +41,9 @@ class FakeSource:
 # Helpers
 # ---------------------------------------------------------------------------
 
-_SMALL_MANIFEST = "#EXTM3U\nchunklist_w1.m3u8\nseg_1.ts\n"
+_SMALL_MANIFEST = (
+    "#EXTM3U\n#EXTINF:6.000,\nchunklist_w1.m3u8\n#EXTINF:6.000,\nseg_1.ts\n"
+)
 _BASE_URL = "http://localhost"
 
 
