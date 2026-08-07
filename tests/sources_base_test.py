@@ -219,3 +219,46 @@ def test_image_check_uses_the_path_not_the_query() -> None:
     html = "streams[0] = '<iframe src=\"https://e.example/play?poster=/a/b.jpg\">';"
     cands = list(extract_candidates(html, page_url="https://e.example/cam", source="w"))
     assert len(cands) == 1
+
+
+def test_tag_manager_iframes_are_not_candidates() -> None:
+    """A page's GTM <noscript> frame sits beside the real player and the ladder
+    treats any iframe as a possible embed. It can never be a stream, so dropping it
+    keeps the 'no extractor' hosts an honest list of extractors worth writing."""
+    html = (
+        '<iframe src="https://www.googletagmanager.com/ns.html?id=GTM-ABC123"'
+        ' height="0" width="0"></iframe>'
+        '<iframe src="https://www.youtube.com/embed/3nyPER2kzqk"></iframe>'
+    )
+    cands = list(
+        extract_candidates(
+            html, page_url="https://www.example-trust.org/webcam", source="wt"
+        )
+    )
+    assert [c.target_url for c in cands] == [
+        "https://www.youtube.com/watch?v=3nyPER2kzqk"
+    ]
+
+
+def test_only_the_gtm_iframe_leaves_no_candidates() -> None:
+    """A page whose only iframe is the tag manager yields nothing at all, rather
+    than one doomed candidate."""
+    html = '<iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"></iframe>'
+    cands = list(
+        extract_candidates(
+            html, page_url="https://www.example-trust.org/x", source="wt"
+        )
+    )
+    assert cands == []
+
+
+def test_unservable_video_embeds_are_still_reported() -> None:
+    """The denylist is for hosts that can never carry video — NOT for embeds we
+    simply have no extractor for. Those must keep surfacing as no-extractor, since
+    each one is a real gap someone could close."""
+    for host in ("open.ivideon.com", "rtsp.me", "v.angelcam.com"):
+        html = f'<iframe src="https://{host}/embed/abc"></iframe>'
+        cands = list(
+            extract_candidates(html, page_url="https://cams.example/x", source="s")
+        )
+        assert [c.target_url for c in cands] == [f"https://{host}/embed/abc"], host

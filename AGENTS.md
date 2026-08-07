@@ -48,7 +48,11 @@ The app is two phases, decoupled by a catalogue snapshot:
   site-relative embed is resolved against its page (worldcams' `streams[]` array mixes
   absolute iframes with paths), and a still-image target is dropped outright — a JPEG
   "cam" can never be a stream, and counting it as `no-extractor` buries the hosts that
-  genuinely need one.
+  genuinely need one. `_NEVER_A_STREAM_HOSTS` drops the same class of noise for
+  analytics/consent iframes (googletagmanager) that sit beside a page's real player.
+  That denylist is ONLY for hosts serving no video at all — an embed we simply can't
+  play yet (ivideon, rtsp.me, angelcam) stays a `no-extractor` drop on purpose, so the
+  report keeps listing real gaps rather than hiding them.
 - **Add a source** — implement the `Source` protocol (`sources/base.py`): a `name`
   and `discover() -> Iterable[Candidate]`. HTML scrapers subclass `HtmlScraperSource`
   (`sources/base.py`) and implement three hooks — `_page_urls()` (the cam detail-page
