@@ -90,11 +90,44 @@ def test_liveness_check_fetch_verifies_hls() -> None:
         return Resolved(url="https://cdn.x/p.m3u8", stream_type="hls", ttl_seconds=None)
 
     cand = _probe_candidate()
-    assert make_liveness_check(resolve, lambda u: "#EXTM3U\nseg.ts\n")(cand) is None
+    live = "#EXTM3U\n#EXTINF:3.000,\nseg.ts\n"
+    assert make_liveness_check(resolve, lambda u: live)(cand) is None
     assert make_liveness_check(resolve, lambda u: None)(cand) == "dead-manifest"
     assert (
         make_liveness_check(resolve, lambda u: "<?xml?><MPD/>")(cand) == "dead-manifest"
     )  # DASH
+
+
+def test_liveness_rejects_an_empty_playlist() -> None:
+    """A CDN handed an expired token answers 200 with a well-formed but empty
+    playlist rather than a 404 — listing that cam ships a stream no player can
+    start, so liveness must judge on content, not the #EXTM3U header."""
+    from webcam_aggregator.app import make_liveness_check
+    from webcam_aggregator.extractors.base import Resolved
+
+    def resolve(_id: str, _url: str) -> Resolved:
+        return Resolved(
+            url="https://hd-auth.x/live.m3u8?a=x", stream_type="hls", ttl_seconds=60
+        )
+
+    stub = "#EXTM3U\n#EXT-X-TARGETDURATION:0\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-ENDLIST\n"
+    check = make_liveness_check(resolve, lambda _u: stub)
+    assert check(_probe_candidate()) == "dead-manifest"
+
+
+def test_liveness_accepts_a_master_playlist() -> None:
+    """Requiring segments alone would drop every master playlist — variants, not
+    #EXTINF — which is what most CDN top-level URLs return."""
+    from webcam_aggregator.app import make_liveness_check
+    from webcam_aggregator.extractors.base import Resolved
+
+    def resolve(_id: str, _url: str) -> Resolved:
+        return Resolved(
+            url="https://cdn.x/master.m3u8", stream_type="hls", ttl_seconds=60
+        )
+
+    master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nlow.m3u8\n"
+    assert make_liveness_check(resolve, lambda _u: master)(_probe_candidate()) is None
 
 
 def test_liveness_check_distinguishes_missing_extractor() -> None:

@@ -10,7 +10,10 @@ def test_skyline_resolver_builds_hd_auth_manifest_url():
     )
     assert r.url == "https://hd-auth.skylinewebcams.com/live.m3u8?a=tok123abc456"
     assert r.stream_type == "hls"
-    assert r.ttl_seconds == 300
+    # Under skyline's measured idle token lapse (~1-2 min): ResolveCache keeps the
+    # entry for ttl * TTL_FACTOR = 48s, so a second viewer can't be handed a token
+    # that went stale while nobody was watching.
+    assert r.ttl_seconds == 60
 
 
 def test_skyline_resolver_raises_when_no_token():

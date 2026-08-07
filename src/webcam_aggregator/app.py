@@ -41,7 +41,13 @@ from .models import (
     CatalogueEntry,
 )
 from .registry import Registry
-from .serving import render_playlist, serve_child_manifest, serve_segment, serve_stream
+from .serving import (
+    is_playable_manifest,
+    render_playlist,
+    serve_child_manifest,
+    serve_segment,
+    serve_stream,
+)
 from .sources.camscape import CamscapeSource
 from .sources.camsecure import CamSecureSource
 from .sources.cxtvlive import CxtvliveSource
@@ -208,9 +214,10 @@ def make_liveness_check(
         if r.stream_type != "hls":
             return None  # mp4/other: trust the resolve
         # Actually fetch the HLS manifest — DirectHls/ipcamlive resolve without
-        # fetching, so this is what catches offline (404) and DASH streams.
-        manifest = fetch(r.url)
-        if not manifest or "#EXTM3U" not in manifest:
+        # fetching, so this is what catches offline (404), DASH, and the empty
+        # playlist a CDN serves for an expired token (a 200 that looks like HLS
+        # until you notice it lists nothing — see serving.is_playable_manifest).
+        if not is_playable_manifest(fetch(r.url)):
             log.debug("liveness: dead/non-HLS manifest %s -> %s", c.target_url, r.url)
             return DEAD_MANIFEST
         return None

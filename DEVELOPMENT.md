@@ -156,13 +156,13 @@ live-webcam-aggregator/
 │       ├── app.py              # App wiring and main loop
 │       ├── config.py           # Environment variable config
 │       ├── models.py           # Data contracts and stream models
-│       ├── fetch.py            # HTTP fetch helpers
+│       ├── fetch.py            # HTTP fetch: SSRF guard, per-host pacing, stats
 │       ├── registry.py         # Extractor registry
 │       ├── dedup.py            # Deduplication and field merge
 │       ├── categories.py       # Category taxonomy mapping
 │       ├── catalogue.py        # Catalogue builder and liveness validation
 │       ├── cache.py            # Resolve cache (TTL, LRU, negative caching)
-│       ├── serving.py          # Serving logic (playlist render, manifest/segment proxy)
+│       ├── serving.py          # Playlist render, manifest gate + manifest/segment proxy
 │       ├── signing.py          # HMAC signing of proxied manifest/segment URLs
 │       ├── extractors/         # Stream URL extractors
 │       │   ├── ytdlp.py        # yt-dlp extractor
@@ -255,7 +255,9 @@ skyline: dead -> ok (1654 kept, was 0)
 ```
 
 Liveness drop reasons are `no-extractor` (a gap in our coverage), `resolve-failed` (an
-extractor ran and failed), `dead-manifest` (resolved but the HLS is dead or isn't HLS)
+extractor ran and failed), `dead-manifest` (resolved, but the manifest is dead, isn't
+HLS, or is an *empty* playlist — an expired CDN token typically answers 200 with a
+well-formed HLS document listing no segments, so content is checked, not the header)
 and `yt-offline` (the YouTube Data API says it isn't live — a spike across every source
 at once means a Data API problem, not a cam problem).
 
