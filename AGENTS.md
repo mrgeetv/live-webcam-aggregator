@@ -66,9 +66,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   factory builds TWO sets: the build-time one (its fetcher is paced + stats-wired,
   because liveness re-fetches source sites en masse) and the serve-time one (unpaced
   — a build-inflicted cooldown must never stall a player's `/stream` resolve, which
-  holds a `ResolveCache` per-entry lock). Never hand-maintain the sets separately. If the CDN's
-  tokens are IP-bound, ALSO add its host to `_DIRECT_PLAYBACK_HOSTS` (passthrough)
-  or `_PROXY_SEGMENT_HOSTS` (segment relay) in `serving.py`, or segments will 403.
+  holds a `ResolveCache` per-entry lock). Never hand-maintain the sets separately.
+  If the CDN's tokens are IP-bound, ALSO add its host to `_DIRECT_PLAYBACK_HOSTS`
+  (passthrough) or `_PROXY_SEGMENT_HOSTS` (segment relay) in `serving.py`, or
+  segments will 403.
 - **Category mapping** lives in `categories.py` (`_MAP`); YouTube categories come
   from the Data API (`videos.list` categoryId) and pass through, everything else
   maps to the unified taxonomy. `map_category` splits the two miss cases: a source
@@ -141,8 +142,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   twice), escalating to a fail-fast breaker (`host-backoff` outcome — on the SOURCE's
   log line for the scrape phase, on the cross-source `liveness` line for the
   resolver/probe phase) so a hard-blocked host costs minutes, not an unbounded
-  build. Three scope rules that must survive refactors: serve-time fetchers stay UNPACED (a build-inflicted cooldown must not
-  stall playback — hence the build/serve extractor-set split); `get_segment` is never
+  build. Three scope rules that must survive refactors: serve-time fetchers stay
+  UNPACED (a build-inflicted cooldown must not stall playback — hence the
+  build/serve extractor-set split); `get_segment` is never
   paced; and yt-dlp/googleapiclient traffic doesn't pass through `Fetcher`, so the
   pacer doesn't cover it. Because a fetch that recovers on its gated retry records
   `ok`, the `pacing` penalty counters — not `http-503` counts — are the honest measure

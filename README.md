@@ -151,8 +151,8 @@ Fields:
   source surfaces immediately.
 - `sources.<name>.status` — `ok`, `degraded` (collapsed, guard serving the last good
   set), `dead` (0 cams or crashed), or `unknown` before the first rebuild.
-- `last_build_seconds` — wall-clock duration of the last catalogue build (`null`
-  until the first one completes).
+- `last_build_seconds` — wall-clock duration of the last catalogue build attempt
+  (`null` until the first attempt finishes).
 
 The payload answers *what happened*; the *why* — per-host fetch outcomes, drop
 reasons, hosts with no extractor, pacing/backoff counters — is on the log lines each

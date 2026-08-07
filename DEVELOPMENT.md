@@ -241,7 +241,8 @@ manages 11 — so a global "top failing hosts" view would rank it below healthy 
 routine dead-cam probes. Outcome labels: `ok`, `http-<status>`, `timeout`, `conn-error`,
 `dns-error`, `blocked-ip`, `bad-scheme`, `too-large`, `too-many-redirects`,
 `redirect-no-location`, `unexpected-redirect`, `host-backoff` (refused without a
-request because the host's backoff breaker is open — see *Per-host pacing* below).
+request — the host's backoff breaker is open, or the wait would exceed ~30s; see
+*Per-host pacing* below).
 
 Each source also carries a coarse `status` (`ok` / `degraded` / `dead`). A **change**
 logs one line, so `grep WARNING` reads as an incident timeline rather than the same
@@ -262,6 +263,15 @@ At `DEBUG` you additionally get per-request access logging (minus `/health`) and
 per-cam detail behind those counts: the specific target URLs with no extractor, each
 failed resolve, and each dead manifest. `DEBUG` also stops CDN session tokens being
 trimmed out of the serving warnings (see *Secrets in logs* below).
+
+Live process memory (`rss_mb`), the per-source **raw** outcome of the last rebuild
+(`kept`/`discovered`/`crashed`/`status`), a `healthy` rollup (`ready` **and** no
+source crashed or returned 0 this cycle), `unhealthy_sources` and
+`last_build_seconds` are exposed on the `/health` endpoint. The payload is
+deliberately WHAT-only — the per-host/per-reason detail above lives on the log
+lines. The per-source counts stay raw even when the empty-guard is still serving a
+failed source's last good set, so a failure surfaces immediately. See the
+*Monitoring* section in the README for the payload shape and the state table.
 
 ### Per-host pacing
 
@@ -285,24 +295,15 @@ Per cycle, each backoff episode logs at `DEBUG`; a breaker trip, or an oversized
 line per liveness fetcher with failures plus one for pacing:
 
 ```text
-liveness resolver: 2518 fetched, 21 failed: 21x http-503 www.skylinewebcams.com
-pacing: 21x www.skylinewebcams.com (84s backoff)
+liveness resolver: 2518 fetched, 1 failed: 1x http-404 www.skylinewebcams.com
+pacing: 39x www.skylinewebcams.com (310s backoff)
 ```
 
 Because a recovered retry still counts as `ok` in the fetch outcomes (and a 503
 whose retry was then refused records `host-backoff`, not `http-503`), the `pacing`
 counters — not the `http-503` counts — are the honest measure of how much a host is
-shedding: after this change a rate-limited build shows near-zero failed fetches but
-non-zero `penalties`.
-
-Live process memory (`rss_mb`), the per-source **raw** outcome of the last rebuild
-(`kept`/`discovered`/`crashed`/`status`), a `healthy` rollup (`ready` **and** no
-source crashed or returned 0 this cycle), `unhealthy_sources` and
-`last_build_seconds` are exposed on the `/health` endpoint. The payload is
-deliberately WHAT-only — the per-host/per-reason detail above lives on the log
-lines. The per-source counts stay raw even when the empty-guard is still serving a
-failed source's last good set, so a failure surfaces immediately. See the
-*Monitoring* section in the README for the payload shape and the state table.
+shedding: a rate-limited build shows near-zero failed fetches but non-zero
+`penalties`, exactly as above.
 
 ### Secrets in logs
 
