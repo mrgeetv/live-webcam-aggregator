@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.11.4](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.3...v2.11.4) (2026-08-08)
+
+### Bug Fixes
+
+* **scraper:** resolve camscape's camsecure embeds to their HLS ([#114](https://github.com/mrgeetv/live-webcam-aggregator/issues/114)) ([0979ef1](https://github.com/mrgeetv/live-webcam-aggregator/commit/0979ef1548b9cea2764a592ff158a48767151c06)), closes [#108](https://github.com/mrgeetv/live-webcam-aggregator/issues/108)
+
 ## [2.11.3](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.2...v2.11.3) (2026-08-07)
 
 ### Bug Fixes
