@@ -103,7 +103,7 @@
             {
               "type": "chore",
               "section": "Maintenance",
-              "hidden": true
+              "hidden": false
             },
             {
               "type": "test",
