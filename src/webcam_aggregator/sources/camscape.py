@@ -8,6 +8,7 @@ from typing import override
 from ..fetch import thread_map
 from ..models import Candidate
 from .base import HtmlScraperSource, predisc_key, with_location_parts
+from .camsecure import hls_from_player, player_iframe
 
 log = logging.getLogger("webcam-aggregator.camscape")
 
@@ -67,6 +68,8 @@ _CAM = re.compile(r'href="(https://www\.camscape\.com/webcam/[a-z0-9-]+/)"')
 _TAG = re.compile(r'/showing/([a-z0-9-]+)/"')  # only the cam's own tags on a cam page
 _LOC = re.compile(r'/location/([a-z0-9-]+)/"')
 _CHANNEL = re.compile(r"[?&]channel=([A-Za-z0-9_]+)")
+# camsecure embeds (camsecure.co / .uk / .co.uk) — resolved to their HLS below.
+_CAMSECURE = re.compile(r"^https?://(?:[a-z0-9-]+\.)*camsecure\.[a-z.]+/", re.I)
 
 # ctx = (location parts general->specific, {stream index: name})
 _Ctx = tuple[list[str], dict[str, str]]
@@ -148,6 +151,28 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
             names.get(cand.angle_key or "", ""), location, drop=category or ""
         )
 
+    def _camsecure_hls(self, embed: str) -> str | None:
+        """A camsecure embed -> its direct HLS, or None if it doesn't resolve.
+
+        camscape embeds camsecure players (including white-label ones for third
+        parties, which are absent from camsecure's own sitemap and so unreachable
+        by that source). Resolving here rather than at serve-time is what lets
+        dedup work: the m3u8 is the key both sources share, and it cannot be
+        derived from the embed URL — `cityair1.html` serves `cityair.m3u8`, and
+        `portland_harbour_webcam.html` serves `weymouthsailing.m3u8`. The URL is a
+        static open-CDN path (no token), which is why the camsecure source stores
+        it the same way. Only a handful of embeds per build, so a serial hop is
+        cheaper than the duplicate channels we would otherwise ship."""
+        page = self._fetch.get(embed) or ""
+        direct = hls_from_player(page, embed)
+        if direct:
+            return direct
+        # Not a player page but a cam page: follow its player iframe (one more hop).
+        player = player_iframe(page)
+        return (
+            hls_from_player(self._fetch.get(player) or "", player) if player else None
+        )
+
     @override
     def _candidates(self, html: str, url: str) -> list[Candidate]:
         out: list[Candidate] = []
@@ -158,6 +183,8 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
             # Twitch player embeds need normalising to twitch.tv/<channel> for yt-dlp.
             m = _CHANNEL.search(embed) if "player.twitch.tv" in embed else None
             target = f"https://www.twitch.tv/{m.group(1)}" if m else embed
+            if _CAMSECURE.search(target) and ".m3u8" not in target:
+                target = self._camsecure_hls(target) or target
             out.append(
                 Candidate(
                     title="",
