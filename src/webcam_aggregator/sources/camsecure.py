@@ -48,6 +48,18 @@ _LEADING_BOILER = re.compile(r"^(?:live|streaming|coastal)\b", re.I)
 _FROM = re.compile(r"\bfrom\s+(.+?)\s*$", re.I)
 
 
+def player_iframe(html: str) -> str | None:
+    """The camsecure player iframe a cam page embeds, if any."""
+    m = _PLAYER_IFRAME.search(html)
+    return m.group(1) if m else None
+
+
+def hls_from_player(html: str, player_url: str) -> str | None:
+    """The direct HLS in a camsecure player page's video.js `<source>`, absolute."""
+    m = _HLS_SRC.search(html)
+    return urljoin(player_url, m.group(1)) if m else None
+
+
 def _name_from_url(url: str) -> str:
     slug = unquote(url.rstrip("/").rsplit("/", 1)[-1])
     slug = re.sub(r"\.html?$", "", slug, flags=re.I)
@@ -91,17 +103,16 @@ class CamSecureSource:
         # hop 1: cam pages -> (page, title, player url) for those embedding a player
         found: list[tuple[str, str, str]] = []
         for page, html in zip(pages, thread_map(self._fetch.get, pages)):
-            ifr = _PLAYER_IFRAME.search(html or "")
-            if ifr:
-                found.append((page, _title_of(html or "", page), ifr.group(1)))
+            player = player_iframe(html or "")
+            if player:
+                found.append((page, _title_of(html or "", page), player))
         # hop 2: player pages -> direct HLS (concurrent)
         seen: set[str] = set()
         players = thread_map(self._fetch.get, [f[2] for f in found])
         for (page, title, player), pg in zip(found, players):
-            src = _HLS_SRC.search(pg or "")
-            if not src:
+            m3u8 = hls_from_player(pg or "", player)
+            if not m3u8:
                 continue
-            m3u8 = urljoin(player, src.group(1))
             if "rtsp.me" in m3u8 or m3u8 in seen:
                 continue  # rtsp.me stub passes liveness but 404s; or a dupe stream
             seen.add(m3u8)

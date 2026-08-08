@@ -235,6 +235,18 @@ The app is two phases, decoupled by a catalogue snapshot:
   (server fetch gets only stub manifests, segments 404) + angelcam (auth) are
   unservable, dropped. Category + location come from the cam page's
   `/showing/<cat>` + `/location/<loc>` tags.
+  **camsecure embeds are resolved to their `.m3u8` during discovery**
+  (`_camsecure_hls`, reusing `sources.camsecure`'s `player_iframe` /
+  `hls_from_player`; a cam-page embed costs one extra hop to its player). Do this at
+  DISCOVERY, not via a serve-time extractor: the m3u8 is the `predisc_key` both
+  sources share, so resolving early is what lets dedup merge camscape's copy with
+  the camsecure source's instead of shipping the cam twice — and the m3u8 is NOT
+  derivable from the embed URL (`cityair1.html` → `cityair.m3u8`,
+  `portland_harbour_webcam.html` → `weymouthsailing.m3u8`, sometimes a different
+  camsecure host). Worth the hops because camscape sees white-label camsecure
+  players for third parties that are absent from camsecure's own sitemap, so that
+  source can never reach them. An embed that resolves to nothing keeps its original
+  URL and stays a visible `no-extractor` drop.
 - camscape/cxtvlive also embed **wetmet** widgets (`api.wetmet.net/widgets/stream/frame.php?uid=`);
   the frame's inline script assigns the master playlist to `var vurl`, so `WetmetResolver`
   just reads it. Wowza/Nimble signs it (`wmsAuthSign` + a `nimblesessionid` minted for
@@ -359,7 +371,9 @@ Format: `type(scope): description`
 
 - `docs` - Documentation changes
 - `style` - Code style/formatting
-- `chore` - Maintenance tasks
+- `chore` - Maintenance tasks — **listed in the changelog** under *Maintenance*
+  (the only visible non-release type; it is how dependabot's `chore(deps)` action
+  bumps get recorded, since they ship in an image without cutting a release)
 - `test` - Test changes
 - `build` - Build system changes
 - `ci` - CI/CD changes
