@@ -20,8 +20,10 @@ from .extractors.base import Extractor, Resolved
 from .extractors.baltic import BalticResolver
 from .extractors.direct_hls import DirectHls
 from .extractors.earthcam import EarthcamResolver
+from .extractors.hdontap import HdontapResolver
 from .extractors.ipcamlive import IpcamliveResolver, is_alias_page
 from .extractors.metatag import MetaTagExtractor
+from .extractors.ozolio import OzolioResolver
 from .extractors.skyline import SkylineResolver
 from .extractors.wetmet import WetmetResolver
 from .extractors.ytdlp import YtDlpExtractor
@@ -48,11 +50,17 @@ from .serving import (
     serve_segment,
     serve_stream,
 )
+from .sources.beachcam import BeachcamSource
 from .sources.camscape import CamscapeSource
 from .sources.camsecure import CamSecureSource
 from .sources.cxtvlive import CxtvliveSource
 from .sources.earthcam import EarthCamSource
 from .sources.explore import ExploreOrgSource
+from .sources.hdontap import HdOnTapSource
+from .sources.livefromiceland import LiveFromIcelandSource
+from .sources.livespotting import LivespottingSource
+from .sources.ozolio import OzolioSource
+from .sources.resortcams import ResortCamsSource
 from .sources.skyline import SkylineSource
 from .sources.wildlife_trusts import WildlifeTrustsSource
 from .sources.worldcams import WorldcamsSource
@@ -133,6 +141,10 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
         (lambda u: "api.wetmet.net/widgets/stream/frame.php" in u, "wetmet"),
         (lambda u: "skylinewebcams.com/en/webcam/" in u, "skyline"),
         (lambda u: "earthcam." in u, "earthcam"),
+        # the resolved live.hdontap.com/hls/… URL can't contain "/stream/", so it
+        # falls through to DirectHls if it ever appears as a target
+        (lambda u: "hdontap.com/stream/" in u, "hdontap"),
+        (lambda u: "ozolio.com/explore/" in u, "ozolio"),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
         (lambda u: _is_ytdlp(u), "ytdlp"),
         (lambda u: ".m3u8" in u or "worldcams.tv/player?url=" in u, "direct"),
@@ -461,6 +473,8 @@ def build_app(
             "skyline": SkylineResolver(rget),
             "earthcam": EarthcamResolver(rget),
             "wetmet": WetmetResolver(rget),
+            "hdontap": HdontapResolver(rget),
+            "ozolio": OzolioResolver(rget),
         }
 
     serve_extractors = _extractor_set(serve_fetcher)
@@ -522,6 +536,12 @@ def build_app(
             CamSecureSource(_source_fetcher("camsecure")),
             ExploreOrgSource(_source_fetcher("explore")),
             WildlifeTrustsSource(_source_fetcher("wildlife-trusts")),
+            LivespottingSource(_source_fetcher("livespotting")),
+            LiveFromIcelandSource(_source_fetcher("livefromiceland")),
+            BeachcamSource(_source_fetcher("beachcam")),
+            ResortCamsSource(_source_fetcher("resortcams")),
+            HdOnTapSource(_source_fetcher("hdontap")),
+            OzolioSource(_source_fetcher("ozolio")),
         )
         if s is not None
     ]

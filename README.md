@@ -12,18 +12,24 @@ stream is actually played.
 
 | Source | What it adds |
 | ------ | ------------ |
+| beachcam.meo.pt | Portuguese beach and surf cams |
 | camscape.com | Aggregator directory — pulls in cams from many third-party providers |
 | camsecure.co.uk | Directory of hosted webcams |
 | cxtvlive.com | Camera directory |
 | earthcam.com | EarthCam's own cams plus its partner network |
 | explore.org | Nature and wildlife cams |
+| hdontap.com | US streaming provider — beaches, piers, wildlife nest cams |
+| livefromiceland.is | Iceland — volcanoes, glaciers, aurora, Reykjavík |
+| livespotting.tv | German and Alpine coastal, harbour and town cams |
+| ozolio.com | Hawaii and US resort/beach cams |
+| resortcams.com | US Southeast ski, mountain and beach-town cams |
 | skylinewebcams.com | Camera directory |
 | wildlifetrusts.org | UK regional wildlife-trust cams |
 | worldcams.tv | Camera directory |
 | YouTube Data API | Live webcam broadcasts found by search |
 
 The same camera found on more than one source is merged into a single channel. A
-typical build lands around **5000–6000 live channels**, varying with how many cams are
+typical build lands around **5500–6500 live channels**, varying with how many cams are
 actually up and with `EXCLUDE_CATEGORIES`.
 
 ## How it works

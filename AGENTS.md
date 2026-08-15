@@ -33,8 +33,8 @@ The app is two phases, decoupled by a catalogue snapshot:
    with two per-host exceptions (their tokens are IP-bound to the fetcher):
    `_DIRECT_PLAYBACK_HOSTS` (pixelcaster) get a **302 passthrough** so the player
    fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, enhd.es,
-   skylinewebcams, earthcam, wetmet) get their **segments relayed** through
-   `/stream/<id>/s?u=…&sig=…`.
+   skylinewebcams, earthcam, wetmet, iol.pt/beachcam, hdontap, ozolio) get their
+   **segments relayed** through `/stream/<id>/s?u=…&sig=…`.
    **YouTube cams 302-redirect straight to googlevideo by default** (`PROXY_YOUTUBE`
    off): lower latency / less buffering on shallow live windows, but playback stops
    when the ~6h googlevideo token expires. `PROXY_YOUTUBE=true` proxies them like the
@@ -293,6 +293,42 @@ The app is two phases, decoupled by a catalogue snapshot:
   prefix + trailing "Watch…" stripped). Pages whose embed is JS/consent-gated (no id in the
   static HTML, or only a channel link) yield nothing and drop — so only the statically-
   extractable ones (~11) make it.
+- livespotting.tv (~135 DACH/Adriatic cams): hardcoded country pages list cam ids, each id's
+  `player.livespotting.com/v2/livesource/<id>?type=hub` JSON carries a **stable, tokenless**
+  `source` HLS on `cdn.livespotting.com` → `DirectHls`, `hls:` predisc key. The edge appends
+  a per-request `?session=` to child playlists but segments work without it (viewer
+  analytics, not auth). German names — the title-keyword fallback mostly misses them.
+- livefromiceland.is (~30 cams): WP `webcam` post-type sitemap → cam pages whose ipcamlive
+  iframe is **LiteSpeed lazy-loaded** (`src="about:blank"`, real URL in `data-litespeed-src`),
+  so the ladder's iframe rule can't be trusted — a one-regex `_candidates` override greps the
+  `g0.ipcamlive.com/player/player.php?alias=` URL straight from the HTML.
+- beachcam.meo.pt (~190 Portuguese cams): the page's `data-video-url` m3u8 (video-auth1.iol.pt)
+  answers **403 bare** — the JW player appends `?wmsAuthSign=<token>` from
+  `services.iol.pt/matrix?userId=` (anonymous, ~24h validity), so the source fetches ONE
+  token per build and bakes it into `target_url` (predisc key stays on the BARE url for
+  cross-build stability). Child/segment URLs carry a per-manifest-fetch Nimble session →
+  `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. Raising `CATALOGUE_INTERVAL_HOURS` past
+  ~24 outlives the token; an empty-guard-preserved stale set carries a lapsing one. The
+  ladder is bypassed (`_candidates` override) because every page footer links the site's
+  YouTube channel, which the channel rule would emit as a bogus extra candidate per page.
+- resortcams.com (~100 US-Southeast cams): WP sitemap → pages with an **open** Wowza HLS
+  (`stream.resortcams.com`) in static HTML; fully tokenless chain, plain `DirectHls`, no
+  host-list entries. Pages with no static player yield nothing and drop.
+- hdontap.com (~200 cams): sitemap → `/stream/<id>/<slug>/` pages (id is the dedupe key —
+  one cam can carry two slugs). A `<script id="player-data">` JSON blob marks a native-HLS
+  cam: the candidate is the **page URL** (predisc None) and `HdontapResolver` re-reads the
+  blob at serve time because the `streamSrc` HLS carries a per-page-fetch `t`/`e` token pair
+  (~13h; BOTH params required — a URL clipped at the JSON-escaped `&` 403s, hence
+  `json.loads`, never a regex over raw HTML). No blob → standard ladder (~25% are YouTube
+  embeds). Token may be IP-bound → `hdontap.com` in `_PROXY_SEGMENT_HOSTS`.
+- ozolio.com (~190 cams, mostly Hawaii): Yoast cameras-sitemap → `/explore/<CID>` pages;
+  discovery scrapes only the `<title>` (the player is built client-side). `OzolioResolver`
+  does the relay's 2-call session dance (`ses.api?cmd=init` → `cmd=open`); the gate is the
+  **`document=` query param, not Referer/Origin headers** — plain resolver fetch works.
+  Filter `media != "LIVE"` / non-`/hls-live/` sources: those are canned media-library loops
+  ("ROLL"), not cameras. Relay host rotates per open and the Wowza session is minted for
+  whoever fetches the manifest (the wetmet shape) → short TTL (180s) + `ozolio.com` in
+  `_PROXY_SEGMENT_HOSTS`.
 
 **Security model:** every outbound fetch is validated by `fetch._validate_ip`
 (rejects non-http(s) and private/loopback/link-local/reserved IPs; `_resolve_validated_ip`

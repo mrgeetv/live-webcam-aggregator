@@ -66,14 +66,20 @@ def _is_direct_playback(url: str) -> bool:
 
 # Hosts whose segments fail a direct player fetch, so we relay the bytes too:
 # balticlivecam's token is IP-bound to OUR fetch; enhd.es 403s when the player
-# re-encodes the literal "+" in its stream path to %2B. Fetching the segment
-# server-side and handing the player a clean /s URL sidesteps both.
+# re-encodes the literal "+" in its stream path to %2B; iol.pt (beachcam) and
+# ozolio mint a per-manifest-fetch Nimble/Wowza session that 403s any other
+# client (the wetmet shape); hdontap's t/e token may be bound to the fetcher.
+# Fetching the segment server-side and handing the player a clean /s URL
+# sidesteps all of these.
 _PROXY_SEGMENT_HOSTS = (
     "balticlivecam.com",
     "enhd.es",
     "skylinewebcams.com",
     "earthcam.com",
     "wetmet.net",
+    "video-auth1.iol.pt",
+    "hdontap.com",
+    "ozolio.com",
 )
 
 

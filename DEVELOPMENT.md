@@ -171,16 +171,24 @@ live-webcam-aggregator/
 │       │   ├── baltic.py       # Baltic Live cam extractor
 │       │   ├── ipcamlive.py    # IPCamLive extractor
 │       │   ├── earthcam.py     # EarthCam extractor (page -> HLS)
+│       │   ├── hdontap.py      # HDOnTap extractor (cam page player-data -> tokened HLS)
+│       │   ├── ozolio.py       # Ozolio extractor (relay session API -> Wowza HLS)
 │       │   ├── skyline.py      # SkylineWebcams extractor (cam page -> hd-auth HLS)
 │       │   └── wetmet.py       # WetMet widget frame -> signed Wowza HLS
 │       └── sources/            # Stream discovery sources
 │           ├── youtube_api.py  # YouTube Data API v3 source
 │           ├── worldcams.py    # Worldcams.net scraper source
 │           ├── cxtvlive.py     # CXTV Live scraper source
+│           ├── beachcam.py     # MEO Beachcam scraper source (tokened direct HLS)
 │           ├── camscape.py     # Camscape aggregator scraper source
 │           ├── camsecure.py    # CamSecure scraper source (sitemap -> direct HLS)
 │           ├── earthcam.py     # EarthCam mapsearch API source
 │           ├── explore.py      # explore.org streams.json source (direct HLS)
+│           ├── hdontap.py      # HDOnTap scraper source (sitemap -> page-URL targets)
+│           ├── livefromiceland.py  # Live from Iceland scraper source (ipcamlive embeds)
+│           ├── livespotting.py # livespotting.tv player-API source (direct HLS)
+│           ├── ozolio.py       # Ozolio scraper source (sitemap -> explore-page targets)
+│           ├── resortcams.py   # ResortCams scraper source (sitemap -> direct HLS)
 │           ├── skyline.py      # SkylineWebcams scraper source
 │           └── wildlife_trusts.py  # The Wildlife Trusts index -> regional YouTube cams
 ├── scripts/                    # Helper scripts

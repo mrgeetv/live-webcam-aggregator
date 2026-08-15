@@ -20,6 +20,8 @@ _EXTRACTORS: dict[str, Extractor] = {
         "skyline",
         "earthcam",
         "wetmet",
+        "hdontap",
+        "ozolio",
     )
 }
 
@@ -43,6 +45,14 @@ def test_real_registry_predicates():
     assert _route("https://www.twitch.tv/somechannel") == "ytdlp"
     assert _route("https://www.youtube.com/watch?v=aaaaaaaaaaa") == "ytdlp"
     assert _route("https://worldcams.tv/player?url=https://x/p.m3u8") == "direct"
+    # hdontap/ozolio cam PAGES -> their resolvers; the resolved CDN URLs (live.hdontap
+    # HLS, *-relay.ozolio Wowza) don't match the page-path predicates
+    assert _route("https://hdontap.com/stream/269629/carmel-by-the-sea/") == "hdontap"
+    assert (
+        _route("https://live.hdontap.com/hls/hosb1/x.stream/playlist.m3u8?t=1&e=2")
+        == "direct"
+    )
+    assert _route("https://www.ozolio.com/explore/CID_BFWA000002E5") == "ozolio"
     assert _route("https://example.com/page") is None
 
 
