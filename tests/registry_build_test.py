@@ -22,6 +22,7 @@ _EXTRACTORS: dict[str, Extractor] = {
         "wetmet",
         "hdontap",
         "ozolio",
+        "viewsurf",
     )
 }
 
@@ -58,6 +59,10 @@ def test_real_registry_predicates():
         == "direct"
     )
     assert _route("https://www.ozolio.com/explore/CID_BFWA000002E5") == "ozolio"
+    assert (
+        _route("https://platforms5.joada.net/embeded/embeded.html?uuid=ab-12&type=vod")
+        == "viewsurf"
+    )
     assert _route("https://example.com/page") is None
 
 

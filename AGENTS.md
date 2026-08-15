@@ -33,8 +33,8 @@ The app is two phases, decoupled by a catalogue snapshot:
    with two per-host exceptions (their tokens are IP-bound to the fetcher):
    `_DIRECT_PLAYBACK_HOSTS` (pixelcaster) get a **302 passthrough** so the player
    fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, enhd.es,
-   skylinewebcams, earthcam, wetmet, iol.pt/beachcam, hdontap, ozolio) get their
-   **segments relayed** through `/stream/<id>/s?u=…&sig=…`.
+   skylinewebcams, earthcam, wetmet, iol.pt/beachcam, hdontap, ozolio, webcamera.pl)
+   get their **segments relayed** through `/stream/<id>/s?u=…&sig=…`.
    **YouTube cams 302-redirect straight to googlevideo by default** (`PROXY_YOUTUBE`
    off): lower latency / less buffering on shallow live windows, but playback stops
    when the ~6h googlevideo token expires. `PROXY_YOUTUBE=true` proxies them like the
@@ -348,6 +348,63 @@ The app is two phases, decoupled by a catalogue snapshot:
   ("ROLL"), not cameras. Relay host rotates per open and the Wowza session is minted for
   whoever fetches the manifest (the wetmet shape) → short TTL (180s) + `ozolio.com` in
   `_PROXY_SEGMENT_HOSTS`.
+
+- whatsupcams.com (~1450 Adriatic cams): Yoast `webcams-sitemap*.xml` → cam pages (the
+  JSON-LD `embedUrl`'s `/wgt/<id>/` is the cam id — the snapshot thumbnails also carry
+  ids but include the "nearby cams" strip's, so never anchor on those) → per-id
+  `cdn-api/streams/<id>` JSON whose `hls.url` is a **stable, tokenless, open** m3u8
+  (`DirectHls`, `hls:` key; no Referer/session anywhere — verified to the segment).
+  The cdn-0NN host varies per cam, so the API call is the only id→URL mapping. The
+  tempting `/cdn-api/streams/` list endpoint returns a random sample — unusable.
+- viewsurf.com (~1000 French cams): the sitemap is the index AND the category seam
+  (`/univers/<slug>/vue/<id>-…`; a cam repeats once per univers → dedup on id,
+  preferring a mapped univers; unknown slugs log once and pass through raw). Target =
+  the canonical joada embed (`platforms5.joada.net/embeded/embeded.html?uuid=…&type=…`,
+  presentation params stripped); `ViewsurfResolver` GETs
+  `platforms8/9.joada.net/api/videos/manifest/<uuid>` (the player rotates platforms6-12
+  but several are dead/expired-cert) → open HLS, no token/Referer, but the delivery
+  host is the API's per-call choice → resolve at serve time, moderate TTL. `type=vod`
+  cams are ~60s clips re-encoded every few minutes (ENDLIST — plays then stops, the
+  feratel/player-reconnect behaviour); "Panoramique HD" pages are photo cams and
+  expected zero-candidate drops.
+- webcamera.pl (~600 Polish cams): enumeration is the `/mapa` `MAP_MARKERS` JSON
+  **unioned with** the five top-level `/kategoria,<slug>` listings — the map alone
+  misses ~40% (most ski cams), and the listings carry the category (priority-ordered
+  first-match-wins). The page's inline `"video_src"` is the HLS URL **ROT13-encoded**;
+  decoded at discovery → `DirectHls`. Nimble mints a `nimblesessionid` per manifest
+  fetch that must survive into segments (the wetmet shape) → `webcamera.pl` in
+  `_PROXY_SEGMENT_HOSTS`. Playlist/PREMIUM compilation feeds are skipped (one shared
+  rotating stream = dups; paywalled).
+- airportwebcams.net (~700 pages): enumerate via the "by webcam speed" index's
+  Streaming section (the full A-Z would add ~2000 still-image pages). Pages link each
+  camera's **YouTube channel**, not a video id → one candidate per channel as
+  `youtube.com/<channel>/live`, resolved to the current stream by yt-dlp; channels
+  under the "Live streamers with regular broadcasts" heading are sometimes-live
+  spotters, skipped unless the page has nothing else. A large
+  `resolve-failed: channel is not currently live` share is NORMAL here (~40-60% kept),
+  and each candidate costs a yt-dlp resolve — watch the yt-dlp bot-check bucket if
+  build volume grows.
+- its-i.com / Share-Ju (~475 Japanese cams): the ONE `/camera` index page carries a
+  JSON-LD ItemList of every cam (name, YouTube embedUrl, page url, JP address, tags in
+  the description) — one fetch covers the site; detail pages are JS-built and
+  useless. `json.loads(strict=False)` (the blob has a literal newline in a string).
+  Titles stay Japanese; the geo suffix is built by hand because `base._norm` strips
+  non-ASCII, so `with_location_parts` would drop Japanese parts entirely. Tags map via
+  `_TAG_CATEGORY` (guarded by a test against `categories._MAP`); town/scenic tags stay
+  unmapped on purpose — the geo title suffix files those under Travel & Events.
+- windy.com (meta-aggregator, ramps to ~thousands): the **keyless internal API**
+  (`node.windy.com/webcams/v2.0/list?nearby=<lat>,<lon>&radius=250`, limit 25, offset
+  paginates; no key/UA/Referer needed anywhere) enumerates the ~65k-cam corpus via a
+  ~350 km grid scan, but carries **no live flag** — a cam's live-ness is only visible
+  on its stream page (`webcams.windy.com/webcams/stream/<id>`: ~170-byte stub = not
+  live, else a static wrapper with ONE entity-encoded iframe = the original provider's
+  embed, ~85% servable by existing extractors and dedup-keyed by the shared predisc
+  rules). One build can't probe 65k pages politely, so `WindySource` keeps state
+  across rebuilds (sources live for the process lifetime) and spends a ~9k-request
+  budget per build: known-live re-probed first, the rest in rotating slices — coverage
+  RAMPS over ~2 days and resets after a restart; growing counts are normal, not an
+  outage. The API is internal and unversioned: if windy gates it, the per-source
+  stats/status seam is what will say so.
 
 **Security model:** every outbound fetch is validated by `fetch._validate_ip`
 (rejects non-http(s) and private/loopback/link-local/reserved IPs; `_resolve_validated_ip`

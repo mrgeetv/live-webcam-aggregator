@@ -80,6 +80,7 @@ _PROXY_SEGMENT_HOSTS = (
     "video-auth1.iol.pt",
     "hdontap.com",
     "ozolio.com",
+    "webcamera.pl",
 )
 
 

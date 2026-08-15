@@ -174,11 +174,13 @@ live-webcam-aggregator/
 │       │   ├── hdontap.py      # HDOnTap extractor (cam page player-data -> tokened HLS)
 │       │   ├── ozolio.py       # Ozolio extractor (relay session API -> Wowza HLS)
 │       │   ├── skyline.py      # SkylineWebcams extractor (cam page -> hd-auth HLS)
+│       │   ├── viewsurf.py     # Viewsurf extractor (joada embed uuid -> HLS)
 │       │   └── wetmet.py       # WetMet widget frame -> signed Wowza HLS
 │       └── sources/            # Stream discovery sources
 │           ├── youtube_api.py  # YouTube Data API v3 source
 │           ├── worldcams.py    # Worldcams.net scraper source
 │           ├── cxtvlive.py     # CXTV Live scraper source
+│           ├── airportwebcams.py  # airportwebcams.net -> YouTube channel-live cams
 │           ├── beachcam.py     # MEO Beachcam scraper source (tokened direct HLS)
 │           ├── camscape.py     # Camscape aggregator scraper source
 │           ├── camsecure.py    # CamSecure scraper source (sitemap -> direct HLS)
@@ -190,8 +192,13 @@ live-webcam-aggregator/
 │           ├── livespotting.py # livespotting.tv player-API source (direct HLS)
 │           ├── ozolio.py       # Ozolio scraper source (sitemap -> explore-page targets)
 │           ├── resortcams.py   # ResortCams scraper source (sitemap -> direct HLS)
+│           ├── shareju.py      # Share-Ju (its-i.com) JSON-LD index -> Japanese YouTube lives
 │           ├── skyline.py      # SkylineWebcams scraper source
-│           └── wildlife_trusts.py  # The Wildlife Trusts index -> regional YouTube cams
+│           ├── viewsurf.py     # Viewsurf scraper source (sitemap -> joada embeds)
+│           ├── webcamerapl.py  # webcamera.pl scraper source (ROT13 config -> direct HLS)
+│           ├── whatsupcams.py  # WhatsUpCams sitemap -> cdn-api direct HLS
+│           ├── wildlife_trusts.py  # The Wildlife Trusts index -> regional YouTube cams
+│           └── windy.py        # windy.com keyless API -> original providers' embeds
 ├── scripts/                    # Helper scripts
 │   ├── run.sh                  # Docker build/run script
 │   └── check-python-version.sh

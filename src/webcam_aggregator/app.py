@@ -25,6 +25,7 @@ from .extractors.ipcamlive import IpcamliveResolver, is_alias_page
 from .extractors.metatag import MetaTagExtractor
 from .extractors.ozolio import OzolioResolver
 from .extractors.skyline import SkylineResolver
+from .extractors.viewsurf import ViewsurfResolver
 from .extractors.wetmet import WetmetResolver
 from .extractors.ytdlp import YtDlpExtractor
 from .fetch import (
@@ -50,6 +51,7 @@ from .serving import (
     serve_segment,
     serve_stream,
 )
+from .sources.airportwebcams import AirportWebcamsSource
 from .sources.beachcam import BeachcamSource
 from .sources.camscape import CamscapeSource
 from .sources.camsecure import CamSecureSource
@@ -62,8 +64,13 @@ from .sources.livefromiceland import LiveFromIcelandSource
 from .sources.livespotting import LivespottingSource
 from .sources.ozolio import OzolioSource
 from .sources.resortcams import ResortCamsSource
+from .sources.shareju import SharejuSource
 from .sources.skyline import SkylineSource
+from .sources.viewsurf import ViewsurfSource
+from .sources.webcamerapl import WebcameraPlSource
+from .sources.whatsupcams import WhatsupcamsSource
 from .sources.wildlife_trusts import WildlifeTrustsSource
+from .sources.windy import WindySource
 from .sources.worldcams import WorldcamsSource
 from .sources.youtube_api import YoutubeApiSource
 
@@ -148,6 +155,7 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
         # falls through to DirectHls if it ever appears as a target
         (lambda u: "hdontap.com/stream/" in u, "hdontap"),
         (lambda u: "ozolio.com/explore/" in u, "ozolio"),
+        (lambda u: "joada.net/embeded/embeded.html" in u, "viewsurf"),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
         (lambda u: _is_ytdlp(u), "ytdlp"),
         (lambda u: ".m3u8" in u or "worldcams.tv/player?url=" in u, "direct"),
@@ -478,6 +486,7 @@ def build_app(
             "wetmet": WetmetResolver(rget),
             "hdontap": HdontapResolver(rget),
             "ozolio": OzolioResolver(rget),
+            "viewsurf": ViewsurfResolver(rget),
         }
 
     serve_extractors = _extractor_set(serve_fetcher)
@@ -546,6 +555,12 @@ def build_app(
             HdOnTapSource(_source_fetcher("hdontap")),
             OzolioSource(_source_fetcher("ozolio")),
             FeratelSource(_source_fetcher("feratel")),
+            WhatsupcamsSource(_source_fetcher("whatsupcams")),
+            ViewsurfSource(_source_fetcher("viewsurf")),
+            WebcameraPlSource(_source_fetcher("webcamerapl")),
+            AirportWebcamsSource(_source_fetcher("airportwebcams")),
+            SharejuSource(_source_fetcher("shareju")),
+            WindySource(_source_fetcher("windy")),
         )
         if s is not None
     ]

@@ -12,6 +12,7 @@ stream is actually played.
 
 | Source | What it adds |
 | ------ | ------------ |
+| airportwebcams.net | Airport-cam directory — resolves each cam's YouTube channel to its current live stream |
 | beachcam.meo.pt | Portuguese beach and surf cams |
 | camscape.com | Aggregator directory — pulls in cams from many third-party providers |
 | camsecure.co.uk | Directory of hosted webcams |
@@ -20,18 +21,24 @@ stream is actually played.
 | explore.org | Nature and wildlife cams |
 | feratel.com | Alpine/European tourism cams (panorama-sweep video, refreshed every few minutes) |
 | hdontap.com | US streaming provider — beaches, piers, wildlife nest cams |
+| its-i.com (Share-Ju) | Japanese live-cam directory — rivers, traffic, trains, scenic |
 | livefromiceland.is | Iceland — volcanoes, glaciers, aurora, Reykjavík |
 | livespotting.tv | German and Alpine coastal, harbour and town cams |
 | ozolio.com | Hawaii and US resort/beach cams |
 | resortcams.com | US Southeast ski, mountain and beach-town cams |
 | skylinewebcams.com | Camera directory |
+| viewsurf.com | French coastal, harbour, ski and city cams |
+| webcamera.pl | Polish network — Baltic beaches, Tatra mountains, ski resorts |
+| whatsupcams.com | Adriatic network — Croatia, Slovenia, Italy and beyond |
 | wildlifetrusts.org | UK regional wildlife-trust cams |
+| windy.com | Meta-aggregator — routes each live cam to its original provider's stream |
 | worldcams.tv | Camera directory |
 | YouTube Data API | Live webcam broadcasts found by search |
 
 The same camera found on more than one source is merged into a single channel. A
-typical build lands around **5500–6500 live channels**, varying with how many cams are
-actually up and with `EXCLUDE_CATEGORIES`.
+typical build lands around **7000–9000 live channels** once every source is warm
+(windy.com's share ramps up over the first couple of days of builds), varying with
+how many cams are actually up and with `EXCLUDE_CATEGORIES`.
 
 ## How it works
 
