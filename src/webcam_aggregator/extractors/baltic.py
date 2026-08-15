@@ -32,7 +32,8 @@ class BalticResolver:
         page = self._get(target_url)
         cam = _ID.search(page)
         if not cam:
-            raise ValueError(f"baltic: no camera id in {target_url}")
+            # no URL in the message — see the aggregated-detail rule in AGENTS.md
+            raise ValueError("baltic: no camera id in target")
         fragment = self._post(
             _AJAX,
             {

@@ -24,7 +24,10 @@ class EarthcamResolver:
     def resolve(self, target_url: str) -> Resolved:
         m = _HLS.search(self._fetch(target_url))
         if not m:
-            raise ValueError(f"earthcam: no live HLS (offline?) in {target_url}")
+            # no URL in the message: it feeds the aggregated resolve-failed detail
+            # at INFO, where a URL would shatter one failure mode into per-cam
+            # buckets (liveness already logs the URL at DEBUG)
+            raise ValueError("earthcam: no live HLS (offline?)")
         return Resolved(
             url=m.group(0).replace("\\/", "/"), stream_type="hls", ttl_seconds=120
         )
