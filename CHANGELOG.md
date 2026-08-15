@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.11.5](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.4...v2.11.5) (2026-08-15)
+
+### Bug Fixes
+
+* **deps:** bump the python-dependencies group with 2 updates ([#115](https://github.com/mrgeetv/live-webcam-aggregator/issues/115)) ([53d7230](https://github.com/mrgeetv/live-webcam-aggregator/commit/53d7230bfdd59622135dea4f851ae3f3b49d742a))
+
 ## [2.11.4](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.3...v2.11.4) (2026-08-08)
 
 ### Bug Fixes
