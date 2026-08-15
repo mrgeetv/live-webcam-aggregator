@@ -82,6 +82,21 @@ def test_category_from_title_keywords():
     assert category_from_title("Aurora Borealis Live") == "Weather"
 
 
+def test_category_from_title_non_english_keywords():
+    # our European sources title their cams in the local language, so the keyword
+    # rules carry the common content words alongside the English ones
+    assert category_from_title("Hafen Greetsiel") == "Ports & Ships"
+    assert category_from_title("Live vom Strand von Borkum") == "Beaches"
+    assert category_from_title("Göstling - Hochkarbahn Bergstation") == "Mountains"
+    assert category_from_title("Wyciąg narciarski w Bytomiu") == "Mountains"
+    assert category_from_title("Mielno - Jezioro Jamno") == "Water & Waterways"
+    assert category_from_title("Worms - Innenstadt") == "Cities"
+    assert category_from_title("ŻYWIEC - widok na Rynek") == "Cities"
+    # plaża/plaža is a beach, but a bare "plaza" is a town square -> Cities
+    assert category_from_title("Dźwirzyno - plaża wschodnia") == "Beaches"
+    assert category_from_title("Dongdaemun Design Plaza") == "Cities"
+
+
 def test_category_from_title_first_match_wins():
     # specific beats generic: "harbour" (Ports, earlier rule) over "beach" (later)
     assert category_from_title("Harbour Beach") == "Ports & Ships"

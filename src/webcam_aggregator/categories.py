@@ -140,13 +140,14 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
     (
         "Ports & Ships",
         r"\b(harbou?r|marina|\bpier\b|wharf|\bquay|lifeboat|\byacht|\bdocks?\b|seaport"
-        r"|\bport\b|\bferry\b|shipping)",
+        r"|\bport\b|\bferry\b|shipping|\bhafen\b)",
     ),
     ("Bars & Nightlife", r"\b(\bpub\b|tavern|nightclub|\bbar\b|brewery|cocktail)"),
     (
         "Mountains",
         r"\b(\bski\b|\balps\b|alpine|glacier|volcano|\bpiste|\bsummit|\bmount\b|mountain"
-        r"|\bpeak\b|dolomite|\bdome\b|\bbutte\b|\bmesa\b|\bgorge\b)",
+        r"|\bpeak\b|dolomite|\bdome\b|\bbutte\b|\bmesa\b|\bgorge\b|narciarsk|montagn"
+        r"|bergbahn|gondelbahn|seilbahn|bergstation)",
     ),
     (
         "Landmarks",
@@ -156,13 +157,14 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
     (
         "Beaches",
         r"\b(beach|\bsurf|seafront|esplanade|\bplaya|\bpraia|\bsands?\b|\bshore|boardwalk"
-        r"|promenade|\bcove\b|\bdunes?\b|\bcoast)",
+        # plaża/plaža only: bare "plaza" is a town square and belongs to Cities
+        r"|promenade|\bcove\b|\bdunes?\b|\bcoast|\bstrand\b|spiaggia|\bplage\b|pla[żž])",
     ),
     (
         "Water & Waterways",
         r"\b(\blake|\briver|\bfalls\b|waterfall|\bcanal|lagoon|\bpond|\bloch\b|reservoir"
         r"|estuary|\bcreek|\bweir\b|fjord|\bdam\b|rapids|\bbay\b|\bcaverns?\b|\bcaves?\b"
-        r"|\bfirth\b|\bsound\b)",
+        r"|\bfirth\b|\bsound\b|jezior|jezero)",
     ),
     ("Traffic", r"\b(\btraffic|highway|motorway|interstate|freeway|roundabout)\b"),
     (
@@ -173,7 +175,8 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
     (
         "Cities",
         r"\b(skyline|cityscape|\bsquare\b|downtown|\bplaza|boulevard|\bcity\b|old town"
-        r"|piazza|\bstreet\b|panorama|\btown\b|village|\bcentre\b|\bcenter\b|centar)",
+        r"|piazza|\bstreet\b|panorama|\btown\b|village|\bcentre\b|\bcenter\b|centar"
+        r"|altstadt|innenstadt|\brynek\b)",
     ),
 )
 _TITLE_COMPILED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
