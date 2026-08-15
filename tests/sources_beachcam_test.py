@@ -58,7 +58,8 @@ def test_beachcam_appends_auth_token_and_keys_on_bare_url():
 
     for c in cands:
         assert c.source == "beachcam"
-        assert c.category is None  # beach site with lake/city/skatepark outliers
+        # blanket category: ~97% right beats ~190 Portuguese titles in "Other"
+        assert c.category == "Beaches"
         assert c.angle_key is None  # one stream per page
 
 

@@ -302,7 +302,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   iframe is **LiteSpeed lazy-loaded** (`src="about:blank"`, real URL in `data-litespeed-src`),
   so the ladder's iframe rule can't be trusted — a one-regex `_candidates` override greps the
   `g0.ipcamlive.com/player/player.php?alias=` URL straight from the HTML.
-- beachcam.meo.pt (~190 Portuguese cams): the page's `data-video-url` m3u8 (video-auth1.iol.pt)
+- beachcam.meo.pt (~190 Portuguese cams, blanket category **Beaches** — the few
+  lake/wake-park/city outliers beat ~190 Portuguese titles the English keyword fallback
+  would dump in "Other"): the page's `data-video-url` m3u8 (video-auth1.iol.pt)
   answers **403 bare** — the JW player appends `?wmsAuthSign=<token>` from
   `services.iol.pt/matrix?userId=` (anonymous, ~24h validity), so the source fetches ONE
   token per build and bakes it into `target_url` (predisc key stays on the BARE url for

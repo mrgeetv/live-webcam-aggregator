@@ -37,9 +37,10 @@ _Ctx = tuple[str, str | None]
 
 
 class BeachcamSource(HtmlScraperSource[_Ctx]):
-    """beachcam.meo.pt: ~190 MEO Beachcam livecams — Portuguese beach/surf spots plus
-    a few lake, wake-park, skatepark and city cams, so no blanket category (the title
-    fallback categorises what it can). One stream per page in a data-video-url
+    """beachcam.meo.pt: ~190 MEO Beachcam livecams, blanket-categorised "Beaches" —
+    almost all are beach/surf spots, and the few lake/wake-park/city outliers are a
+    better trade than ~190 Portuguese-titled cams landing in "Other" (the English
+    title-keyword fallback can't read them). One stream per page in a data-video-url
     attribute, playable only with a per-build ?wmsAuthSign= auth token."""
 
     name: str = "beachcam"
@@ -63,7 +64,7 @@ class BeachcamSource(HtmlScraperSource[_Ctx]):
             title = url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
         rm = _REGION.search(html)
         region = unescape(rm.group(1)).strip() if rm else None
-        return None, (title, region)
+        return "Beaches", (title, region)
 
     @override
     def _candidates(self, html: str, url: str) -> Iterable[Candidate]:
