@@ -36,6 +36,11 @@ _IFRAME = re.compile(r'<iframe[^>]+src="([^"]+)"', re.I)
 # to ramp again after a restart. That is expected, not an outage: the per-source
 # counts grow, they don't collapse.
 _BUDGET = 9000
+# Hard ceiling on ONE enumeration pass's requests, so a dense corpus can never turn
+# the grid scan into a five-figure burst at node.windy.com. The grid alone is ~3800
+# points; this leaves headroom for pagination without unbounding it. A pass that hits
+# the ceiling is treated as incomplete and resumes next build.
+_ENUM_MAX_REQUESTS = 7000
 # a dense-region circle holds ~4.6k cams; past this cap the overlapping neighbour
 # circles cover the remainder, so deeper paging is waste
 _CIRCLE_CAP = 4500
@@ -110,41 +115,56 @@ class WindySource:
                 str(loc.get("country") or ""),
             )
 
-    def _enumerate(self) -> int:
-        """Grid-scan the list API into the corpus; returns requests spent."""
+    def _enumerate(self) -> None:
+        """Grid-scan the list API into the corpus, under a hard request ceiling so a
+        dense-corpus pass can never run away at the third-party API. If the ceiling
+        truncates the scan we do NOT mark enumeration done, so the next build resumes
+        it rather than latching a partial corpus for _ENUM_EVERY builds."""
         points = _grid()
         first = [_LIST.format(lat=lat, lon=lon, off=0) for lat, lon in points]
         extras: list[str] = []
+        truncated = False
         for (lat, lon), raw in zip(points, thread_map(self._fetch.get, first)):
             total, cams = _cams_of(raw)
             self._remember(cams)
             for off in range(_PAGE, min(total, _CIRCLE_CAP), _PAGE):
+                if len(first) + len(extras) >= _ENUM_MAX_REQUESTS:
+                    truncated = True
+                    break
                 extras.append(_LIST.format(lat=lat, lon=lon, off=off))
+            if truncated:
+                break
         for raw in thread_map(self._fetch.get, extras):
             _, cams = _cams_of(raw)
             self._remember(cams)
-        self._builds_until_enum = _ENUM_EVERY
-        return len(first) + len(extras)
+        # only latch a COMPLETE scan; a truncated one re-runs next build
+        self._builds_until_enum = 0 if truncated else _ENUM_EVERY
 
     def discover(self) -> Iterator[Candidate]:
-        budget = _BUDGET
         if not self._corpus or self._builds_until_enum <= 0:
-            budget -= self._enumerate()
+            self._enumerate()
         self._builds_until_enum -= 1
-        if budget <= 0 or not self._corpus:
+        if not self._corpus:
             return
-        # known-live first (the current catalogue content), then a rotating slice
-        # of everything else so the whole corpus gets re-checked over ~a week
+        # The known-live set is the current catalogue content and is ALWAYS re-probed,
+        # whatever enumeration cost — it must never go stale. The per-build budget then
+        # bounds only the rotating re-check of the rest of the corpus (capped at the
+        # number that actually exist, so a small corpus can't double-probe).
         rest = [i for i in sorted(self._corpus) if i not in self._live]
-        slice_n = max(0, budget - len(self._live))
+        slice_n = min(len(rest), max(0, _BUDGET - len(self._live)))
         start = self._cursor % len(rest) if rest else 0
         rotation = (rest + rest)[start : start + slice_n]
-        self._cursor = (start + len(rotation)) % len(rest) if rest else 0
+        self._cursor = (start + slice_n) % len(rest) if rest else 0
         ids = sorted(self._live) + rotation
         urls = [_STREAM.format(id=i) for i in ids]
         for cid, page in zip(ids, thread_map(self._fetch.get, urls)):
-            if not page or len(page) < _MIN_STREAM_PAGE or not _IFRAME.search(page):
-                self._live.discard(cid)
+            if page is None:
+                # a fetch FAILURE (timeout/429/backoff), not a verdict: keep the cam in
+                # _live so it is retried first next build rather than exiled to the
+                # slow rotation pool. It just yields no candidate this cycle.
+                continue
+            if len(page) < _MIN_STREAM_PAGE or not _IFRAME.search(page):
+                self._live.discard(cid)  # the "not available" stub: genuinely not live
                 continue
             self._live.add(cid)
             title, city, country = self._corpus.get(cid, ("", "", ""))

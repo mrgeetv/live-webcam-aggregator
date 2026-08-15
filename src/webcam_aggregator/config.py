@@ -89,6 +89,15 @@ def _warn_on_suspect_config(cfg: Config) -> None:
             "EXCLUDE_CATEGORIES: ignoring unknown categories %s (see the README list)",
             ", ".join(sorted(unknown)),
         )
+    # A few sources bake a discovery-time auth token into the served URL (beachcam's
+    # ~24h wmsAuthSign); an interval longer than that lets the token lapse mid-cycle,
+    # silently 403-ing those cams. Valid, but worth flagging.
+    if cfg.catalogue_interval_hours > 24:
+        log.warning(
+            "CATALOGUE_INTERVAL_HOURS=%d is over 24 — sources that carry a per-build "
+            "auth token (e.g. beachcam) will lapse before the next rebuild",
+            cfg.catalogue_interval_hours,
+        )
 
 
 def _warn_legacy_env(env: dict[str, str]) -> None:

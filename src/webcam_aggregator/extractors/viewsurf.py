@@ -34,20 +34,25 @@ class ViewsurfResolver:
         if not m:
             raise ValueError("viewsurf: no uuid in embed url")
         uuid = m.group(1)
-        body: str | None = None
+        # A dead platform host can answer with an HTML maintenance page (a 200, not a
+        # raised fetch), so treat a non-JSON body as a failure and fall through to the
+        # next host too — not just a raised one.
+        doc: dict[str, object] | None = None
         for host in _API_HOSTS:
             try:
                 body = self._fetch(f"{host}/api/videos/manifest/{uuid}")
-                break
             except ValueError:
                 continue
-        if body is None:
-            raise ValueError("viewsurf: manifest api unreachable")
-        try:
-            doc = json.loads(body)
-        except ValueError:
-            raise ValueError("viewsurf: manifest api returned non-JSON") from None
-        m3u8 = doc.get("m3u8") if isinstance(doc, dict) else None
+            try:
+                parsed = json.loads(body)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict):
+                doc = parsed
+                break
+        if doc is None:
+            raise ValueError("viewsurf: no manifest from any api host")
+        m3u8 = doc.get("m3u8")
         if not isinstance(m3u8, str) or not m3u8:
             raise ValueError("viewsurf: no m3u8 in manifest api response")
         return Resolved(url=m3u8, stream_type="hls", ttl_seconds=1800)

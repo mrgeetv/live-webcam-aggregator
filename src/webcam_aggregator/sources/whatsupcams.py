@@ -26,6 +26,11 @@ _OG_TITLE = re.compile(r'property="og:title" content="([^"]+)"')
 _API = "https://www.whatsupcams.com/cdn-api/streams/"
 
 
+def _on_site(url: str) -> bool:
+    host = (urlsplit(url).hostname or "").lower()
+    return host == "whatsupcams.com" or host.endswith(".whatsupcams.com")
+
+
 class WhatsupcamsSource:
     """whatsupcams.com (Croatian-run network, Adriatic-heavy): Yoast sitemap ->
     per-cam pages (cam id + title) -> per-id CDN API (direct open HLS). A page
@@ -40,13 +45,19 @@ class WhatsupcamsSource:
 
     def discover(self) -> Iterator[Candidate]:
         idx = self._fetch.get(_SITEMAP_INDEX) or ""
-        maps = [u for u in _LOC.findall(idx) if _CAM_SITEMAP.search(urlsplit(u).path)]
+        maps = [
+            u
+            for u in _LOC.findall(idx)
+            if _on_site(u) and _CAM_SITEMAP.search(urlsplit(u).path)
+        ]
         pages: set[str] = set()
         for sm in thread_map(self._fetch.get, maps):
             for loc in _LOC.findall(sm or ""):
                 # cam pages sit at /en/webcams/<country>/<region>/<town>/<slug>/;
-                # the sitemap also lists the bare /en/webcams/ archive page
-                if len(urlsplit(loc).path.strip("/").split("/")) >= 6:
+                # the sitemap also lists the bare /en/webcams/ archive page. Anchor to
+                # our own host too: a tampered sitemap must not steer the build-time
+                # fetcher at arbitrary third-party hosts.
+                if _on_site(loc) and len(urlsplit(loc).path.strip("/").split("/")) >= 6:
                     pages.add(loc)
         page_list = sorted(pages)
         # hop 1: cam pages -> (page, title, cam id)

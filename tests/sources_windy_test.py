@@ -106,9 +106,72 @@ def test_windy_state_persists_and_reprobes_live_first():
     assert len(cands) == 2
 
 
+def test_windy_probes_each_id_once_when_corpus_below_budget():
+    # regression: (rest+rest)[start:start+slice_n] emitted every id TWICE whenever
+    # slice_n exceeded the corpus size (any corpus under _BUDGET) — double fetches
+    # and duplicate candidates. The rotation must be capped to what actually exists.
+    fetch = _FakeFetch()
+    list(WindySource(fetch).discover())
+    assert fetch.stream_fetches.count(101) == 1
+    assert fetch.stream_fetches.count(202) == 1
+    assert fetch.stream_fetches.count(303) == 1
+
+
+def test_windy_paginates_a_dense_circle():
+    # the pagination branch (total > one page) was previously untested
+    class _Paged:
+        def __init__(self) -> None:
+            self.offsets: list[str] = []
+            self._done: bool = False
+
+        def get(self, url: str, _timeout: float = 20.0) -> str | None:
+            sm = _STREAM.search(url)
+            if sm:
+                return _PAD + '<iframe src="https://cdn/x.m3u8"></iframe>'
+            m = _NEARBY.search(url)
+            if m:
+                off = m.group(3)
+                if not self._done:
+                    self._done = True  # one populated circle, rest empty
+                    self.offsets.append(off)
+                    cams = [
+                        {"id": 1000 + i, "title": f"c{i}", "location": {}}
+                        for i in range(int(off), int(off) + 25)
+                    ]
+                    return json.dumps({"cams": cams, "total": 60})
+                if off != "0":
+                    self.offsets.append(off)
+                    return json.dumps({"cams": [], "total": 60})
+                return json.dumps({"cams": [], "total": 0})
+            return None
+
+    f = _Paged()
+    list(WindySource(f).discover())
+    # offset 0 plus the two extra pages (25, 50) for a 60-cam circle
+    assert "25" in f.offsets and "50" in f.offsets
+
+
 def test_windy_survives_dead_api():
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None
 
     assert list(WindySource(_Dead()).discover()) == []
+
+
+def test_windy_fetch_failure_keeps_cam_in_live_set():
+    # a None fetch is a failure, not a "not live" verdict: a known-live cam must stay
+    # in the priority set (retried first next build), not be exiled to the rotation
+    fetch = _FakeFetch()
+    src = WindySource(fetch)
+    list(src.discover())  # 101 + 202 become live
+    assert {101, 202} <= src._live  # pyright: ignore[reportPrivateUsage]
+
+    class _Flaky:
+        def get(self, url: str, _timeout: float = 20.0) -> str | None:
+            return None if _STREAM.search(url) else json.dumps({"cams": [], "total": 0})
+
+    src._fetch = _Flaky()  # pyright: ignore[reportPrivateUsage]
+    list(src.discover())
+    # the live cams saw a failed fetch but are retained, not discarded
+    assert {101, 202} <= src._live  # pyright: ignore[reportPrivateUsage]

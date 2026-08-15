@@ -56,14 +56,25 @@ def test_viewsurf_falls_back_to_second_api_host() -> None:
 
 
 def test_viewsurf_all_api_hosts_down_raises() -> None:
-    with pytest.raises(ValueError, match="unreachable"):
+    with pytest.raises(ValueError, match="no manifest from any api host"):
         ViewsurfResolver(_fetch({}, [])).resolve(_TARGET)
 
 
-def test_viewsurf_non_json_raises() -> None:
-    fetch = _fetch({"https://platforms8.joada.net": "<html>maintenance</html>"}, [])
-    with pytest.raises(ValueError, match="non-JSON"):
-        ViewsurfResolver(fetch).resolve(_TARGET)
+def test_viewsurf_non_json_on_first_host_falls_back_to_second() -> None:
+    # a dead host serving an HTML maintenance page (a 200, not a raised fetch) must
+    # not abort the resolve — the second host is tried
+    calls: list[str] = []
+    out = ViewsurfResolver(
+        _fetch(
+            {
+                "https://platforms8.joada.net": "<html>maintenance</html>",
+                "https://platforms9.joada.net": _MANIFEST,
+            },
+            calls,
+        )
+    ).resolve(_TARGET)
+    assert out.url == _M3U8
+    assert len(calls) == 2  # host8 (HTML) then host9 (JSON)
 
 
 def test_viewsurf_json_without_m3u8_raises() -> None:

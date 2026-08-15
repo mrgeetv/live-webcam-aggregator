@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterable
 from html import unescape
 from typing import override
+from urllib.parse import quote
 
 from ..models import Candidate
 from .base import HtmlScraperSource, predisc_key, with_location_parts
@@ -72,8 +73,14 @@ class BeachcamSource(HtmlScraperSource[_Ctx]):
         multi = len(targets) > 1
         for i, bare in enumerate(targets):
             # without a token the bare URL still ships: liveness drops it as a
-            # dead manifest, which keeps a broken token endpoint visible
-            target = f"{bare}?wmsAuthSign={self._token}" if self._token else bare
+            # dead manifest, which keeps a broken token endpoint visible.
+            # quote the token (Wowza wmsAuthSign is base64 and can contain '+', which
+            # a bare query would decode to a space -> 403); '=' padding stays literal.
+            target = (
+                f"{bare}?wmsAuthSign={quote(self._token, safe='=')}"
+                if self._token
+                else bare
+            )
             yield Candidate(
                 title="",
                 angle_key=str(i) if multi else None,

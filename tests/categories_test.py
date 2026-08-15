@@ -97,6 +97,15 @@ def test_category_from_title_non_english_keywords():
     assert category_from_title("Dongdaemun Design Plaza") == "Cities"
 
 
+def test_non_english_keywords_avoid_english_false_positives():
+    # "the strand" is a London street, not a beach; the German beach word takes no article
+    assert category_from_title("The Strand — London, England") != "Beaches"
+    # "montagn" must be a whole word (montagna/montagne), not a place-name fragment
+    assert category_from_title("Montagnana Town Square") == "Cities"
+    assert category_from_title("Montagnac Village") != "Mountains"
+    assert category_from_title("Nice Montagne — France") == "Mountains"
+
+
 def test_category_from_title_first_match_wins():
     # specific beats generic: "harbour" (Ports, earlier rule) over "beach" (later)
     assert category_from_title("Harbour Beach") == "Ports & Ships"

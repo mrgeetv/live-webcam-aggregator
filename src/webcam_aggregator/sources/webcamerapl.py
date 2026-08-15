@@ -61,8 +61,9 @@ def _cam_page(url: str) -> str | None:
         return None
     sub = host[: -len(".webcamera.pl")]
     if sub == "www":
-        m = re.match(r"/kamera/[a-z0-9-]+/", s.path)
-        return f"https://www.webcamera.pl{m.group(0)}" if m else None
+        # trailing slash optional: an index link may omit it
+        m = re.match(r"/kamera/[a-z0-9-]+", s.path)
+        return f"https://www.webcamera.pl{m.group(0).rstrip('/')}/" if m else None
     if not sub or "." in sub or sub in ("static", "b2b", "pogoda", "imageserver"):
         return None
     return f"https://{host}/"

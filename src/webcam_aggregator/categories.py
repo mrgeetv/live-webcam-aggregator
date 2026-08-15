@@ -146,7 +146,7 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
     (
         "Mountains",
         r"\b(\bski\b|\balps\b|alpine|glacier|volcano|\bpiste|\bsummit|\bmount\b|mountain"
-        r"|\bpeak\b|dolomite|\bdome\b|\bbutte\b|\bmesa\b|\bgorge\b|narciarsk|montagn"
+        r"|\bpeak\b|dolomite|\bdome\b|\bbutte\b|\bmesa\b|\bgorge\b|narciarsk|montagn[ae]\b"
         r"|bergbahn|gondelbahn|seilbahn|bergstation)",
     ),
     (
@@ -158,7 +158,10 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         "Beaches",
         r"\b(beach|\bsurf|seafront|esplanade|\bplaya|\bpraia|\bsands?\b|\bshore|boardwalk"
         # plaża/plaža only: bare "plaza" is a town square and belongs to Cities
-        r"|promenade|\bcove\b|\bdunes?\b|\bcoast|\bstrand\b|spiaggia|\bplage\b|pla[żž])",
+        # "the strand" is a common English street/place name (London); the German
+        # beach word never takes a definite article in front of it
+        r"|promenade|\bcove\b|\bdunes?\b|\bcoast|(?<!the )\bstrand|spiaggia|\bplage\b"
+        r"|pla[żž])",
     ),
     (
         "Water & Waterways",

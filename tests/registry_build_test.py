@@ -63,6 +63,15 @@ def test_real_registry_predicates():
         _route("https://platforms5.joada.net/embeded/embeded.html?uuid=ab-12&type=vod")
         == "viewsurf"
     )
+    # host-anchored: an attacker URL merely CONTAINING a provider marker in its query
+    # must not route to that provider's resolver
+    assert _route("https://evil.example/x?u=hdontap.com/stream/1/") != "hdontap"
+    assert _route("https://evil.example/?p=.feratel.com/webtv/?cam=1") != "metatag"
+    assert (
+        _route("https://evil.example/e?x=joada.net/embeded/embeded.html") != "viewsurf"
+    )
+    # the webtvfc variant still routes (any feratel host on a /webtv path)
+    assert _route("https://webtvfc.feratel.com/webtv/?design=v5&cam=5") == "metatag"
     assert _route("https://example.com/page") is None
 
 

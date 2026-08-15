@@ -138,24 +138,47 @@ def _is_ytdlp(u: str) -> bool:
     )
 
 
+def _host_ends(u: str, domain: str) -> bool:
+    host = (urllib.parse.urlsplit(u).hostname or "").lower()
+    return host == domain or host.endswith("." + domain)
+
+
+def _path(u: str) -> str:
+    return urllib.parse.urlsplit(u).path
+
+
 def build_registry(extractors: dict[str, Extractor]) -> Registry:
+    # The provider extractors match on the target's HOST (+ a path marker), not a bare
+    # substring: a scraped iframe src of `https://evil/?x=hdontap.com/stream/` must NOT
+    # route an attacker page into a resolver that then fetches it and reflects its
+    # content (the resolved URL is emitted verbatim in a 302 Location header).
     rules: list[tuple[Callable[[str], bool], str]] = [
         (lambda u: "balticlivecam.com" in u, "baltic"),
         (
             lambda u: "ipcamlive.com/player/player.php" in u or is_alias_page(u),
             "ipcamlive",
         ),
-        # covers webtv. AND the webtvfc. variant third-party embeds carry — both
-        # serve the og:video meta the metatag extractor reads
-        (lambda u: ".feratel.com/webtv/" in u, "metatag"),
+        # any feratel host (webtv. and the webtvfc. variant embeds carry) on a /webtv
+        # path — both serve the og:video meta the metatag extractor reads
+        (lambda u: _host_ends(u, "feratel.com") and "/webtv" in _path(u), "metatag"),
         (lambda u: "api.wetmet.net/widgets/stream/frame.php" in u, "wetmet"),
         (lambda u: "skylinewebcams.com/en/webcam/" in u, "skyline"),
         (lambda u: "earthcam." in u, "earthcam"),
-        # the resolved live.hdontap.com/hls/… URL can't contain "/stream/", so it
-        # falls through to DirectHls if it ever appears as a target
-        (lambda u: "hdontap.com/stream/" in u, "hdontap"),
-        (lambda u: "ozolio.com/explore/" in u, "ozolio"),
-        (lambda u: "joada.net/embeded/embeded.html" in u, "viewsurf"),
+        # the resolved live.hdontap.com/hls/… URL has no "/stream/" path, so it falls
+        # through to DirectHls if it ever appears as a target
+        (
+            lambda u: _host_ends(u, "hdontap.com") and _path(u).startswith("/stream/"),
+            "hdontap",
+        ),
+        (
+            lambda u: _host_ends(u, "ozolio.com") and "/explore/" in _path(u),
+            "ozolio",
+        ),
+        (
+            lambda u: _host_ends(u, "joada.net")
+            and _path(u).startswith("/embeded/embeded.html"),
+            "viewsurf",
+        ),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
         (lambda u: _is_ytdlp(u), "ytdlp"),
         (lambda u: ".m3u8" in u or "worldcams.tv/player?url=" in u, "direct"),

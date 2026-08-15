@@ -45,7 +45,7 @@ how many cams are actually up and with `EXCLUDE_CATEGORIES`.
 - **Catalogue build** (periodic): every `CATALOGUE_INTERVAL_HOURS`, each source is
   crawled, dead streams are dropped, survivors are de-duplicated, mapped to a unified
   category, and written into a playlist of stable internal URLs. This is the slow
-  part — expect **20–30 minutes** for a ~5700-cam catalogue. It's dominated by
+  part — expect **20–30 minutes** for a catalogue this size. It's dominated by
   *waiting*, not work: sources are crawled concurrently, and a site that rate-limits
   (429/503) is backed off per host, so the build's wall-clock is set by the most
   rate-limited source. That makes it depend on your egress IP far more than on your
@@ -218,7 +218,7 @@ All via environment variables (see `.env.example`):
 | `SEARCH_QUERY` | built-in webcam query | YouTube search terms (`\|`=OR, space=AND, `-`=exclude) |
 | `YOUTUBE_API_KEY` | (required) | YouTube Data API v3 key |
 
-> **Resource usage:** budget **~4 GB** for the container. A ~5700-cam catalogue sits at
+> **Resource usage:** budget **~4 GB** for the container. A catalogue of this size sits at
 > **~1.5 GB** between builds and **peaks near 3 GB** for the first minute or two of each
 > build, while every source is fetching and parsing pages concurrently — that discovery
 > spike is the high-water mark, not a leak, and the rest of the build is close to flat.
