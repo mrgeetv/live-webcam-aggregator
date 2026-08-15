@@ -56,6 +56,7 @@ from .sources.camsecure import CamSecureSource
 from .sources.cxtvlive import CxtvliveSource
 from .sources.earthcam import EarthCamSource
 from .sources.explore import ExploreOrgSource
+from .sources.feratel import FeratelSource
 from .sources.hdontap import HdOnTapSource
 from .sources.livefromiceland import LiveFromIcelandSource
 from .sources.livespotting import LivespottingSource
@@ -137,7 +138,9 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
             lambda u: "ipcamlive.com/player/player.php" in u or is_alias_page(u),
             "ipcamlive",
         ),
-        (lambda u: "webtv.feratel.com" in u, "metatag"),
+        # covers webtv. AND the webtvfc. variant third-party embeds carry — both
+        # serve the og:video meta the metatag extractor reads
+        (lambda u: ".feratel.com/webtv/" in u, "metatag"),
         (lambda u: "api.wetmet.net/widgets/stream/frame.php" in u, "wetmet"),
         (lambda u: "skylinewebcams.com/en/webcam/" in u, "skyline"),
         (lambda u: "earthcam." in u, "earthcam"),
@@ -542,6 +545,7 @@ def build_app(
             ResortCamsSource(_source_fetcher("resortcams")),
             HdOnTapSource(_source_fetcher("hdontap")),
             OzolioSource(_source_fetcher("ozolio")),
+            FeratelSource(_source_fetcher("feratel")),
         )
         if s is not None
     ]

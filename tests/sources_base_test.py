@@ -4,6 +4,7 @@ from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     extract_candidates,
+    predisc_key,
     with_location,
     with_location_parts,
 )
@@ -167,6 +168,20 @@ def test_single_quote_streams_keyed_by_stream_id():
     by_key = {c.angle_key: c.target_url for c in cands}
     assert by_key["0"].endswith("/embed/aaaaaaaaaaa")
     assert by_key["1378"] == "https://en.example.es/cam"
+
+
+def test_feratel_embeds_key_on_the_cam_id():
+    # the same cam appears as webtv.…?cam=<id> and webtvfc.…?design=…&cam=<id>
+    # across sources; keying on the id is what lets dedup merge them
+    html = (
+        '<iframe src="https://webtvfc.feratel.com/webtv/'
+        '?design=v5&pg=DA7D2F22&cam=5751&lg=en"></iframe>'
+    )
+    cands = list(extract_candidates(html, page_url="https://s/x", source="cxtvlive"))
+    assert cands[0].predisc_key == "feratel:5751"
+    assert cands[0].predisc_key == predisc_key(
+        "https://webtv.feratel.com/webtv/?cam=5751"
+    )
 
 
 def test_channel_has_no_predisc_key():

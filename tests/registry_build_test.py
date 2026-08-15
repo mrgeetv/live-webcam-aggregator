@@ -32,6 +32,11 @@ def _route(url: str) -> str | None:
 
 def test_real_registry_predicates():
     assert _route("https://webtv.feratel.com/webtv/?cam=1") == "metatag"
+    # the webtvfc. variant third-party embeds carry serves the same og:video
+    assert (
+        _route("https://webtvfc.feratel.com/webtv/?design=v5&pg=X&cam=5751")
+        == "metatag"
+    )
     assert _route("https://g0.ipcamlive.com/player/player.php?alias=x") == "ipcamlive"
     # the MAJORITY (direct ipcamlive m3u8) must route to DirectHls, NOT the resolver
     assert _route("https://s79.ipcamlive.com/streams/abc/stream.m3u8") == "direct"

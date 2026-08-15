@@ -323,6 +323,23 @@ The app is two phases, decoupled by a catalogue snapshot:
   (~13h; BOTH params required — a URL clipped at the JSON-escaped `&` 403s, hence
   `json.loads`, never a regex over raw HTML). No blob → standard ladder (~25% are YouTube
   embeds). Token may be IP-bound → `hdontap.com` in `_PROXY_SEGMENT_HOSTS`.
+- feratel.com (~1000 Alpine/European cams, blanket **Travel & Events**): the portal's
+  `sitemap-0.xml` lists the `/en/webcams/<country>/<region>/<slug>` detail pages; the
+  page's OWN cam is the lazy main-player iframe (`data-src`, the "nearby" carousel uses
+  plain `src=` — an Astro-props scan is unreliable, some pages carry no props blob for
+  their own cam). Candidates are rewritten to the canonical
+  `webtv.feratel.com/webtv/?cam=<id>` (metatag/og:video path). **feratel serves
+  panorama-sweep MP4s, not streams**: ~40MB/1080p clips a few minutes long, re-recorded
+  every ~5-10 min per cam — an ended clip is NORMAL (players that reconnect to
+  `/stream/<id>` replay/refresh it; measured: old clip URLs keep answering 206 after
+  rotation, so mid-play rotation can't cut a viewer off). A still-image-only cam has
+  og:video **metas** but no content URL → clean resolve-failed drop. `predisc_key` is
+  `feratel:<cam id>` (in `base.predisc_key`): the id is the identity across the
+  webtv/webtvfc URL shapes third-party embeds carry, which is also why the registry
+  predicate is `.feratel.com/webtv/` (webtvfc pages serve the same og:video; a
+  `webtvfc` URL WITHOUT the portal's `pg=` param resolves to the per-clip GUID form —
+  fine — while `/streams/latest/` URLs are avoided: that endpoint 400s Range requests,
+  which some players need).
 - ozolio.com (~190 cams, mostly Hawaii): Yoast cameras-sitemap → `/explore/<CID>` pages;
   discovery scrapes only the `<title>` (the player is built client-side). `OzolioResolver`
   does the relay's 2-call session dance (`ses.api?cmd=init` → `cmd=open`); the gate is the

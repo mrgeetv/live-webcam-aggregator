@@ -184,6 +184,7 @@ live-webcam-aggregator/
 │           ├── camsecure.py    # CamSecure scraper source (sitemap -> direct HLS)
 │           ├── earthcam.py     # EarthCam mapsearch API source
 │           ├── explore.py      # explore.org streams.json source (direct HLS)
+│           ├── feratel.py      # feratel.com portal scraper source (webtv -> MP4)
 │           ├── hdontap.py      # HDOnTap scraper source (sitemap -> page-URL targets)
 │           ├── livefromiceland.py  # Live from Iceland scraper source (ipcamlive embeds)
 │           ├── livespotting.py # livespotting.tv player-API source (direct HLS)

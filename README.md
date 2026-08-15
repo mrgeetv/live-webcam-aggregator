@@ -18,6 +18,7 @@ stream is actually played.
 | cxtvlive.com | Camera directory |
 | earthcam.com | EarthCam's own cams plus its partner network |
 | explore.org | Nature and wildlife cams |
+| feratel.com | Alpine/European tourism cams (panorama-sweep video, refreshed every few minutes) |
 | hdontap.com | US streaming provider — beaches, piers, wildlife nest cams |
 | livefromiceland.is | Iceland — volcanoes, glaciers, aurora, Reykjavík |
 | livespotting.tv | German and Alpine coastal, harbour and town cams |
