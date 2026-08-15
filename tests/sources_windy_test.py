@@ -47,6 +47,7 @@ _PAGES = {
 class _FakeFetch:
     def __init__(self) -> None:
         self.stream_fetches: list[int] = []
+        self.list_fetches: int = 0
         self._served_cams: bool = False
 
     def get(self, url: str, _timeout: float = 20.0) -> str | None:
@@ -56,6 +57,7 @@ class _FakeFetch:
             self.stream_fetches.append(cid)
             return _PAGES.get(cid)
         if _NEARBY.search(url):
+            self.list_fetches += 1
             # the first grid point returns the cams; the rest of the world is empty
             if not self._served_cams:
                 self._served_cams = True
@@ -94,9 +96,13 @@ def test_windy_state_persists_and_reprobes_live_first():
     assert sorted(set(first_round)) == [101, 202, 303]
 
     fetch.stream_fetches.clear()
+    fetch.list_fetches = 0
     cands = list(src.discover())
-    # second build: no re-enumeration (corpus cached), live ids re-probed first
-    assert fetch.stream_fetches[:2] == [101, 202]
+    # second build: the corpus is cached (zero list-API calls) and the known-live
+    # ids are re-probed. Probes run concurrently, so only membership is
+    # assertable — completion order is scheduler noise.
+    assert fetch.list_fetches == 0
+    assert {101, 202} <= set(fetch.stream_fetches)
     assert len(cands) == 2
 
 
