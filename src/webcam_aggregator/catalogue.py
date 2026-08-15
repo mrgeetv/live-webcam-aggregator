@@ -214,6 +214,16 @@ def build_catalogue(
     # slow a pool down but can never deadlock it. Keep it that way: nothing a fetch
     # path acquires may be held while waiting on another thread.
     yt_lock = threading.Lock()
+    # One probe per CAM, not per source: meta-aggregators (windy, camscape) carry the
+    # same cams as the first-party sources, so without this the same feratel page gets
+    # probed two or three times per build — extra load aimed at exactly the hosts that
+    # already rate-limit us. Keyed on the dedup identity (predisc_key, falling back to
+    # the target URL), shared across every source in THIS build only — a verdict must
+    # never outlive the build, tokens expire. The check-then-probe window means two
+    # sources racing on the same key can still probe twice; that rare duplicate is
+    # cheaper than holding a lock across a network fetch.
+    verdicts: dict[str, str | None] = {}
+    verdicts_lock = threading.Lock()
 
     def filter_source(src: Source) -> _SourceResult:
         # Never raises — a source that blows up reports crashed=True instead of
@@ -238,7 +248,14 @@ def build_catalogue(
             ) -> str | None:
                 if c.predisc_key and c.predisc_key.startswith("yt:"):
                     return None if c.predisc_key[3:] in _live else YT_OFFLINE
-                return drop_reason_for(c)
+                key = c.predisc_key or c.target_url
+                with verdicts_lock:
+                    if key in verdicts:
+                        return verdicts[key]
+                reason = drop_reason_for(c)
+                with verdicts_lock:
+                    verdicts[key] = reason
+                return reason
 
             kept: list[Candidate] = []
             reasons: dict[str, int] = {}

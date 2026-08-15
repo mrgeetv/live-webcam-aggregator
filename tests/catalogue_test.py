@@ -116,6 +116,62 @@ def test_cross_source_dedup_collapses_same_predisc_key() -> None:
     assert entry.title == "Official"
 
 
+def test_shared_cam_is_probed_once_across_sources() -> None:
+    """The same cam carried by two sources (a first-party site and a meta-aggregator)
+    must cost ONE liveness probe — the second source gets the cached verdict. The
+    verdict fans out: a cached dead cam counts as dropped in BOTH sources' stats."""
+    probed: list[str] = []
+
+    def counting(c: Candidate) -> str | None:
+        probed.append(c.target_url)
+        return "dead-manifest" if "dead" in c.target_url else None
+
+    shared_live = dict(
+        key="feratel:5751",
+        target="https://webtv.feratel.com/webtv/?cam=5751",
+        title="Ischgl",
+    )
+    shared_dead = dict(
+        key="hls:https://cdn.example/dead.m3u8",
+        target="https://cdn.example/dead.m3u8",
+        title="Dead",
+    )
+    a = _Src(
+        "feratel",
+        [
+            _make_candidate(source="feratel", page="https://a/1", **shared_live),
+            _make_candidate(source="feratel", page="https://a/2", **shared_dead),
+        ],
+    )
+    b = _Src(
+        "windy",
+        [
+            _make_candidate(source="windy", page="https://b/1", **shared_live),
+            _make_candidate(source="windy", page="https://b/2", **shared_dead),
+        ],
+    )
+
+    history: dict[str, Hist] = {}
+    result = build_catalogue(
+        [a, b],
+        drop_reason_for=counting,
+        youtube_live=lambda _ids: {},
+        history=history,
+        max_parallel_sources=1,  # deterministic: no probe races in the test
+    )
+
+    # one probe per unique cam, not per source
+    assert sorted(probed) == [
+        "https://cdn.example/dead.m3u8",
+        "https://webtv.feratel.com/webtv/?cam=5751",
+    ]
+    # the live cam dedups to one entry; the dead one ships nowhere
+    assert len(result) == 1
+    # the cached dead verdict still counts against BOTH sources' raw stats
+    assert history["feratel"].last_raw_kept == 1
+    assert history["windy"].last_raw_kept == 1
+
+
 # ---------------------------------------------------------------------------
 # Test 2: Multi-source build — entries deduped, category-mapped, non-empty id
 # ---------------------------------------------------------------------------

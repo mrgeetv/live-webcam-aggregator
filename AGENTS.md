@@ -21,7 +21,10 @@ The app is two phases, decoupled by a catalogue snapshot:
    a source that crashes is isolated (reuses its last good set, the rest proceed). Each
    `Source.discover()` yields `Candidate`s → liveness filter (YouTube via the Data
    API batch; everything else via a **fetch-verified probe** — `make_liveness_check`
-   actually fetches the HLS manifest and drops dead/404 and DASH cams) → per-source
+   actually fetches the HLS manifest and drops dead/404 and DASH cams; probed **once
+   per cam across sources**, keyed on the dedup identity — a cam a meta-aggregator
+   shares with a first-party source gets one probe and the verdict counts in every
+   carrying source's stats) → per-source
    empty-guard (keeps the last good set if a source collapses ≥50%, needs 2 bad
    cycles to accept) → cross-source `dedupe()` (per-field merge) → YouTube cams get
    their category from the Data API; scraped titles get location appended
