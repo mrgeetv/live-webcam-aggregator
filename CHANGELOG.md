@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.12.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.5...v2.12.0) (2026-08-16)
+
+### Features
+
+* **scraper:** thirteen new sources (5,664 → 9,760 channels) + probe dedup, category and docs fixes ([#117](https://github.com/mrgeetv/live-webcam-aggregator/issues/117)) ([499ace5](https://github.com/mrgeetv/live-webcam-aggregator/commit/499ace5cb98b83176f45907ec294f2e83706f156))
+
 ## [2.11.5](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.4...v2.11.5) (2026-08-15)
 
 ### Bug Fixes
