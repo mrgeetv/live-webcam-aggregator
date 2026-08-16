@@ -20,9 +20,12 @@ from .extractors.base import Extractor, Resolved
 from .extractors.baltic import BalticResolver
 from .extractors.direct_hls import DirectHls
 from .extractors.earthcam import EarthcamResolver
+from .extractors.hdontap import HdontapResolver
 from .extractors.ipcamlive import IpcamliveResolver, is_alias_page
 from .extractors.metatag import MetaTagExtractor
+from .extractors.ozolio import OzolioResolver
 from .extractors.skyline import SkylineResolver
+from .extractors.viewsurf import ViewsurfResolver
 from .extractors.wetmet import WetmetResolver
 from .extractors.ytdlp import YtDlpExtractor
 from .fetch import (
@@ -48,13 +51,26 @@ from .serving import (
     serve_segment,
     serve_stream,
 )
+from .sources.airportwebcams import AirportWebcamsSource
+from .sources.beachcam import BeachcamSource
 from .sources.camscape import CamscapeSource
 from .sources.camsecure import CamSecureSource
 from .sources.cxtvlive import CxtvliveSource
 from .sources.earthcam import EarthCamSource
 from .sources.explore import ExploreOrgSource
+from .sources.feratel import FeratelSource
+from .sources.hdontap import HdOnTapSource
+from .sources.livefromiceland import LiveFromIcelandSource
+from .sources.livespotting import LivespottingSource
+from .sources.ozolio import OzolioSource
+from .sources.resortcams import ResortCamsSource
+from .sources.shareju import SharejuSource
 from .sources.skyline import SkylineSource
+from .sources.viewsurf import ViewsurfSource
+from .sources.webcamerapl import WebcameraPlSource
+from .sources.whatsupcams import WhatsupcamsSource
 from .sources.wildlife_trusts import WildlifeTrustsSource
+from .sources.windy import WindySource
 from .sources.worldcams import WorldcamsSource
 from .sources.youtube_api import YoutubeApiSource
 
@@ -122,17 +138,47 @@ def _is_ytdlp(u: str) -> bool:
     )
 
 
+def _host_ends(u: str, domain: str) -> bool:
+    host = (urllib.parse.urlsplit(u).hostname or "").lower()
+    return host == domain or host.endswith("." + domain)
+
+
+def _path(u: str) -> str:
+    return urllib.parse.urlsplit(u).path
+
+
 def build_registry(extractors: dict[str, Extractor]) -> Registry:
+    # The provider extractors match on the target's HOST (+ a path marker), not a bare
+    # substring: a scraped iframe src of `https://evil/?x=hdontap.com/stream/` must NOT
+    # route an attacker page into a resolver that then fetches it and reflects its
+    # content (the resolved URL is emitted verbatim in a 302 Location header).
     rules: list[tuple[Callable[[str], bool], str]] = [
         (lambda u: "balticlivecam.com" in u, "baltic"),
         (
             lambda u: "ipcamlive.com/player/player.php" in u or is_alias_page(u),
             "ipcamlive",
         ),
-        (lambda u: "webtv.feratel.com" in u, "metatag"),
+        # any feratel host (webtv. and the webtvfc. variant embeds carry) on a /webtv
+        # path — both serve the og:video meta the metatag extractor reads
+        (lambda u: _host_ends(u, "feratel.com") and "/webtv" in _path(u), "metatag"),
         (lambda u: "api.wetmet.net/widgets/stream/frame.php" in u, "wetmet"),
         (lambda u: "skylinewebcams.com/en/webcam/" in u, "skyline"),
         (lambda u: "earthcam." in u, "earthcam"),
+        # the resolved live.hdontap.com/hls/… URL has no "/stream/" path, so it falls
+        # through to DirectHls if it ever appears as a target
+        (
+            lambda u: _host_ends(u, "hdontap.com") and _path(u).startswith("/stream/"),
+            "hdontap",
+        ),
+        (
+            lambda u: _host_ends(u, "ozolio.com") and "/explore/" in _path(u),
+            "ozolio",
+        ),
+        (
+            lambda u: _host_ends(u, "joada.net")
+            and _path(u).startswith("/embeded/embeded.html"),
+            "viewsurf",
+        ),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
         (lambda u: _is_ytdlp(u), "ytdlp"),
         (lambda u: ".m3u8" in u or "worldcams.tv/player?url=" in u, "direct"),
@@ -461,6 +507,9 @@ def build_app(
             "skyline": SkylineResolver(rget),
             "earthcam": EarthcamResolver(rget),
             "wetmet": WetmetResolver(rget),
+            "hdontap": HdontapResolver(rget),
+            "ozolio": OzolioResolver(rget),
+            "viewsurf": ViewsurfResolver(rget),
         }
 
     serve_extractors = _extractor_set(serve_fetcher)
@@ -522,6 +571,19 @@ def build_app(
             CamSecureSource(_source_fetcher("camsecure")),
             ExploreOrgSource(_source_fetcher("explore")),
             WildlifeTrustsSource(_source_fetcher("wildlife-trusts")),
+            LivespottingSource(_source_fetcher("livespotting")),
+            LiveFromIcelandSource(_source_fetcher("livefromiceland")),
+            BeachcamSource(_source_fetcher("beachcam")),
+            ResortCamsSource(_source_fetcher("resortcams")),
+            HdOnTapSource(_source_fetcher("hdontap")),
+            OzolioSource(_source_fetcher("ozolio")),
+            FeratelSource(_source_fetcher("feratel")),
+            WhatsupcamsSource(_source_fetcher("whatsupcams")),
+            ViewsurfSource(_source_fetcher("viewsurf")),
+            WebcameraPlSource(_source_fetcher("webcamerapl")),
+            AirportWebcamsSource(_source_fetcher("airportwebcams")),
+            SharejuSource(_source_fetcher("shareju")),
+            WindySource(_source_fetcher("windy")),
         )
         if s is not None
     ]

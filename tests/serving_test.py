@@ -9,6 +9,7 @@ from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import CatalogueEntry
 from webcam_aggregator.serving import (
+    _proxy_segments_for,  # pyright: ignore[reportPrivateUsage]
     is_playable_manifest,
     loggable,
     rewrite_manifest,
@@ -374,6 +375,39 @@ def test_serve_stream_pixelcaster_hls_passthrough_302_no_proxy() -> None:
     assert status == 302
     assert location == px_url
     assert body == b""
+
+
+def test_serve_stream_rejects_unsafe_resolved_url() -> None:
+    # a scraped og:video with a CRLF (or a non-http scheme) must never be reflected
+    # into a 302 Location — send_header does no sanitising, so this would split the
+    # response / be an open redirect
+    for bad in (
+        "https://cdn.x/v.mp4\r\nX-Injected: 1",
+        "javascript:alert(1)",
+        "http://cdn.x/\n\nHTTP/1.1 200 OK",
+    ):
+        cache = _make_cache(Resolved(url=bad, stream_type="mp4", ttl_seconds=None))
+        status, _ct, body = serve_stream(
+            ENTRY_ID,
+            catalogue={ENTRY_ID: _entry()},
+            cache=cache,
+            fetch=lambda _u: None,
+            base_url=BASE,
+        )
+        assert status == 502
+        assert body == b"unsafe upstream URL"
+
+
+def test_new_proxy_segment_hosts_relay_but_website_host_does_not() -> None:
+    # the load-bearing new entries: segments 403 without relay (code comments say so)
+    assert _proxy_segments_for("https://video-auth1.iol.pt/auth-beachcam/x/seg.ts")
+    assert _proxy_segments_for("https://live.hdontap.com/hls/hosb1/x/seg.ts")
+    assert _proxy_segments_for("https://edge01.amsterdam.nginx.hdontap.com/x/seg.ts")
+    assert _proxy_segments_for("https://use01-smr05-relay.ozolio.com/x/seg.ts")
+    assert _proxy_segments_for("https://hoktastream1.webcamera.pl/x/seg.ts")
+    # but the hdontap CAM-PAGE website host is NOT relayed — the resolver reads its
+    # JSON, so relaying it would let a tampered page steer signed segment fetches
+    assert not _proxy_segments_for("https://hdontap.com/stream/1/cam/")
 
 
 # ---------------------------------------------------------------------------

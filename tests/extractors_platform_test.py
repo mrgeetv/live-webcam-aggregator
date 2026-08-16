@@ -110,11 +110,13 @@ def test_ipcamlive_player_url_is_passed_through_unchanged() -> None:
     assert fetched == [player]
 
 
-def test_ipcamlive_offline_alias_reports_the_player_url() -> None:
-    """The error should name the URL actually fetched, not the alias page."""
+def test_ipcamlive_offline_alias_error_carries_no_url() -> None:
+    """Errors feed the aggregated resolve-failed detail at INFO; a URL would shatter
+    one failure mode into per-cam buckets (liveness logs the URL at DEBUG)."""
     import pytest
 
-    with pytest.raises(ValueError, match="player.php"):
+    with pytest.raises(ValueError) as exc:
         IpcamliveResolver(lambda _u: "<html>nothing</html>").resolve(
             "https://www.ipcamlive.com/elhovo"
         )
+    assert "http" not in str(exc.value)

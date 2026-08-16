@@ -232,3 +232,45 @@ def test_client_is_built_lazily_and_reused_while_healthy() -> None:
     list(src.discover())
     src.live_ids(["a"])
     assert len(built) == 1  # healthy calls share one client/connection pool
+
+
+def test_client_access_is_serialised_across_threads() -> None:
+    # discover()'s search and live_ids()'s videos.list share ONE non-thread-safe
+    # httplib2 client and run concurrently during a build; the internal lock must stop
+    # them ever executing on it at the same time (else the TLS socket corrupts).
+    import threading
+    import time
+
+    state = {"inside": 0, "overlap": False}
+    pages = iter([{"items": [_item("aaaaaaaaaaa")]}, {"items": []}])
+
+    def _slow_execute() -> Any:
+        state["inside"] += 1
+        if state["inside"] > 1:
+            state["overlap"] = True
+        time.sleep(0.02)  # widen the window a real socket race would hit
+        state["inside"] -= 1
+        return next(pages, {"items": []})
+
+    class _SlowReq:
+        def execute(self) -> Any:
+            return _slow_execute()
+
+    class _SlowEndpoint:
+        def list(self, **_kwargs: Any) -> Any:
+            return _SlowReq()
+
+    class _SlowClient:
+        def search(self) -> Any:
+            return _SlowEndpoint()
+
+        def videos(self) -> Any:
+            return _SlowEndpoint()
+
+    src = YoutubeApiSource(lambda: _SlowClient(), query="cam")
+    t = threading.Thread(target=lambda: list(src.discover()))
+    t.start()
+    for _ in range(5):
+        src.live_ids(["aaaaaaaaaaa"])
+    t.join()
+    assert not state["overlap"]  # the two callers never ran on the client concurrently

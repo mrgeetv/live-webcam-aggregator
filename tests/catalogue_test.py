@@ -116,6 +116,111 @@ def test_cross_source_dedup_collapses_same_predisc_key() -> None:
     assert entry.title == "Official"
 
 
+def test_shared_cam_is_probed_once_across_sources() -> None:
+    """The same cam carried by two sources (a first-party site and a meta-aggregator)
+    must cost ONE liveness probe — the second source gets the cached verdict. The
+    verdict fans out: a cached dead cam counts as dropped in BOTH sources' stats."""
+    probed: list[str] = []
+
+    def counting(c: Candidate) -> str | None:
+        probed.append(c.target_url)
+        return "dead-manifest" if "dead" in c.target_url else None
+
+    shared_live = dict(
+        key="feratel:5751",
+        target="https://webtv.feratel.com/webtv/?cam=5751",
+        title="Ischgl",
+    )
+    shared_dead = dict(
+        key="hls:https://cdn.example/dead.m3u8",
+        target="https://cdn.example/dead.m3u8",
+        title="Dead",
+    )
+    a = _Src(
+        "feratel",
+        [
+            _make_candidate(source="feratel", page="https://a/1", **shared_live),
+            _make_candidate(source="feratel", page="https://a/2", **shared_dead),
+        ],
+    )
+    b = _Src(
+        "windy",
+        [
+            _make_candidate(source="windy", page="https://b/1", **shared_live),
+            _make_candidate(source="windy", page="https://b/2", **shared_dead),
+        ],
+    )
+
+    history: dict[str, Hist] = {}
+    result = build_catalogue(
+        [a, b],
+        drop_reason_for=counting,
+        youtube_live=lambda _ids: {},
+        history=history,
+        max_parallel_sources=1,  # deterministic: no probe races in the test
+    )
+
+    # one probe per unique cam, not per source
+    assert sorted(probed) == [
+        "https://cdn.example/dead.m3u8",
+        "https://webtv.feratel.com/webtv/?cam=5751",
+    ]
+    # the live cam dedups to one entry; the dead one ships nowhere
+    assert len(result) == 1
+    # the cached dead verdict still counts against BOTH sources' raw stats
+    assert history["feratel"].last_raw_kept == 1
+    assert history["windy"].last_raw_kept == 1
+
+
+def test_same_key_different_target_probed_independently() -> None:
+    """The verdict cache keys on target_url, not the merge key. Two candidates that
+    share a predisc_key but carry DIFFERENT target_urls (a tokened vs bare CDN URL, or
+    a feratel cam whose URL shape routes to a different extractor) must each be probed —
+    sharing one verdict would ship a URL the probe never touched, or drop a live one."""
+    probed: list[str] = []
+
+    def counting(c: Candidate) -> str | None:
+        probed.append(c.target_url)
+        # only the tokened URL is live; the bare one 403s (dead)
+        return None if "token=" in c.target_url else "dead-manifest"
+
+    # same bare m3u8 -> same predisc_key, but one candidate carries an auth token
+    tokened = _make_candidate(
+        source="beachcam",
+        key="hls:https://cdn.x/cam.m3u8",
+        page="https://beachcam/1",
+        target="https://cdn.x/cam.m3u8?token=SECRET",
+        title="Live",
+    )
+    bare = _make_candidate(
+        source="camscape",
+        key="hls:https://cdn.x/cam.m3u8",
+        page="https://camscape/1",
+        target="https://cdn.x/cam.m3u8",
+        title="Bare",
+    )
+
+    # camscape FIRST: under the old predisc_key cache this is the failing order —
+    # the bare URL probes dead, caches "dead" under the shared key, and the tokened
+    # live cam inherits it unprobed and is lost. Keying on target_url must prevent that.
+    result = build_catalogue(
+        [_Src("camscape", [bare]), _Src("beachcam", [tokened])],
+        drop_reason_for=counting,
+        youtube_live=lambda _ids: {},
+        history={},
+        max_parallel_sources=1,
+    )
+
+    # both URLs probed (not deduped by the shared key); the bare one is dropped dead
+    # BEFORE dedup, so only the live tokened URL survives and ships
+    assert sorted(probed) == [
+        "https://cdn.x/cam.m3u8",
+        "https://cdn.x/cam.m3u8?token=SECRET",
+    ]
+    assert len(result) == 1
+    assert result[0].target_url == "https://cdn.x/cam.m3u8?token=SECRET"
+
+
 # ---------------------------------------------------------------------------
 # Test 2: Multi-source build — entries deduped, category-mapped, non-empty id
 # ---------------------------------------------------------------------------

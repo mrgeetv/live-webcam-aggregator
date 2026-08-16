@@ -25,6 +25,11 @@ _IFRAME_TAG = re.compile(r'<iframe[^>]+src=["\']([^"\']+)["\']', re.I)
 # Still-image "cams" listed alongside real streams (worldcams' streams[] array, the
 # EarthCam long tail). Matched on the URL PATH so a query string can't false-trigger.
 _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.I)
+# A feratel cam's identity is its numeric id, not the URL shape: the same cam appears
+# as webtv.feratel.com/webtv/?cam=<id> (our canonical form) and as webtvfc.… with
+# extra design/pg params in third-party embeds, so keying on the id is what lets the
+# feratel source's copy merge with the ones cxtvlive/camscape pick up.
+_FERATEL_CAM = re.compile(r"webtv(?:fc)?\.feratel\.com/webtv/\?[^\"'\s]*?\bcam=(\d+)")
 
 # Iframes that can never carry a stream: the tag-manager/consent frames pages embed
 # alongside their real player (GTM's <noscript> ns.html is the common one). The
@@ -82,6 +87,9 @@ def predisc_key(target: str) -> str | None:
     m = _YT_VIDEO.search(t)
     if m:
         return f"yt:{m.group(1)}"
+    fm = _FERATEL_CAM.search(t)
+    if fm:
+        return f"feratel:{fm.group(1)}"
     if ".m3u8" in t:
         # Strip only unambiguous token params. NOT generic single-letter names like
         # `st`/`e` — those can be legitimate stream selectors, and stripping them

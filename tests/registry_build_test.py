@@ -20,6 +20,9 @@ _EXTRACTORS: dict[str, Extractor] = {
         "skyline",
         "earthcam",
         "wetmet",
+        "hdontap",
+        "ozolio",
+        "viewsurf",
     )
 }
 
@@ -30,6 +33,11 @@ def _route(url: str) -> str | None:
 
 def test_real_registry_predicates():
     assert _route("https://webtv.feratel.com/webtv/?cam=1") == "metatag"
+    # the webtvfc. variant third-party embeds carry serves the same og:video
+    assert (
+        _route("https://webtvfc.feratel.com/webtv/?design=v5&pg=X&cam=5751")
+        == "metatag"
+    )
     assert _route("https://g0.ipcamlive.com/player/player.php?alias=x") == "ipcamlive"
     # the MAJORITY (direct ipcamlive m3u8) must route to DirectHls, NOT the resolver
     assert _route("https://s79.ipcamlive.com/streams/abc/stream.m3u8") == "direct"
@@ -43,6 +51,27 @@ def test_real_registry_predicates():
     assert _route("https://www.twitch.tv/somechannel") == "ytdlp"
     assert _route("https://www.youtube.com/watch?v=aaaaaaaaaaa") == "ytdlp"
     assert _route("https://worldcams.tv/player?url=https://x/p.m3u8") == "direct"
+    # hdontap/ozolio cam PAGES -> their resolvers; the resolved CDN URLs (live.hdontap
+    # HLS, *-relay.ozolio Wowza) don't match the page-path predicates
+    assert _route("https://hdontap.com/stream/269629/carmel-by-the-sea/") == "hdontap"
+    assert (
+        _route("https://live.hdontap.com/hls/hosb1/x.stream/playlist.m3u8?t=1&e=2")
+        == "direct"
+    )
+    assert _route("https://www.ozolio.com/explore/CID_BFWA000002E5") == "ozolio"
+    assert (
+        _route("https://platforms5.joada.net/embeded/embeded.html?uuid=ab-12&type=vod")
+        == "viewsurf"
+    )
+    # host-anchored: an attacker URL merely CONTAINING a provider marker in its query
+    # must not route to that provider's resolver
+    assert _route("https://evil.example/x?u=hdontap.com/stream/1/") != "hdontap"
+    assert _route("https://evil.example/?p=.feratel.com/webtv/?cam=1") != "metatag"
+    assert (
+        _route("https://evil.example/e?x=joada.net/embeded/embeded.html") != "viewsurf"
+    )
+    # the webtvfc variant still routes (any feratel host on a /webtv path)
+    assert _route("https://webtvfc.feratel.com/webtv/?design=v5&cam=5") == "metatag"
     assert _route("https://example.com/page") is None
 
 

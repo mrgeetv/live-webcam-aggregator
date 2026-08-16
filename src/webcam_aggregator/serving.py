@@ -66,14 +66,25 @@ def _is_direct_playback(url: str) -> bool:
 
 # Hosts whose segments fail a direct player fetch, so we relay the bytes too:
 # balticlivecam's token is IP-bound to OUR fetch; enhd.es 403s when the player
-# re-encodes the literal "+" in its stream path to %2B. Fetching the segment
-# server-side and handing the player a clean /s URL sidesteps both.
+# re-encodes the literal "+" in its stream path to %2B; iol.pt (beachcam) and
+# ozolio mint a per-manifest-fetch Nimble/Wowza session that 403s any other
+# client (the wetmet shape); hdontap's t/e token may be bound to the fetcher.
+# Fetching the segment server-side and handing the player a clean /s URL
+# sidesteps all of these.
 _PROXY_SEGMENT_HOSTS = (
     "balticlivecam.com",
     "enhd.es",
     "skylinewebcams.com",
     "earthcam.com",
     "wetmet.net",
+    "video-auth1.iol.pt",
+    # the STREAM hosts, not hdontap.com itself: that apex is the cam-page website whose
+    # JSON the resolver reads, so relaying it would let a tampered page make us sign and
+    # relay arbitrary hdontap.com bytes. Manifests are on live., edges on *.nginx.
+    "live.hdontap.com",
+    "nginx.hdontap.com",
+    "ozolio.com",
+    "webcamera.pl",
 )
 
 
@@ -254,6 +265,17 @@ def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> st
     return "\n".join(out) + "\n"
 
 
+def _safe_redirect_target(url: str) -> bool:
+    """A resolved URL is emitted verbatim in a 302 `Location` header, so it must be a
+    plain http(s) URL with no control characters. An extractor reads its URL from a
+    scraped page (e.g. a feratel/og:video meta), and `send_header` does NO CRLF
+    sanitisation — a newline in that value would split the response (header injection
+    on our own origin), and a non-http scheme would be an open redirect."""
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+        return False
+    return urlsplit(url).scheme in ("http", "https")
+
+
 def serve_stream(
     entry_id: str,
     *,
@@ -270,6 +292,11 @@ def serve_stream(
     if resolved is None:
         log.warning("resolve failed: %s -> %s", entry_id, loggable(entry.target_url))
         return (502, "text/plain", b"resolve failed")
+    if not _safe_redirect_target(resolved.url):
+        # a scraped og:video / iframe src that isn't a clean http(s) URL — reject
+        # rather than reflect it into a redirect (see _safe_redirect_target)
+        log.warning("unsafe resolved URL: %s -> %s", entry_id, loggable(resolved.url))
+        return (502, "text/plain", b"unsafe upstream URL")
     if resolved.stream_type == "mp4":
         return (302, resolved.url, b"")  # redirect; 2nd field is the Location
     if _is_direct_playback(resolved.url):

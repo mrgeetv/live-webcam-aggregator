@@ -83,6 +83,16 @@ def test_bad_max_parallel_sources_warns(caplog: pytest.LogCaptureFixture) -> Non
     assert c.max_parallel_sources == 4  # bad value falls back to the default
 
 
+def test_long_interval_warns_about_token_lapse(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # a valid but long interval outlives a per-build auth token (beachcam) — warn
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
+        c = config.load({"YOUTUBE_API_KEY": "k", "CATALOGUE_INTERVAL_HOURS": "48"})
+    assert "CATALOGUE_INTERVAL_HOURS" in caplog.text
+    assert c.catalogue_interval_hours == 48  # honoured, just flagged
+
+
 def test_max_parallel_sources_clamped_to_minimum() -> None:
     c = config.load({"YOUTUBE_API_KEY": "k", "MAX_PARALLEL_SOURCES": "0"})
     assert c.max_parallel_sources == 1  # _int_env clamps to the minimum
