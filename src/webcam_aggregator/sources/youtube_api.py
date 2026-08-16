@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
@@ -47,6 +48,7 @@ class YoutubeApiSource:
     _c: Any | None
     _query: str
     _max: int
+    _lock: threading.Lock
 
     def __init__(
         self, client_factory: Callable[[], Any], query: str, max_videos: int = 1000
@@ -55,6 +57,13 @@ class YoutubeApiSource:
         self._c = None
         self._query = query
         self._max = max_videos
+        # The single httplib2 client is NOT thread-safe, and its two callers run
+        # concurrently during a build: this source's own discover() (search.list) in
+        # its pool lane, and live_ids() (videos.list) invoked from EVERY other source's
+        # liveness phase. Without serialising, two threads share one TLS socket and it
+        # corrupts (SSLError RECORD_LAYER_FAILURE / a None read). This lock guards each
+        # round-trip — held only around .execute(), never across discover()'s yields.
+        self._lock = threading.Lock()
 
     @property
     def _client(self) -> Any:
@@ -85,7 +94,8 @@ class YoutubeApiSource:
             if published_before:
                 params["publishedBefore"] = published_before
             try:
-                resp = self._client.search().list(**params).execute()
+                with self._lock:
+                    resp = self._client.search().list(**params).execute()
             except Exception as exc:
                 # Report what ACTUALLY went wrong. Blaming API quota for every failure
                 # misdiagnoses the common ones — a wedged socket raises BrokenPipeError
@@ -140,11 +150,12 @@ class YoutubeApiSource:
         for i in range(0, len(ids), 50):
             chunk = ids[i : i + 50]
             try:
-                resp = (
-                    self._client.videos()
-                    .list(part="snippet,liveStreamingDetails", id=",".join(chunk))
-                    .execute()
-                )
+                with self._lock:
+                    resp = (
+                        self._client.videos()
+                        .list(part="snippet,liveStreamingDetails", id=",".join(chunk))
+                        .execute()
+                    )
             except Exception:
                 # Same wedged-connection risk as discover(). Bin the client, then let
                 # the caller handle the failure as before (YT cams treated as offline).
