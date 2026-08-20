@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
 from html import unescape
@@ -8,9 +9,12 @@ from typing import override
 from ..models import Candidate
 from .base import HtmlScraperSource, with_location_parts
 
-# WordPress sitemap for the `webcam` post type — the complete cam list.
-_SITEMAP = "https://livefromiceland.is/wp-sitemap-posts-webcam-1.xml"
-_LOC = re.compile(r"<loc>(https://livefromiceland\.is/webcam/[^<]+)</loc>")
+# The site serves no sitemap, so the `webcam` post type's WP REST collection is
+# the cam index: ~32 cams, well inside WP's per_page ceiling of 100, so one call
+# is the whole list. It carries the page url and title but no player url — that
+# is only ever in the page HTML, so the per-cam fetch below stays.
+_INDEX = "https://livefromiceland.is/wp-json/wp/v2/webcam?per_page=100"
+_CAM_PREFIX = "https://livefromiceland.is/webcam/"
 # The player iframe is lazy-loaded (src="about:blank", the real URL in
 # data-litespeed-src), so the shared ladder's iframe rule can't be trusted with it —
 # grep the player URL straight out of the static HTML instead.
@@ -22,7 +26,7 @@ _SITE_TAIL = re.compile(r"\s*[–-]\s*Live From Iceland\s*$", re.I)
 
 
 class LiveFromIcelandSource(HtmlScraperSource[str]):
-    """livefromiceland.is: ~30 cams (volcanoes, glaciers, Reykjavík, harbours), one
+    """livefromiceland.is: ~32 cams (volcanoes, glaciers, Reykjavík, harbours), one
     ipcamlive player per page, served by the existing ipcamlive extractor. ctx is the
     page <title> with the site boilerplate tail stripped; the site has no per-cam
     category -> None (the title fallback categorises what it can)."""
@@ -31,8 +35,12 @@ class LiveFromIcelandSource(HtmlScraperSource[str]):
 
     @override
     def _page_urls(self) -> list[str]:
-        xml = self._fetch.get(_SITEMAP) or ""
-        return sorted(set(_LOC.findall(xml)))
+        try:
+            items = json.loads(self._fetch.get(_INDEX) or "")
+        except ValueError:
+            return []  # not JSON (an error page) -> the empty-guard reports it
+        links = {str(it.get("link", "")) for it in items if isinstance(it, dict)}
+        return sorted(u for u in links if u.startswith(_CAM_PREFIX))
 
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
