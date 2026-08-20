@@ -46,6 +46,9 @@ The app is two phases, decoupled by a catalogue snapshot:
    rest (survives expiry via re-resolve), and proxied **DVR** playlists are trimmed to
    the live edge (`truncate_to_live_edge`) so we never relay the multi-MB rewind
    buffer (the manifest fetcher uses `MANIFEST_MAX_BYTES`, not the 8 MB default).
+   Keep that trim even though the pinned player clients (below) usually answer with a
+   short live-edge window rather than the full rewind buffer — the window size is the
+   client's choice and the url still says `playlist_type/DVR`, so it is not a guarantee.
 
 **`build_app()` in `app.py` is the wiring seam.** To extend:
 
@@ -212,6 +215,25 @@ The app is two phases, decoupled by a catalogue snapshot:
 - yt-dlp is forced to an **HLS** format (`-f b[protocol*=m3u8]`) — some live streams
   default to DASH (`.mpd`) which the HLS proxy can't serve; `serve_stream` rejects
   any non-`#EXTM3U` body (so DASH-only cams are dropped, not served broken).
+- yt-dlp is also pinned to **muxed-capable player clients** (`--extractor-args
+  youtube:player_client=mweb,web_embedded`). We hand the player ONE url, so the
+  resolve needs YouTube's muxed live ladder (itags 91-96); a client serving
+  video-only + audio-only formats fails every resolve with "Requested format is not
+  available". The arg is namespaced to `youtube:` (`_configuration_arg` keys by
+  extractor), so the twitch resolves sharing this extractor are untouched. A resolve
+  returning **two** urls means a split format slipped through — raise, never pick a
+  line, or the cam ships audio-only looking perfectly healthy. The pin exists to buy
+  a muxed format, not because those clients are special: revisit it whenever yt-dlp
+  changes its default clients.
+- **A player client YouTube has leashed is invisible to us.** googlevideo keeps
+  answering the manifest 200 while every segment 403s a short way into playback
+  (measured ~40s in), so the Data API liveness, the manifest gate and the resolve all
+  pass and the cam ships looking healthy — the 403 is a player-to-CDN exchange we are
+  never party to, with `PROXY_YOUTUBE` either way. A serve-time segment probe would
+  not catch it either: the segments are fine at t=0. Staying current with yt-dlp is
+  the only defence, since upstream drops a leashed client from its defaults. "Plays
+  for under a minute, then stops" across MANY YouTube cams at once is this, and the
+  fix is a version bump, not a code change.
 - YouTube's `eventType=live` search is capped at ~100 results via `pageToken` (it
   reports a huge `totalResults` but returns an empty page 3). `discover()` paginates
   by `publishedBefore` time-windows instead (walking back from the last item's

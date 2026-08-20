@@ -57,6 +57,38 @@ def test_ytdlp_requests_hls_format():
     assert "m3u8" in captured[captured.index("-f") + 1]
 
 
+def test_ytdlp_pins_a_muxed_player_client():
+    """We emit ONE url, so the resolve must ask for clients that still serve
+    youtube's muxed live ladder — yt-dlp's default client serves video-only and
+    audio-only formats this extractor cannot use."""
+    captured: list[str] = []
+
+    def _run(argv: list[str]) -> str:
+        captured.extend(argv)
+        return "https://x.googlevideo.com/playlist.m3u8"
+
+    YtDlpExtractor(run=_run).resolve("https://www.youtube.com/watch?v=abc")
+    assert "--extractor-args" in captured
+    arg = captured[captured.index("--extractor-args") + 1]
+    assert arg.startswith("youtube:player_client=")
+    # namespaced to youtube, so the twitch resolves sharing this extractor are
+    # unaffected
+    assert "mweb" in arg
+
+
+def test_ytdlp_rejects_a_split_format():
+    """Two urls mean yt-dlp picked separate video and audio streams. Taking one
+    would ship a cam that resolves clean and plays audio only."""
+    split = (
+        "https://x.googlevideo.com/video-only.m3u8\n"
+        "https://x.googlevideo.com/audio-only.m3u8"
+    )
+    with pytest.raises(ValueError, match="split format"):
+        YtDlpExtractor(run=lambda argv: split).resolve(
+            "https://www.youtube.com/watch?v=abc"
+        )
+
+
 def test_wetmet_extracts_the_player_script_url() -> None:
     """The widget's inline script assigns the master playlist to `vurl` (plain, not
     JSON-escaped — the fixture mirrors the real page)."""
