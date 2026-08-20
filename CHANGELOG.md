@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.12.2](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.12.1...v2.12.2) (2026-08-20)
+
+### Bug Fixes
+
+* **scraper:** index livefromiceland via the WP REST collection ([#120](https://github.com/mrgeetv/live-webcam-aggregator/issues/120)) ([bfba8ef](https://github.com/mrgeetv/live-webcam-aggregator/commit/bfba8ef2bfc775279bc4fbcb3bd5a0c97222366d))
+
 ## [2.12.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.12.0...v2.12.1) (2026-08-20)
 
 ### Bug Fixes
