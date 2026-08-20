@@ -11,8 +11,8 @@ _HEIMAKLETTUR_HTML = """
 """
 
 _PAGES = {
-    "https://livefromiceland.is/wp-sitemap-posts-webcam-1.xml": (
-        _FIX / "livefromiceland_sitemap.xml"
+    "https://livefromiceland.is/wp-json/wp/v2/webcam?per_page=100": (
+        _FIX / "livefromiceland_index.json"
     ).read_text(),
     "https://livefromiceland.is/webcam/hekla/": (
         _FIX / "livefromiceland_cam.html"
@@ -48,13 +48,45 @@ def test_livefromiceland_extracts_lazy_ipcamlive_players():
         assert c.predisc_key is None  # ipcamlive alias: nothing to merge on
         assert c.angle_key is None  # one player per page
 
-    # the sitemap's non-/webcam/ page is never crawled as a cam
+    # a non-cam entry in the collection is never crawled as a cam
     assert not any("about" in c.source_page_url for c in cands)
 
 
-def test_livefromiceland_handles_missing_sitemap():
+def test_livefromiceland_handles_missing_index():
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None
 
     assert list(LiveFromIcelandSource(_Dead()).discover()) == []
+
+
+def test_livefromiceland_handles_a_non_json_index():
+    """A retired endpoint answers with an HTML error page, not JSON. That must
+    drop to zero cams (the empty-guard then reports it), never crash the source."""
+
+    class _ErrorPage:
+        def get(self, _url: str, _timeout: float = 20.0) -> str | None:
+            return "<!DOCTYPE html><html><body>404 Not Found</body></html>"
+
+    assert list(LiveFromIcelandSource(_ErrorPage()).discover()) == []
+
+
+def test_livefromiceland_handles_a_json_error_object():
+    """WP answers a disabled route with a JSON *object*, not the expected array."""
+
+    class _RestError:
+        def get(self, _url: str, _timeout: float = 20.0) -> str | None:
+            return '{"code":"rest_no_route","message":"No route was found."}'
+
+    assert list(LiveFromIcelandSource(_RestError()).discover()) == []
+
+
+def test_livefromiceland_handles_a_json_scalar_index():
+    """A terse error body like `404` parses as a JSON number; iterating it would
+    raise. Any non-list shape must drop to zero cams, never crash the source."""
+
+    class _Scalar:
+        def get(self, _url: str, _timeout: float = 20.0) -> str | None:
+            return "404"
+
+    assert list(LiveFromIcelandSource(_Scalar()).discover()) == []

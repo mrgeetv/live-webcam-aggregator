@@ -325,9 +325,13 @@ The app is two phases, decoupled by a catalogue snapshot:
   `source` HLS on `cdn.livespotting.com` → `DirectHls`, `hls:` predisc key. The edge appends
   a per-request `?session=` to child playlists but segments work without it (viewer
   analytics, not auth). German names — the title-keyword fallback mostly misses them.
-- livefromiceland.is (~30 cams): WP `webcam` post-type sitemap → cam pages whose ipcamlive
-  iframe is **LiteSpeed lazy-loaded** (`src="about:blank"`, real URL in `data-litespeed-src`),
-  so the ladder's iframe rule can't be trusted — a one-regex `_candidates` override greps the
+- livefromiceland.is (~32 cams): the site serves **no sitemap** (`robots.txt` still names
+  a `wp-sitemap.xml` that 404s), so the index is the `webcam` post type's **WP REST
+  collection** (`/wp-json/wp/v2/webcam?per_page=100`) — one call, well inside WP's
+  per_page ceiling of 100. It carries the page url and title but NOT the player url, so
+  the per-cam page fetch stays. Those cam pages' ipcamlive iframe is **LiteSpeed
+  lazy-loaded** (`src="about:blank"`, real URL in `data-litespeed-src`), so the ladder's
+  iframe rule can't be trusted — a one-regex `_candidates` override greps the
   `g0.ipcamlive.com/player/player.php?alias=` URL straight from the HTML.
 - beachcam.meo.pt (~190 Portuguese cams, blanket category **Beaches** — the few
   lake/wake-park/city outliers beat ~190 Portuguese titles the English keyword fallback

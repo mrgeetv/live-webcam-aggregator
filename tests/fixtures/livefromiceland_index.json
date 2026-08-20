@@ -1,0 +1,42 @@
+[
+ {
+  "id": 101,
+  "slug": "reykjavikurtjorn",
+  "type": "webcam",
+  "link": "https://livefromiceland.is/webcam/reykjavikurtjorn/",
+  "title": {
+   "rendered": "Reykjavíkurtjörn"
+  },
+  "acf": []
+ },
+ {
+  "id": 102,
+  "slug": "hekla",
+  "type": "webcam",
+  "link": "https://livefromiceland.is/webcam/hekla/",
+  "title": {
+   "rendered": "Hekla"
+  },
+  "acf": []
+ },
+ {
+  "id": 103,
+  "slug": "vestmannaeyjar-heimaklettur",
+  "type": "webcam",
+  "link": "https://livefromiceland.is/webcam/vestmannaeyjar-heimaklettur/",
+  "title": {
+   "rendered": "Vestmannaeyjar – Heimaklettur"
+  },
+  "acf": []
+ },
+ {
+  "id": 104,
+  "slug": "about",
+  "type": "page",
+  "link": "https://livefromiceland.is/about/",
+  "title": {
+   "rendered": "About"
+  },
+  "acf": []
+ }
+]
