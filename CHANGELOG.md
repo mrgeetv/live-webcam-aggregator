@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.12.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.12.0...v2.12.1) (2026-08-20)
+
+### Bug Fixes
+
+* **scraper:** pin yt-dlp to muxed youtube clients and bump to 2026.8.19 ([#119](https://github.com/mrgeetv/live-webcam-aggregator/issues/119)) ([4cdc3ed](https://github.com/mrgeetv/live-webcam-aggregator/commit/4cdc3edfa999e4b8c8ec321902ebcb9e9c3ec05a)), closes [#74](https://github.com/mrgeetv/live-webcam-aggregator/issues/74)
+
 ## [2.12.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.11.5...v2.12.0) (2026-08-16)
 
 ### Features
