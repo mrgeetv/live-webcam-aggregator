@@ -291,6 +291,33 @@ lines. The per-source counts stay raw even when the empty-guard is still serving
 failed source's last good set, so a failure surfaces immediately. See the
 *Monitoring* section in the README for the payload shape and the state table.
 
+### YouTube cams that play briefly, then stop
+
+Nothing in the logs will show this one — it is worth knowing by hand. If **many**
+YouTube cams play for well under a minute and then die (`403` in the player, or
+ExoPlayer's `UnrecognizedInputFormatException`), YouTube has leashed the player
+client yt-dlp is using. googlevideo keeps answering the manifest `200` while every
+segment `403`s, so the build-time liveness, the resolve and the manifest gate all
+pass and the cams ship looking healthy. The 403 is a player-to-CDN exchange the
+server is never part of, with `PROXY_YOUTUBE` on or off.
+
+To confirm: resolve one cam by hand, then fetch a segment straight away and again a
+minute later.
+
+```bash
+U=$(yt-dlp -q --no-warnings -f 'b[protocol*=m3u8]/b' -g -- "https://www.youtube.com/watch?v=<id>")
+S=$(curl -s "$U" | grep -o 'https://[^ ]*' | sed -n '3p')
+curl -sL -o /dev/null -w '%{http_code}\n' "$S"    # 200 now...
+sleep 60
+curl -sL -o /dev/null -w '%{http_code}\n' "$S"    # ...403 = leashed
+```
+
+Use `curl -sL`: some segments 302 to an `rr*.googlevideo.com` edge, and without
+`-L` that reads as a failure. The fix is a `yt-dlp` bump — upstream drops a leashed
+client from its defaults — plus a check that the pinned `player_client` in
+`extractors/ytdlp.py` still offers a **muxed** format, since the resolve emits one
+URL and cannot use split video-only/audio-only streams.
+
 ### Per-host pacing
 
 Every build-side fetcher (the source scrapers, the liveness resolver, the manifest
