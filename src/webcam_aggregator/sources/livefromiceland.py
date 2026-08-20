@@ -39,6 +39,8 @@ class LiveFromIcelandSource(HtmlScraperSource[str]):
             items = json.loads(self._fetch.get(_INDEX) or "")
         except ValueError:
             return []  # not JSON (an error page) -> the empty-guard reports it
+        if not isinstance(items, list):
+            return []  # WP error object, or any other non-collection shape
         links = {str(it.get("link", "")) for it in items if isinstance(it, dict)}
         return sorted(u for u in links if u.startswith(_CAM_PREFIX))
 

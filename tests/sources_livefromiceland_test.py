@@ -79,3 +79,14 @@ def test_livefromiceland_handles_a_json_error_object():
             return '{"code":"rest_no_route","message":"No route was found."}'
 
     assert list(LiveFromIcelandSource(_RestError()).discover()) == []
+
+
+def test_livefromiceland_handles_a_json_scalar_index():
+    """A terse error body like `404` parses as a JSON number; iterating it would
+    raise. Any non-list shape must drop to zero cams, never crash the source."""
+
+    class _Scalar:
+        def get(self, _url: str, _timeout: float = 20.0) -> str | None:
+            return "404"
+
+    assert list(LiveFromIcelandSource(_Scalar()).discover()) == []
