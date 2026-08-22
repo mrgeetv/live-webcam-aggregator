@@ -110,9 +110,21 @@ The app is two phases, decoupled by a catalogue snapshot:
   first match wins (a species/"harbour" beats a generic "street"/"city"); failing that, a
   name carrying a `City, Region, Country`-style geo is a place view → **"Travel & Events"**.
   Keep `_TITLE_RULES` GENERAL (real category words, not one-off cam names) — an import-time
-  guard raises if a rule names a category outside `ALL_CATEGORIES`. `EXCLUDE_CATEGORIES`
-  (config) post-filters the built catalogue by mapped category, across all sources. The
-  full excludable set is `categories.ALL_CATEGORIES` — a test guards the README list matches.
+  guard raises if a rule names a category outside `ALL_CATEGORIES`. **Extending
+  `_TITLE_RULES` is a first-class option, not a last resort**: when a source's own
+  category straddles two of ours (tomarigi's 河川・道路 is half river gauges, half road
+  junctions, plus a long tail of neither), leave it uncategorised and let the fallback
+  decide per-cam — one blanket mapping would be wrong for a quarter of that source. The
+  rules are NOT English-only (whole sources are Japanese), and non-Latin keywords have
+  three requirements: **no `\b`** around them (Japanese is unspaced, so `\b国道\b` cannot
+  match 国道17号 — the digit after 道 is a word char, so each rule alternates a
+  boundary-free group beside its English `\b(...)\b` one); prefer **multi-character
+  tokens**, because a lone kanji is usually also a place name (港 sits inside 空港 and
+  港区); and where a lone kanji is unavoidable (川/湖/滝 — water cams are named for
+  their river, lake or fall), guard it by **what follows** (旭川市/湖西市/滝沢市 run
+  on into more name, a watercourse does not). `EXCLUDE_CATEGORIES` (config) post-filters the built catalogue
+  by mapped category, across all sources. The full excludable set is
+  `categories.ALL_CATEGORIES` — a test guards the README list matches.
 - **Diagnostics come free** — failures aggregate at two seams, so a new source or
   extractor is diagnosable without extra work. Each source gets its **own `Fetcher`
   carrying its own `FetchStats`** (wired in `build_app._source_fetcher`; the keys must
@@ -423,6 +435,18 @@ The app is two phases, decoupled by a catalogue snapshot:
   non-ASCII, so `with_location_parts` would drop Japanese parts entirely. Tags map via
   `_TAG_CATEGORY` (guarded by a test against `categories._MAP`); town/scenic tags stay
   unmapped on purpose — the geo title suffix files those under Travel & Events.
+- tomarigi.me (とまり木, ~4900 cams): a curated all-YouTube directory — Japanese-branded
+  but ~70% international. `sitemap.xml` is the ONLY complete index (both map views are
+  client-rendered; the `/spots/<slug>` listings cover just the ~1300 Japanese cams, and
+  robots.txt disallows the site's own `/api/`), so it costs one fetch per cam page —
+  our second-heaviest source by request count. Each page's `VideoObject` JSON-LD carries
+  the watch URL, the name and the category, so there is nothing to extract from a player
+  and every cam dedups on its `yt:` key; liveness rides the existing Data API batch.
+  The category is a Japanese word inside the LD **description** (`。<category>のライブ
+  カメラを…`), not a tag or a URL segment. Sampled 20 at random: 20/20 live, all with a
+  `startDate` inside 3 days — the site prunes ended cams, so a large `yt-offline` share
+  would be a signal, not the norm. 河川・道路 (~25% of the corpus) is deliberately left
+  uncategorised — see the title-fallback note above.
 - windy.com (meta-aggregator, ramps to ~thousands): the **keyless internal API**
   (`node.windy.com/webcams/v2.0/list?nearby=<lat>,<lon>&radius=250`, limit 25, offset
   paginates; no key/UA/Referer needed anywhere) enumerates the ~65k-cam corpus via a
@@ -476,8 +500,9 @@ comment, never the incident.
 The suite is **fully offline** — no real-endpoint/live tests (sources, resolvers,
 and the HTTP handler are exercised with injected fakes + real sockets on port 0).
 The gate is `pre-commit` (which runs `pytest` + a coverage floor as a `files:`-gated
-hook) plus the same checks in CI — not ruff/mypy. The `pytest` hook calls `pytest`
-directly, so the dev venv must be on `PATH` when committing.
+hook) plus the same checks in CI — not ruff/mypy. The `pytest` hook runs
+`scripts/run-pytest.sh`, which prefers `.venv/bin/pytest` and falls back to
+`pytest` on `PATH` — no venv activation needed to commit.
 
 ## Branching Workflow
 
@@ -590,7 +615,7 @@ Pre-commit hooks enforced:
 - **conventional-pre-commit** - Commit message validation (strict mode with forced scopes)
 - **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, and pyrightconfig.json
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
-- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `tests/`, or `requirements*.txt` change. Calls `pytest` directly, so the dev venv must be on `PATH` when committing. Also runs in CI.
+- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `tests/`, or `requirements*.txt` change. Runs via `scripts/run-pytest.sh` (prefers `.venv/bin/pytest`, falls back to `PATH`). Also runs in CI.
 - **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what flake8/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name.
 
 ## Python Version Synchronization

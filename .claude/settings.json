@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/block-commit-to-main.sh"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-commit-to-main.sh\""
           }
         ]
       },

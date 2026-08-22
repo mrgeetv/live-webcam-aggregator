@@ -66,6 +66,7 @@ from .sources.ozolio import OzolioSource
 from .sources.resortcams import ResortCamsSource
 from .sources.shareju import SharejuSource
 from .sources.skyline import SkylineSource
+from .sources.tomarigi import TomarigiSource
 from .sources.viewsurf import ViewsurfSource
 from .sources.webcamerapl import WebcameraPlSource
 from .sources.whatsupcams import WhatsupcamsSource
@@ -583,6 +584,7 @@ def build_app(
             WebcameraPlSource(_source_fetcher("webcamerapl")),
             AirportWebcamsSource(_source_fetcher("airportwebcams")),
             SharejuSource(_source_fetcher("shareju")),
+            TomarigiSource(_source_fetcher("tomarigi")),
             WindySource(_source_fetcher("windy")),
         )
         if s is not None
