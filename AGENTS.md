@@ -500,8 +500,9 @@ comment, never the incident.
 The suite is **fully offline** — no real-endpoint/live tests (sources, resolvers,
 and the HTTP handler are exercised with injected fakes + real sockets on port 0).
 The gate is `pre-commit` (which runs `pytest` + a coverage floor as a `files:`-gated
-hook) plus the same checks in CI — not ruff/mypy. The `pytest` hook calls `pytest`
-directly, so the dev venv must be on `PATH` when committing.
+hook) plus the same checks in CI — not ruff/mypy. The `pytest` hook runs
+`scripts/run-pytest.sh`, which prefers `.venv/bin/pytest` and falls back to
+`pytest` on `PATH` — no venv activation needed to commit.
 
 ## Branching Workflow
 
@@ -614,7 +615,7 @@ Pre-commit hooks enforced:
 - **conventional-pre-commit** - Commit message validation (strict mode with forced scopes)
 - **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, and pyrightconfig.json
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
-- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `tests/`, or `requirements*.txt` change. Calls `pytest` directly, so the dev venv must be on `PATH` when committing. Also runs in CI.
+- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `tests/`, or `requirements*.txt` change. Runs via `scripts/run-pytest.sh` (prefers `.venv/bin/pytest`, falls back to `PATH`). Also runs in CI.
 - **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what flake8/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name.
 
 ## Python Version Synchronization

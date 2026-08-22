@@ -116,9 +116,10 @@ Hooks will run automatically on commit, checking:
   `src/`, `tests/`, or `requirements*.txt` change
 - **Dead-code detection (vulture)**: flags unused functions/attributes on `src/`
 
-> **Note:** the `pytest` hook calls `pytest` directly, so your dev virtualenv must
-> be active (or otherwise on `PATH`) when committing. The same checks run in CI on
-> every pull request, so nothing merges without the tests passing.
+> **Note:** the `pytest` hook runs `scripts/run-pytest.sh`, which prefers the
+> project's `.venv` and falls back to `pytest` on `PATH` — no venv activation
+> needed to commit. The same checks run in CI on every pull request, so nothing
+> merges without the tests passing.
 
 To run hooks manually:
 
@@ -202,6 +203,7 @@ live-webcam-aggregator/
 │           └── windy.py        # windy.com keyless API -> original providers' embeds
 ├── scripts/                    # Helper scripts
 │   ├── run.sh                  # Docker build/run script
+│   ├── run-pytest.sh           # pytest wrapper for the pre-commit hook (prefers .venv)
 │   └── check-python-version.sh
 ├── .github/workflows/          # CI/CD pipelines
 ├── Dockerfile                  # Container definition

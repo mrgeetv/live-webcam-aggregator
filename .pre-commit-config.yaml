@@ -82,7 +82,9 @@ repos:
 
       - id: pytest
         name: pytest (with coverage)
-        entry: pytest
+        # The wrapper prefers .venv/bin/pytest and falls back to PATH, so the hook
+        # works whatever shell state the commit runs from (agents, editor git UIs, CI).
+        entry: scripts/run-pytest.sh
         language: system
         pass_filenames: false
         # Only run when code/tests/deps change (skip doc-only commits).
