@@ -28,7 +28,9 @@ if ! printf '%s' "$cmd" | grep -Eq '\bgit\b[^;&|]*[[:space:]]commit\b'; then
   exit 0
 fi
 
-branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# Pin the branch lookup to the project, not the shell's cwd: a hook that runs
+# from anywhere else gets an empty branch and would silently fail OPEN.
+branch=$(git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 case "$branch" in
   main|master)
