@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.13.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.12.2...v2.13.0) (2026-08-22)
+
+### Features
+
+* **scraper:** add tomarigi.me source, teach the title fallback Japanese ([#124](https://github.com/mrgeetv/live-webcam-aggregator/issues/124)) ([a7a6b7c](https://github.com/mrgeetv/live-webcam-aggregator/commit/a7a6b7c0f332d7e78e3e93f857fb994f0f515ddb))
+
+### Maintenance
+
+* **deps:** bump docker/setup-buildx-action from 4.1.0 to 4.3.0 ([#123](https://github.com/mrgeetv/live-webcam-aggregator/issues/123)) ([11a0e73](https://github.com/mrgeetv/live-webcam-aggregator/commit/11a0e73de37413fb507e4d80194701efd947e0cb))
+
 ## [2.12.2](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.12.1...v2.12.2) (2026-08-20)
 
 ### Bug Fixes
