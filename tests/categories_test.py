@@ -113,11 +113,17 @@ def test_category_from_title_japanese_keywords():
 
 
 def test_japanese_keywords_avoid_place_name_false_positives():
-    # 川 is the trap: these are PLACES whose name merely contains it, and each is
-    # really something else (a road cam, a station, a plain city view)
+    # 川/湖/滝 are the trap: these are PLACES whose name merely contains one, and each
+    # is really something else (a road cam, a station, a plain city view)
     assert category_from_title("旭川市国道12号線 忠和ライブカメラ") == "Traffic"
     assert category_from_title("神奈川県横浜市の眺め") != "Water & Waterways"
     assert category_from_title("川崎の街並み") != "Water & Waterways"
+    assert category_from_title("滝沢市役所前ライブカメラ") != "Water & Waterways"
+    assert category_from_title("湖西市の眺め") != "Water & Waterways"
+    # …while the same kanji ending a name, or followed by a monitoring word, IS water
+    assert category_from_title("琵琶湖ライブカメラ") == "Water & Waterways"
+    assert category_from_title("白糸の滝") == "Water & Waterways"
+    assert category_from_title("諏訪湖畔ライブカメラ") == "Water & Waterways"
     # 道の駅 is a roadside rest stop, not a railway station
     assert category_from_title("道の駅うつのみや ライブカメラ") == "Traffic"
 
@@ -134,8 +140,8 @@ def test_compound_and_non_english_words_the_english_rules_missed():
 
 
 def test_education_and_hotels_titles():
-    # both categories exist in the taxonomy but had no title rule, so these cams
-    # could never leave "Other"
+    # Education and Hotels carry their own title rules — campus and hotel cams must
+    # not fall through to "Other"
     assert category_from_title("University of Nevada, Reno - Quadrangle") == "Education"
     assert category_from_title("Lourdes Hill College") == "Education"
     assert category_from_title("Jostedal hotell, Norway") == "Hotels"

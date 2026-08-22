@@ -111,9 +111,9 @@ def map_category(raw: str | None) -> str:
 #     rule keeps its English `\b(...)\b` group and ALTERNATES a boundary-free group.
 #   * Prefer multi-character tokens: a lone kanji is usually also a place name. 港 sits
 #     inside 空港 (airport) and 港区 (a Tokyo ward); 山 and 城 inside 岡山 and 茨城.
-#   * Where a lone kanji is unavoidable — 川, because Japanese river cams are named for
-#     their river — guard it by what FOLLOWS: 旭川市 and 神奈川県 run on into more name,
-#     a watercourse does not.
+#   * Where a lone kanji is unavoidable — 川/湖/滝, because Japanese water cams are
+#     named for their river, lake or fall — guard it by what FOLLOWS: 旭川市, 湖西市
+#     and 滝沢市 run on into more name, a watercourse does not.
 _TITLE_RULES: tuple[tuple[str, str], ...] = (
     (
         "Animals",
@@ -181,7 +181,7 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         r"\b(\bbridge|castle|\btowers?\b|\bfort\b|fortress|monument|palace|lighthouse|statue"
         r"|memorial|\barch\b|citadel|obelisk|granar|windmill)"
         # bridge in the languages our sources actually use. NOT `ponte`: Ponte di Legno
-        # is a town, and Landmarks is tested before Mountains would claim it
+        # is a town, and a Landmarks match here would pre-empt the later Cities rule
         r"|puente|brücke" r"|お城|城跡|天守|タワー|灯台|展望台",
     ),
     (
@@ -199,10 +199,12 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         r"\b(\blake|\briver|\bfalls\b|waterfall|\bcanal|lagoon|\bpond|\bloch\b|reservoir"
         r"|estuary|\bcreek|\bweir\b|fjord|\bdam\b|rapids|\bbay\b|\bcaverns?\b|\bcaves?\b"
         r"|\bfirth\b|\bsound\b|jezior|jezero)"
-        r"|河川|水害|水位|映像監視局|用水|ダム|湖|滝|運河|合流|支流"
-        # 川 alone only where it reads as a watercourse: a monitoring word follows,
-        # or the name simply ends (西除川, 【神田川】, 気仙川：) — unlike 旭川市/川崎.
-        r"|川(?:(?=映像|カメラ|ライブ|合流|上流|下流|水位)|(?![ぁ-んァ-ヶ一-龥A-Za-z0-9]))",
+        r"|河川|水害|水位|映像監視局|用水|ダム|運河|合流|支流"
+        # 川/湖/滝 alone only where they read as the water itself: a monitoring word
+        # (or 畔, lakeside) follows, or the name simply ends (西除川, 【神田川】, 琵琶湖,
+        # 白糸の滝) — unlike 旭川市/川崎/湖西市/滝沢市, which run on into more name.
+        r"|[川湖滝](?:(?=映像|カメラ|ライブ|合流|上流|下流|水位|畔)"
+        r"|(?![ぁ-んァ-ヶ一-龥A-Za-z0-9]))",
     ),
     (
         "Traffic",

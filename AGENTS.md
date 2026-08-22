@@ -120,9 +120,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   match 国道17号 — the digit after 道 is a word char, so each rule alternates a
   boundary-free group beside its English `\b(...)\b` one); prefer **multi-character
   tokens**, because a lone kanji is usually also a place name (港 sits inside 空港 and
-  港区); and where a lone kanji is unavoidable (川 — river cams are named for their
-  river), guard it by **what follows** (旭川市/神奈川県 run on into more name, a
-  watercourse does not). `EXCLUDE_CATEGORIES` (config) post-filters the built catalogue
+  港区); and where a lone kanji is unavoidable (川/湖/滝 — water cams are named for
+  their river, lake or fall), guard it by **what follows** (旭川市/湖西市/滝沢市 run
+  on into more name, a watercourse does not). `EXCLUDE_CATEGORIES` (config) post-filters the built catalogue
   by mapped category, across all sources. The full excludable set is
   `categories.ALL_CATEGORIES` — a test guards the README list matches.
 - **Diagnostics come free** — failures aggregate at two seams, so a new source or
