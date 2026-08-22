@@ -27,6 +27,7 @@ stream is actually played.
 | ozolio.com | Hawaii and US resort/beach cams |
 | resortcams.com | US Southeast ski, mountain and beach-town cams |
 | skylinewebcams.com | Camera directory |
+| tomarigi.me (とまり木) | Curated YouTube live cams — Japan-founded, now largely worldwide |
 | viewsurf.com | French coastal, harbour, ski and city cams |
 | webcamera.pl | Polish network — Baltic beaches, Tatra mountains, ski resorts |
 | whatsupcams.com | Adriatic network — Croatia, Slovenia, Italy and beyond |
@@ -36,7 +37,7 @@ stream is actually played.
 | YouTube Data API | Live webcam broadcasts found by search |
 
 The same camera found on more than one source is merged into a single channel. A
-typical build lands around **7000–9000 live channels** once every source is warm
+typical build lands around **11000–12000 live channels** once every source is warm
 (windy.com's share ramps up over the first couple of days of builds), varying with
 how many cams are actually up and with `EXCLUDE_CATEGORIES`.
 

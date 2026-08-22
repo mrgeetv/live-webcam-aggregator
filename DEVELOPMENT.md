@@ -194,6 +194,7 @@ live-webcam-aggregator/
 │           ├── resortcams.py   # ResortCams scraper source (sitemap -> direct HLS)
 │           ├── shareju.py      # Share-Ju (its-i.com) JSON-LD index -> Japanese YouTube lives
 │           ├── skyline.py      # SkylineWebcams scraper source
+│           ├── tomarigi.py     # tomarigi.me sitemap -> per-spot JSON-LD YouTube cams
 │           ├── viewsurf.py     # Viewsurf scraper source (sitemap -> joada embeds)
 │           ├── webcamerapl.py  # webcamera.pl scraper source (ROT13 config -> direct HLS)
 │           ├── whatsupcams.py  # WhatsUpCams sitemap -> cdn-api direct HLS

@@ -97,6 +97,52 @@ def test_category_from_title_non_english_keywords():
     assert category_from_title("Dongdaemun Design Plaza") == "Cities"
 
 
+def test_category_from_title_japanese_keywords():
+    # wholly-Japanese sources (tomarigi, shareju) leave many cams uncategorised, and a
+    # \b-anchored English rule can never fire on unspaced Japanese
+    assert category_from_title("【神田川】柏橋映像監視局［新宿区北新宿3-36］") == (
+        "Water & Waterways"
+    )
+    assert category_from_title("大分市水害監視カメラNo.31") == "Water & Waterways"
+    assert category_from_title("ユメックス 国道17号バイパス代交差点付近") == "Traffic"
+    assert category_from_title("道路カメラ_春日北交差点") == "Traffic"
+    assert category_from_title("ＪＲ博多駅前　Hakata Station") == "Trains & Railways"
+    assert category_from_title("京都 伏見稲荷大社付近 裏参道") == "Religion"
+    assert category_from_title("お天気・ライブ情報カメラ 北海道") == "Weather"
+    assert category_from_title("横須賀市災害監視カメラ　野比海岸") == "Beaches"
+
+
+def test_japanese_keywords_avoid_place_name_false_positives():
+    # 川 is the trap: these are PLACES whose name merely contains it, and each is
+    # really something else (a road cam, a station, a plain city view)
+    assert category_from_title("旭川市国道12号線 忠和ライブカメラ") == "Traffic"
+    assert category_from_title("神奈川県横浜市の眺め") != "Water & Waterways"
+    assert category_from_title("川崎の街並み") != "Water & Waterways"
+    # 道の駅 is a roadside rest stop, not a railway station
+    assert category_from_title("道の駅うつのみや ライブカメラ") == "Traffic"
+
+
+def test_compound_and_non_english_words_the_english_rules_missed():
+    # \bgolf\b cannot match the compound spelling these languages use
+    assert category_from_title("Varbergs Golfklubb - Västra Banan") == "Sports"
+    assert category_from_title("Golfclub Donau-Riss e.V.") == "Sports"
+    # but a bare "golf" prefix must not swallow the Italian/Spanish word for gulf
+    assert category_from_title("Rapallo, Golfo di Tigullio") != "Sports"
+    # bridge, in the languages our sources use
+    assert category_from_title("Puente Internacional Córdova") == "Landmarks"
+    assert category_from_title("Süd-Dakota-Brücke") == "Landmarks"
+
+
+def test_education_and_hotels_titles():
+    # both categories exist in the taxonomy but had no title rule, so these cams
+    # could never leave "Other"
+    assert category_from_title("University of Nevada, Reno - Quadrangle") == "Education"
+    assert category_from_title("Lourdes Hill College") == "Education"
+    assert category_from_title("Jostedal hotell, Norway") == "Hotels"
+    # a ski "resort" is a mountain cam, not a hotel one (Mountains rule comes first)
+    assert category_from_title("Base Cam at Stratton Mountain Resort") == "Mountains"
+
+
 def test_non_english_keywords_avoid_english_false_positives():
     # "the strand" is a London street, not a beach; the German beach word takes no article
     assert category_from_title("The Strand — London, England") != "Beaches"

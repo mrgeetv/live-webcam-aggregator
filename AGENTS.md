@@ -110,9 +110,21 @@ The app is two phases, decoupled by a catalogue snapshot:
   first match wins (a species/"harbour" beats a generic "street"/"city"); failing that, a
   name carrying a `City, Region, Country`-style geo is a place view → **"Travel & Events"**.
   Keep `_TITLE_RULES` GENERAL (real category words, not one-off cam names) — an import-time
-  guard raises if a rule names a category outside `ALL_CATEGORIES`. `EXCLUDE_CATEGORIES`
-  (config) post-filters the built catalogue by mapped category, across all sources. The
-  full excludable set is `categories.ALL_CATEGORIES` — a test guards the README list matches.
+  guard raises if a rule names a category outside `ALL_CATEGORIES`. **Extending
+  `_TITLE_RULES` is a first-class option, not a last resort**: when a source's own
+  category straddles two of ours (tomarigi's 河川・道路 is half river gauges, half road
+  junctions, plus a long tail of neither), leave it uncategorised and let the fallback
+  decide per-cam — one blanket mapping would be wrong for a quarter of that source. The
+  rules are NOT English-only (whole sources are Japanese), and non-Latin keywords have
+  three requirements: **no `\b`** around them (Japanese is unspaced, so `\b国道\b` cannot
+  match 国道17号 — the digit after 道 is a word char, so each rule alternates a
+  boundary-free group beside its English `\b(...)\b` one); prefer **multi-character
+  tokens**, because a lone kanji is usually also a place name (港 sits inside 空港 and
+  港区); and where a lone kanji is unavoidable (川 — river cams are named for their
+  river), guard it by **what follows** (旭川市/神奈川県 run on into more name, a
+  watercourse does not). `EXCLUDE_CATEGORIES` (config) post-filters the built catalogue
+  by mapped category, across all sources. The full excludable set is
+  `categories.ALL_CATEGORIES` — a test guards the README list matches.
 - **Diagnostics come free** — failures aggregate at two seams, so a new source or
   extractor is diagnosable without extra work. Each source gets its **own `Fetcher`
   carrying its own `FetchStats`** (wired in `build_app._source_fetcher`; the keys must
@@ -423,6 +435,18 @@ The app is two phases, decoupled by a catalogue snapshot:
   non-ASCII, so `with_location_parts` would drop Japanese parts entirely. Tags map via
   `_TAG_CATEGORY` (guarded by a test against `categories._MAP`); town/scenic tags stay
   unmapped on purpose — the geo title suffix files those under Travel & Events.
+- tomarigi.me (とまり木, ~4900 cams): a curated all-YouTube directory — Japanese-branded
+  but ~70% international. `sitemap.xml` is the ONLY complete index (both map views are
+  client-rendered; the `/spots/<slug>` listings cover just the ~1300 Japanese cams, and
+  robots.txt disallows the site's own `/api/`), so it costs one fetch per cam page —
+  our second-heaviest source by request count. Each page's `VideoObject` JSON-LD carries
+  the watch URL, the name and the category, so there is nothing to extract from a player
+  and every cam dedups on its `yt:` key; liveness rides the existing Data API batch.
+  The category is a Japanese word inside the LD **description** (`。<category>のライブ
+  カメラを…`), not a tag or a URL segment. Sampled 20 at random: 20/20 live, all with a
+  `startDate` inside 3 days — the site prunes ended cams, so a large `yt-offline` share
+  would be a signal, not the norm. 河川・道路 (~25% of the corpus) is deliberately left
+  uncategorised — see the title-fallback note above.
 - windy.com (meta-aggregator, ramps to ~thousands): the **keyless internal API**
   (`node.windy.com/webcams/v2.0/list?nearby=<lat>,<lon>&radius=250`, limit 25, offset
   paginates; no key/UA/Referer needed anywhere) enumerates the ~65k-cam corpus via a
