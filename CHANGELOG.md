@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.13.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.0...v2.13.1) (2026-08-28)
+
+### Bug Fixes
+
+* **deps:** bump the python-dependencies group with 2 updates ([#126](https://github.com/mrgeetv/live-webcam-aggregator/issues/126)) ([9bd3ae6](https://github.com/mrgeetv/live-webcam-aggregator/commit/9bd3ae607fb65f926340709f2a3695f520ccfa64))
+
+### Maintenance
+
+* **deps:** bump hadolint/hadolint-action from 3.4.0 to 3.5.0 ([#125](https://github.com/mrgeetv/live-webcam-aggregator/issues/125)) ([51b14d1](https://github.com/mrgeetv/live-webcam-aggregator/commit/51b14d11556eb0c1cd065721c99fcb97b486c194))
+
 ## [2.13.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.12.2...v2.13.0) (2026-08-22)
 
 ### Features
