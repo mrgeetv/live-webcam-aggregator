@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.13.5](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.4...v2.13.5) (2026-10-21)
+
+### Bug Fixes
+
+* **docker:** stop the image trusting the compromised emudhra intermediates ([#135](https://github.com/mrgeetv/live-webcam-aggregator/issues/135)) ([f8204c5](https://github.com/mrgeetv/live-webcam-aggregator/commit/f8204c516bfa862d6b4073b34a8f20ca2cb297a5))
+
 ## [2.13.4](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.3...v2.13.4) (2026-10-17)
 
 ### Bug Fixes
