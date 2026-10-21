@@ -94,6 +94,8 @@ CI builds use DHI images from `dhi.io`, requiring authentication. Repository sec
 | Build   | `dhi.io/python:3.14-alpine3.24-sfw-dev`  | Has pip for installing dependencies      |
 | Runtime | `dhi.io/python:3.14-alpine3.24`          | Minimal, no pip (reduced attack surface) |
 
+The runtime stage takes its CA bundle (`/etc/ssl/certs/ca-certificates.crt`) from the build stage, because the runtime variant can lag the `-dev` one on `ca-certificates`.
+
 ## Pre-commit Hooks
 
 This project uses pre-commit hooks for code quality. Install them before making changes:

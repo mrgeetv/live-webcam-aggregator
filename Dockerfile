@@ -47,6 +47,11 @@ COPY --from=deno_src /usr/local/lib/glibc /usr/local/lib/glibc
 # Copy installed dependencies from builder
 COPY --from=builder /deps /deps
 
+# The DHI runtime image can ship an older CA bundle than its -dev variant (it still
+# trusted the compromised eMudhra intermediates after -dev had the fixed package), so
+# take the builder's. The runtime's /etc/ssl/cert.pem is a symlink to this file.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 # Copy application package
 COPY src/webcam_aggregator/ ./src/webcam_aggregator/
 
