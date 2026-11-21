@@ -534,17 +534,24 @@ resolution to that validated IP** for the connect, via a thread-local `getaddrin
 override scoped by `_PinDNS` (the curl `--resolve` approach). urllib3 still connects
 to the hostname, so SNI, the `Host` header, and certificate validation stay bound to
 the original hostname (and `verify` stays on) while the socket goes to the pinned IP;
-there's no second lookup between check and connect. A Fetcher built
+there's no second lookup between check and connect. While a pin is active the resolver
+answers **only** for the pinned name and refuses every other lookup on that thread (IP
+literals included): urllib3 does not always resolve the host `urlsplit` validated — it
+IDNA-encodes, requests decodes `%xx`, and `http://a\@b/` dials `a` where `urlsplit`
+reads `b` — so a miss must fail closed, not reach real DNS. A malformed port, or port
+0, is refused as `bad-scheme` before any lookup. A Fetcher built
 `impersonate=True` sends through **curl_cffi** (a browser's TLS/HTTP2 fingerprint) instead;
 libcurl never calls `getaddrinfo`, so `_ImpersonatingSession` reads the same `_PinDNS` map
 and hands it to libcurl as a **wildcard-host** `CURLOPT_RESOLVE` (`*:port:ip`) — never keyed
 by host, because libcurl and `urlsplit` parse hosts differently (IDNA, `%2e`) and a missed
 key lets libcurl do its own lookup — then refuses the response as `blocked-ip` if libcurl's
-`primary_ip` isn't the validated one, and refuses any request with no pin. Redirects,
+`primary_ip` isn't an IP that thread's session validated for that host (not just the
+current pin: libcurl's connection/DNS caches can dial the host's earlier pin when
+round-robin DNS moves it), ignores proxy env vars, and refuses any request with no pin. Redirects,
 the byte cap, outcomes and pacing are the same Fetcher code on both transports, because
-it returns plain `requests` responses/exceptions. (An earlier adapter + pool-kwargs
-attempt was dropped: urllib3 2.x ignores `server_hostname` passed that way, so SNI
-fell back to the IP and Cloudflare 403'd it.) **Known residual** (mitigate by running
+it returns plain `requests` responses/exceptions. (Pinning through a requests adapter +
+urllib3 pool kwargs does not work: urllib3 2.x ignores `server_hostname` passed that
+way, so SNI falls back to the IP, which Cloudflare 403s.) **Known residual** (mitigate by running
 behind your own network controls): the **egress-proxy surface** — the proxy will sign
 and fetch any *public* host that appears in an upstream manifest; durable fix = a
 CDN-host allowlist on the rewritten `/m`/`/s` URLs.
