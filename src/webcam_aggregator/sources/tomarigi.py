@@ -9,12 +9,20 @@ from ..fetch import FetcherProtocol, thread_map
 from ..models import Candidate
 from .base import predisc_key
 
-# The sitemap is the ONLY complete index: both map views (/ and /world) are
-# client-rendered, and the /spots/<slug> listings cover just the ~1300 Japanese cams
-# of a ~4900-cam, mostly-international corpus. robots.txt allows the pages and the
-# sitemap, and disallows the site's own /api/ — so pages it is.
-_SITEMAP = "https://tomarigi.me/sitemap.xml"
-_LOC = re.compile(r"<loc>(https://tomarigi\.me/spot/[0-9a-f-]{36})</loc>")
+# The /world/spots/<region> listings (paginated /<n>) are the complete index: together
+# they link every cam, Japanese ones included (under asia). Both map views are
+# client-rendered off the site's /api/, which robots.txt disallows; the /spots/<slug>
+# and /world/country/<cc> listings are subsets. The sitemap names the listing pages
+# and every listing links its neighbours and the other regions, so links are followed
+# too: a page the sitemap doesn't name yet still gets read.
+_SITE = "https://tomarigi.me"
+_SITEMAP = f"{_SITE}/sitemap.xml"
+_LISTING_PATH = r"/world/spots/[a-z-]+(?:/\d+)?"
+_LISTING_LOC = re.compile(rf"<loc>https://tomarigi\.me({_LISTING_PATH})</loc>")
+_LISTING_HREF = re.compile(rf'href="({_LISTING_PATH})"')
+# The listing's own links, not its ItemList JSON-LD: the ItemList is truncated short
+# of the cams the page links.
+_SPOT_HREF = re.compile(r'href="(/spot/[0-9a-f-]{36})"')
 _LD_JSON = re.compile(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
 
 # Every cam page's VideoObject description ends with a sentence naming the cam's
@@ -64,11 +72,11 @@ def _video_object(html: str) -> dict[str, object] | None:
 
 
 class TomarigiSource:
-    """tomarigi.me (とまり木): a curated directory of ~4900 YouTube live cams —
-    Japanese-branded but mostly international. Sitemap -> per-cam page, whose
-    VideoObject JSON-LD carries the watch URL, the name and the category, so there
-    is nothing to extract from the player and every cam dedups by its `yt:` key.
-    A page with no VideoObject (a withdrawn cam still in the sitemap) drops."""
+    """tomarigi.me (とまり木): a curated directory of YouTube live cams —
+    Japanese-branded but mostly international. Sitemap -> region listing pages ->
+    per-cam page, whose VideoObject JSON-LD carries the YouTube embed URL, the name
+    and the category, so there is nothing to extract from the player and every cam
+    dedups by its `yt:` key. A page with no VideoObject (a withdrawn cam) drops."""
 
     name: str = "tomarigi"
     _fetch: FetcherProtocol
@@ -78,13 +86,21 @@ class TomarigiSource:
 
     def discover(self) -> Iterator[Candidate]:
         xml = self._fetch.get(_SITEMAP) or ""
-        pages = sorted(set(_LOC.findall(xml)))
+        listings: set[str] = set(_LISTING_LOC.findall(xml))
+        read: set[str] = set()
+        spots: set[str] = set()
+        while todo := sorted(listings - read):
+            read.update(todo)
+            for html in thread_map(self._fetch.get, [_SITE + p for p in todo]):
+                spots.update(_SPOT_HREF.findall(html or ""))
+                listings.update(_LISTING_HREF.findall(html or ""))
+        pages = sorted(_SITE + path for path in spots)
         seen: set[str] = set()
         for page, html in zip(pages, thread_map(self._fetch.get, pages)):
             item = _video_object(html or "")
             if item is None:
                 continue
-            key = predisc_key(str(item.get("contentUrl") or ""))
+            key = predisc_key(str(item.get("embedUrl") or ""))
             if not key or not key.startswith("yt:") or key in seen:
                 continue
             seen.add(key)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import override
 
 from webcam_aggregator.categories import _MAP  # pyright: ignore[reportPrivateUsage]
 from webcam_aggregator.fetch import FetcherProtocol
@@ -13,6 +14,9 @@ from webcam_aggregator.sources.tomarigi import (
 _SITEMAP_URL = "https://tomarigi.me/sitemap.xml"
 _SPOT = "https://tomarigi.me/spot/1b6ea960-f566-44f9-a63d-94de856b206d"
 _SPOT2 = "https://tomarigi.me/spot/bd262da8-d5e7-48cd-84f4-e9a1b0e6147d"
+_ASIA = "https://tomarigi.me/world/spots/asia"
+_ASIA2 = "https://tomarigi.me/world/spots/asia/2"
+_EUROPE = "https://tomarigi.me/world/spots/europe"
 
 
 class _FakeFetcher:
@@ -32,6 +36,16 @@ def _sitemap(*locs: str) -> str:
     return f'<?xml version="1.0" encoding="UTF-8"?><urlset>{urls}</urlset>'
 
 
+def _listing(*hrefs: str) -> str:
+    """A region listing page: its cams plus whatever region/pagination links it carries,
+    as the site-relative hrefs the real pages use."""
+    links = "".join(
+        f'<li><a href="{h.removeprefix("https://tomarigi.me")}">x</a></li>'
+        for h in hrefs
+    )
+    return f"<html><body><ul>{links}</ul></body></html>"
+
+
 def _page(
     name: str, video_id: str, category: str = "海", *, extra_ld: bool = True
 ) -> str:
@@ -43,7 +57,6 @@ def _page(
             f"「{name}」のライブカメラ映像(提供: someone)。"
             f"{category}のライブカメラを地図から探せる「とまり木」で配信中。"
         ),
-        "contentUrl": f"https://www.youtube.com/watch?v={video_id}",
         "embedUrl": f"https://www.youtube.com/embed/{video_id}",
     }
     site = (
@@ -68,7 +81,8 @@ def _source(pages: dict[str, str]) -> TomarigiSource:
 def test_spot_page_becomes_watch_candidate_with_mapped_category() -> None:
     src = _source(
         {
-            _SITEMAP_URL: _sitemap("https://tomarigi.me", _SPOT),
+            _SITEMAP_URL: _sitemap("https://tomarigi.me", _ASIA),
+            _ASIA: _listing("https://tomarigi.me/world/spots", _SPOT),
             _SPOT: _page("Hart Beach Scheveningen SurfCam", "Cbp3Wg44fPo", "海"),
         }
     )
@@ -81,21 +95,53 @@ def test_spot_page_becomes_watch_candidate_with_mapped_category() -> None:
     assert c.source_page_url == _SPOT
 
 
-def test_non_spot_sitemap_entries_are_not_fetched() -> None:
-    # the sitemap also lists /, /world, /spots/<cat> and /about — fetching those
-    # would waste a request per build and yield nothing
+def test_only_region_listings_and_their_spots_are_fetched() -> None:
+    # the sitemap also lists /rail, the /spots/<slug> and /world/country/<cc> subsets
+    # and the zh-tw/th mirrors — fetching those costs a request each and adds no cam
+    pages = {
+        _SITEMAP_URL: _sitemap(
+            "https://tomarigi.me",
+            "https://tomarigi.me/world/spots",
+            "https://tomarigi.me/world/country/jp",
+            "https://tomarigi.me/spots/coast",
+            "https://tomarigi.me/zh-tw/country/jp",
+            "https://tomarigi.me/rail/routes",
+            _ASIA,
+        ),
+        _ASIA: _listing(_SPOT),
+        _SPOT: _page("cam", "Cbp3Wg44fPo"),
+    }
+    fetched: list[str] = []
+
+    class _Recording(_FakeFetcher):
+        @override
+        def get(self, url: str, _timeout: float = 20.0, /) -> str | None:
+            fetched.append(url)
+            return super().get(url)
+
+    f: FetcherProtocol = _Recording(pages)
+    assert [c.source_page_url for c in TomarigiSource(fetch=f).discover()] == [_SPOT]
+    assert sorted(fetched) == sorted([_SITEMAP_URL, _ASIA, _SPOT])
+
+
+def test_listing_pages_the_sitemap_misses_are_followed_from_their_links() -> None:
+    # a cam on a page the sitemap doesn't name yet (a new page of a growing region,
+    # a new region) is still a cam; listings link their pages and the other regions
+    spot3 = "https://tomarigi.me/spot/0e4bd8a9-1c3e-4e1d-9f4a-6b2f3c1d7a11"
     src = _source(
         {
-            _SITEMAP_URL: _sitemap(
-                "https://tomarigi.me",
-                "https://tomarigi.me/world",
-                "https://tomarigi.me/spots/coast",
-                _SPOT,
-            ),
-            _SPOT: _page("cam", "Cbp3Wg44fPo"),
+            _SITEMAP_URL: _sitemap(_ASIA),
+            _ASIA: _listing("https://tomarigi.me/world/spots", _ASIA2, _EUROPE, _SPOT),
+            _ASIA2: _listing(_ASIA, _SPOT2),
+            _EUROPE: _listing(_ASIA, spot3),
+            _SPOT: _page("one", "Cbp3Wg44fPo"),
+            _SPOT2: _page("two", "aaaaaaaaaaa"),
+            spot3: _page("three", "bbbbbbbbbbb"),
         }
     )
-    assert [c.source_page_url for c in src.discover()] == [_SPOT]
+    assert sorted(c.source_page_url for c in src.discover()) == sorted(
+        [_SPOT, _SPOT2, spot3]
+    )
 
 
 def test_rivers_and_roads_slug_stays_uncategorised_for_the_title_fallback() -> None:
@@ -103,7 +149,8 @@ def test_rivers_and_roads_slug_stays_uncategorised_for_the_title_fallback() -> N
     # tail of neither), so it must NOT be mapped to one category
     src = _source(
         {
-            _SITEMAP_URL: _sitemap(_SPOT),
+            _SITEMAP_URL: _sitemap(_ASIA),
+            _ASIA: _listing(_SPOT),
             _SPOT: _page("【神田川】柏橋映像監視局", "Cbp3Wg44fPo", "河川・道路"),
         }
     )
@@ -116,7 +163,8 @@ def test_unknown_slug_passes_through_raw_to_surface_as_unmapped() -> None:
     # not hide in "Other"
     src = _source(
         {
-            _SITEMAP_URL: _sitemap(_SPOT),
+            _SITEMAP_URL: _sitemap(_ASIA),
+            _ASIA: _listing(_SPOT),
             _SPOT: _page("cam", "Cbp3Wg44fPo", "宇宙"),
         }
     )
@@ -127,7 +175,8 @@ def test_unknown_slug_passes_through_raw_to_surface_as_unmapped() -> None:
 def test_duplicate_video_ids_yield_one_candidate() -> None:
     src = _source(
         {
-            _SITEMAP_URL: _sitemap(_SPOT, _SPOT2),
+            _SITEMAP_URL: _sitemap(_ASIA),
+            _ASIA: _listing(_SPOT, _SPOT2),
             _SPOT: _page("cam", "Cbp3Wg44fPo"),
             _SPOT2: _page("same cam, second spot", "Cbp3Wg44fPo"),
         }
@@ -138,7 +187,8 @@ def test_duplicate_video_ids_yield_one_candidate() -> None:
 def test_pages_without_a_video_object_are_dropped() -> None:
     src = _source(
         {
-            _SITEMAP_URL: _sitemap(_SPOT, _SPOT2),
+            _SITEMAP_URL: _sitemap(_ASIA),
+            _ASIA: _listing(_SPOT, _SPOT2),
             _SPOT: "<html><body>withdrawn</body></html>",
             _SPOT2: '<script type="application/ld+json">{oops</script>',
         }
@@ -146,12 +196,12 @@ def test_pages_without_a_video_object_are_dropped() -> None:
     assert list(src.discover()) == []
 
 
-def test_non_youtube_content_url_is_dropped() -> None:
+def test_non_youtube_embed_url_is_dropped() -> None:
     # every cam on the site is a YouTube live; anything else is a page we misread
     page = _page("cam", "Cbp3Wg44fPo").replace(
-        "https://www.youtube.com/watch?v=Cbp3Wg44fPo", "https://example.com/cam"
+        "https://www.youtube.com/embed/Cbp3Wg44fPo", "https://example.com/cam"
     )
-    src = _source({_SITEMAP_URL: _sitemap(_SPOT), _SPOT: page})
+    src = _source({_SITEMAP_URL: _sitemap(_ASIA), _ASIA: _listing(_SPOT), _SPOT: page})
     assert list(src.discover()) == []
 
 
