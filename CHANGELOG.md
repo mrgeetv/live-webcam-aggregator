@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.13.10](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.9...v2.13.10) (2026-11-21)
+
+### Bug Fixes
+
+* **scraper:** enumerate tomarigi via its region listings ([#153](https://github.com/mrgeetv/live-webcam-aggregator/issues/153)) ([b449888](https://github.com/mrgeetv/live-webcam-aggregator/commit/b449888cc78dbaa2d9ee29f793e1d62de79ca916)), closes [#145](https://github.com/mrgeetv/live-webcam-aggregator/issues/145)
+
 ## [2.13.9](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.8...v2.13.9) (2026-11-21)
 
 ### Bug Fixes
