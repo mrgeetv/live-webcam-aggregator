@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.13.12](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.11...v2.13.12) (2026-11-21)
+
+### Bug Fixes
+
+* **scraper:** follow explore's moved streams feed and relay its mediamtx segments ([#156](https://github.com/mrgeetv/live-webcam-aggregator/issues/156)) ([4d50362](https://github.com/mrgeetv/live-webcam-aggregator/commit/4d50362c75278f92320790eb83dc3a9014a52f26)), closes [#147](https://github.com/mrgeetv/live-webcam-aggregator/issues/147)
+
 ## [2.13.11](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.10...v2.13.11) (2026-11-21)
 
 ### Bug Fixes
