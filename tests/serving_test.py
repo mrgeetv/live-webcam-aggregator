@@ -72,7 +72,7 @@ def test_render_playlist_extinf_line() -> None:
 
 def test_render_playlist_neutralises_scraped_line_breaks_and_quotes() -> None:
     """A scraped title must not be able to add a playlist line or end its attribute."""
-    title = 'Owl "cam"\r\nhttps://evil.example/x.m3u8\u2028more'
+    title = 'Owl  "cam"\r\nhttps://evil.example/x.m3u8\u2028more\x00'
     out = render_playlist([_entry(title=title, category="Ani\nmals")], base_url=BASE)
     lines = out.splitlines()
     assert len(lines) == 3  # header, #EXTINF, the stream URL: nothing injected
@@ -210,6 +210,23 @@ def test_rewrite_manifest_rewrites_uri_attributes_on_tag_lines() -> None:
         proxy_segments=True,
     )
     assert f'#EXT-X-MAP:URI="{BASE}/stream/{ENTRY_ID}/s?u={init}&sig=' in out
+
+
+def test_rewrite_manifest_uri_rewrite_stays_inside_tag_attributes() -> None:
+    """A URI="…" inside an #EXTINF title is text, and an unbalanced quote must not
+    swallow the lines after it."""
+    media = (
+        "#EXTM3U\n"
+        '#EXTINF:2,title URI="a.ts"\n'
+        "seg1.ts\n"
+        '#EXT-X-KEY:METHOD=AES-128,URI="k1\n'
+        '#EXT-X-MAP:URI="init.mp4"\n'
+    )
+    out = rewrite_manifest(
+        media, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
+    )
+    assert '#EXTINF:2,title URI="a.ts"' in out
+    assert '#EXT-X-MAP:URI="https://cdn.x/cam/init.mp4"' in out
 
 
 def test_rewrite_manifest_off_site_uri_attribute_is_not_proxied() -> None:

@@ -55,7 +55,9 @@ _NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.M)
 # alternate rendition (#EXT-X-MEDIA — Wowza's separate audio), an fMP4 init segment
 # (#EXT-X-MAP), an I-frame playlist, a key. Left relative, the player resolves them
 # against /stream/<id> and 404s.
-_TAG_URI = re.compile(r'^(#EXT[^\n]*?\bURI=")([^"]+)(")', re.M)
+# An attribute list item only (after `:` or `,`), on an #EXT-X- tag (never an #EXTINF
+# title), and never past the end of the line.
+_TAG_URI = re.compile(r'^(#EXT-X-[^\n]*?[:,]URI=")([^"\n]+)(")', re.M)
 
 # Hosts whose HLS sessions are bound to the IP that fetches the manifest. Proxying
 # the manifest (our IP) while the player fetches segments direct (its IP) makes the
@@ -128,12 +130,13 @@ SegmentResponse = tuple[int, str, str | None, bytes]
 
 # Titles and categories are scraped text. A line break in one would start a new
 # playlist line (a different stream URL, say), and a double quote would end its
-# attribute early, so both are neutralised before they reach #EXTINF.
-_LINE_BREAKS = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]+")
+# attribute early, so both are neutralised before they reach #EXTINF. Control
+# characters go too (str.split() alone keeps NUL and friends).
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]+")
 
 
 def _m3u_text(value: str) -> str:
-    return " ".join(_LINE_BREAKS.sub(" ", value).replace('"', "'").split())
+    return " ".join(_CONTROL_CHARS.sub(" ", value).replace('"', "'").split())
 
 
 def render_playlist(entries: list[CatalogueEntry], *, base_url: str) -> str:
