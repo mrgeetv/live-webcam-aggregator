@@ -573,7 +573,7 @@ def build_app(
             EarthCamSource(_source_fetcher("earthcam")),
             CamSecureSource(_source_fetcher("camsecure")),
             ExploreOrgSource(_source_fetcher("explore")),
-            WildlifeTrustsSource(_source_fetcher("wildlife-trusts")),
+            WildlifeTrustsSource(_source_fetcher("wildlife-trusts", impersonate=True)),
             LivespottingSource(_source_fetcher("livespotting")),
             LiveFromIcelandSource(_source_fetcher("livefromiceland")),
             BeachcamSource(_source_fetcher("beachcam")),

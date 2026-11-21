@@ -201,7 +201,7 @@ live-webcam-aggregator/
 │           ├── viewsurf.py     # Viewsurf scraper source (sitemap -> joada embeds)
 │           ├── webcamerapl.py  # webcamera.pl scraper source (ROT13 config -> direct HLS)
 │           ├── whatsupcams.py  # WhatsUpCams sitemap -> cdn-api direct HLS
-│           ├── wildlife_trusts.py  # The Wildlife Trusts index -> regional YouTube cams
+│           ├── wildlife_trusts.py  # The Wildlife Trusts index + 46 trust sitemaps -> cams
 │           └── windy.py        # windy.com keyless API -> original providers' embeds
 ├── scripts/                    # Helper scripts
 │   ├── run.sh                  # Docker build/run script
