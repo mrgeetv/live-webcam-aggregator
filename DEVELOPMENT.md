@@ -196,7 +196,7 @@ live-webcam-aggregator/
 │           ├── ozolio.py       # Ozolio scraper source (sitemap -> explore-page targets)
 │           ├── resortcams.py   # ResortCams scraper source (sitemap -> direct HLS)
 │           ├── shareju.py      # Share-Ju (its-i.com) JSON-LD index -> Japanese YouTube lives
-│           ├── skyline.py      # SkylineWebcams scraper source
+│           ├── skyline.py      # SkylineWebcams sitemap -> cam pages (own HLS / YouTube)
 │           ├── tomarigi.py     # tomarigi.me region listings -> per-spot JSON-LD YouTube cams
 │           ├── viewsurf.py     # Viewsurf scraper source (sitemap -> joada embeds)
 │           ├── webcamerapl.py  # webcamera.pl scraper source (ROT13 config -> direct HLS)
@@ -251,15 +251,15 @@ skyline: top resolve failures — 214x yt-dlp failed: Sign in to confirm you're 
 A source that comes back empty says **why**, at `WARNING`, in one of two shapes:
 
 ```text
-skyline: 0 kept / 0 discovered — 11 fetched, 0 ok (11x http-403 www.skylinewebcams.com)
-skyline: 0 kept / 0 discovered — 11 fetched ok but extracted 0 URLs (site layout changed, or a soft block returning 200?)
+skyline: 0 kept / 0 discovered — 12 fetched, 0 ok (12x http-403 www.skylinewebcams.com)
+skyline: 0 kept / 0 discovered — 12 fetched ok but extracted 0 URLs (site layout changed, or a soft block returning 200?)
 ```
 
 The second is the one a pure failure counter can't see: a Cloudflare/consent
 interstitial is an HTTP 200, so "0 failed" would be true and completely misleading.
 It also covers a site redesign. Fetch outcomes are counted **per source** (each source
 has its own `Fetcher`), because a fully blocked source makes very few requests — skyline
-manages 11 — so a global "top failing hosts" view would rank it below healthy sources'
+manages a dozen — so a global "top failing hosts" view would rank it below healthy sources'
 routine dead-cam probes. Outcome labels: `ok`, `http-<status>`, `timeout`, `conn-error`,
 `dns-error`, `blocked-ip`, `bad-scheme`, `too-large`, `too-many-redirects`,
 `redirect-no-location`, `unexpected-redirect`, `host-backoff` (refused without a

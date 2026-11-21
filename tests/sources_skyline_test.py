@@ -1,110 +1,108 @@
+import logging
+from pathlib import Path
+
 import pytest
 
 from webcam_aggregator.sources.skyline import SkylineSource
 
 _BASE = "https://www.skylinewebcams.com"
-
-_OWN_PAGE = (
-    "<h1>Cortina d'Ampezzo - Cinque Torri Live cam</h1>"
-    '<ol class="breadcrumb">'
-    '<li><meta itemprop="name" content="Live Cams"></li>'
-    '<li><a href="/en/webcam/italia.html"><span itemprop="name">Italy</span></a></li>'
-    '<li><a href="/en/webcam/italia/veneto.html"><span itemprop="name">Veneto</span></a></li>'
-    '<li><span itemprop="name">Belluno</span></li>'
-    "</ol>"
-    "<script>new Clappr.Player({source:'livee.m3u8?a=abc123def456ghi'});</script>"
-)
-_YT_PAGE = (
-    "<h1>Nkorho - Africa Live cam</h1>"
-    '<ol class="breadcrumb">'
-    '<li><span itemprop="name">South Africa</span></li>'
-    '<li><span itemprop="name">Limpopo</span></li>'
-    '<li><span itemprop="name">Kruger National Park</span></li>'
-    "</ol>"
-    "<script>new YT.Player('live',{playerVars:{},videoId:'sQAhSkjRKGk'});</script>"
-)
+_SITEMAP = f"{_BASE}/sitemap_en.xml"
+_FIX = Path(__file__).parent / "fixtures"
+# Real cam pages, trimmed: an own-HLS (Clappr) cam, a "from the web" YouTube cam, and
+# an offline cam whose JSON-LD still names a YouTube video but which has no player.
+_OWN_PAGE = (_FIX / "skyline_cam.html").read_text()
+_YT_PAGE = (_FIX / "skyline_cam_youtube.html").read_text()
+_OFFLINE_PAGE = (_FIX / "skyline_cam_offline.html").read_text()
 
 
 class _FakeFetch:
     _pages: dict[str, str]
+    requested: list[str]
 
     def __init__(self, pages: dict[str, str]) -> None:
         self._pages = pages
+        self.requested = []
 
     def get(self, url: str, _timeout: float = 20.0) -> str | None:
+        self.requested.append(url)
         return self._pages.get(url)
 
 
+def _sitemap(*paths: str) -> str:
+    locs = "".join(f"<url><loc>{_BASE}{p}</loc></url>" for p in paths)
+    return f'<?xml version="1.0"?><urlset>{locs}</urlset>'
+
+
 # Everything is exercised through the public discover(); the per-page hooks are internal.
-def test_skyline_discover_categorises_extracts_and_names():
-    own = "en/webcam/italia/veneto/belluno/cortina.html"  # Skyline-own HLS, beach cat
-    yt = "en/webcam/south-africa/limpopo/kruger/nkorho.html"  # "from the web" YouTube
-    off = "en/webcam/x/y/z/dead.html"  # offline / no player
-    pages = {
-        f"{_BASE}/en/live-cams-category/beach-cams.html": (
-            f'<a href="{own}"></a><a href="{yt}"></a><a href="{off}"></a>'
-            '<a href="/en/webcam/italia.html">Italy</a>'
-        ),
-        f"{_BASE}/{own}": _OWN_PAGE,
-        f"{_BASE}/{yt}": _YT_PAGE,
-        f"{_BASE}/{off}": "<h1>404!</h1>",
-    }
-    by_page = {
-        c.source_page_url: c for c in SkylineSource(_FakeFetch(pages)).discover()
-    }
+def test_skyline_discover_enumerates_cams_from_the_sitemap():
+    own = "/en/webcam/italia/lazio/roma/roma-colosseo.html"
+    yt = "/en/webcam/united-states/florida/jacksonville/bald-eagle-s-nest.html"
+    off = "/en/webcam/italia/abruzzo/chieti/roccacaramanico.html"
+    # The sitemap also lists geo index pages, per-cam timelapses, weather pages and
+    # site pages; only the four-level /en/webcam/ paths are cams.
+    not_cams = (
+        "/en/webcam.html",
+        "/en/webcam/italia.html",
+        "/en/webcam/italia/lazio.html",
+        "/en/webcam/italia/lazio/roma.html",
+        "/en/webcam/italia/lazio/roma/roma-colosseo/timelapse.html",
+        "/en/weather/italia/lazio/roma.html",
+        "/en/premium.html",
+    )
+    fetch = _FakeFetch(
+        {
+            _SITEMAP: _sitemap(own, yt, off, *not_cams),
+            f"{_BASE}{own}": _OWN_PAGE,
+            f"{_BASE}{yt}": _YT_PAGE,
+            f"{_BASE}{off}": _OFFLINE_PAGE,
+        }
+    )
+    by_page = {c.source_page_url: c for c in SkylineSource(fetch).discover()}
 
-    assert f"{_BASE}/{off}" not in by_page  # no player -> dropped
+    assert set(by_page) == {f"{_BASE}{own}", f"{_BASE}{yt}"}  # offline -> dropped
+    assert not {f"{_BASE}{p}" for p in not_cams} & set(fetch.requested)
 
-    o = by_page[f"{_BASE}/{own}"]
-    assert o.target_url == f"{_BASE}/{own}"  # the PAGE — SkylineResolver resolves it
+    o = by_page[f"{_BASE}{own}"]
+    assert o.target_url == f"{_BASE}{own}"  # the PAGE — SkylineResolver resolves it
     assert o.predisc_key is None
-    assert o.category == "Beaches"  # from the beach category page
+    assert o.category is None  # listed on no category page
     assert o.source == "skyline"
-    # breadcrumb (English) geo, " Live cam" stripped, category kept out of the suffix
-    assert o.title == "Cortina d'Ampezzo - Cinque Torri — Belluno, Veneto, Italy"
+    # breadcrumb (English) geo, " Live cam" stripped, "Live Cams" root left out
+    assert o.title == "Rome - Colosseum — Lazio, Italy"  # "Rome" is already named
 
-    y = by_page[f"{_BASE}/{yt}"]
-    assert y.target_url == "https://www.youtube.com/watch?v=sQAhSkjRKGk"
-    assert y.predisc_key == "yt:sQAhSkjRKGk"  # dedups against youtube-api
-    assert y.title == "Nkorho - Africa — Kruger National Park, Limpopo, South Africa"
-
-
-def test_skyline_discover_follows_country_then_region_uncategorised():
-    cam = "en/webcam/italia/lazio/roma/colosseo.html"  # only reachable via region page
-    pages = {
-        # category page: no cams here, just the nav country link (the seed)
-        f"{_BASE}/en/live-cams-category/beach-cams.html": (
-            '<a href="/en/webcam/italia.html">Italy</a>'
-        ),
-        f"{_BASE}/en/webcam/italia.html": (
-            '<a href="/en/webcam/italia/lazio.html" class="btn btn-primary tag">Lazio</a>'
-        ),
-        f"{_BASE}/en/webcam/italia/lazio.html": f'<a href="{cam}"></a>',
-        f"{_BASE}/{cam}": _OWN_PAGE,
-    }
-    cands = list(SkylineSource(_FakeFetch(pages)).discover())
-    by_page = {c.source_page_url: c for c in cands}
-    assert f"{_BASE}/{cam}" in by_page  # reached via country -> region BFS
-    assert by_page[f"{_BASE}/{cam}"].category is None  # never categorised -> "Other"
+    y = by_page[f"{_BASE}{yt}"]
+    assert y.target_url == "https://www.youtube.com/watch?v=UANvTm4J18M"
+    assert y.predisc_key == "yt:UANvTm4J18M"  # dedups against youtube-api
+    assert y.title == "Bald Eagle's Nest — Jacksonville, Florida, United States"
 
 
-def test_skyline_index_crawl_flags_unmapped_category(caplog: pytest.LogCaptureFixture):
-    import logging
-
-    # the index lists a known category (beach) AND a new one we don't map (drones);
-    # the new category's cam carries the raw slug -> map_category -> "Unmapped Category".
-    cam = "en/webcam/x/drone-cam.html"
-    pages = {
-        f"{_BASE}/en/live-cams.html": (
-            '<a href="/en/live-cams-category/beach-cams.html">Beaches</a>'
-            '<a href="/en/live-cams-category/drones-cams.html">Drones</a>'
-        ),
-        f"{_BASE}/en/live-cams-category/beach-cams.html": "",
-        f"{_BASE}/en/live-cams-category/drones-cams.html": f'<a href="{cam}"></a>',
-        f"{_BASE}/{cam}": _OWN_PAGE,
-    }
+def test_skyline_categories_come_from_the_category_pages(
+    caplog: pytest.LogCaptureFixture,
+):
+    beach = "/en/webcam/espana/canarias/santa-cruz-de-tenerife/playa-las-vistas.html"
+    drone = "/en/webcam/italia/lazio/roma/drone-cam.html"
+    fetch = _FakeFetch(
+        {
+            # the index lists a known category (beach) AND one we don't map (drones)
+            f"{_BASE}/en/categories.html": (
+                '<a href="/en/live-cams-category/beach-cams.html">Beach</a>'
+                '<a href="/en/live-cams-category/drones-cams.html">Drones</a>'
+            ),
+            f"{_BASE}/en/live-cams-category/beach-cams.html": (
+                f'<a class="cam-title" href="{beach}">Playa Las Vistas</a>'
+            ),
+            f"{_BASE}/en/live-cams-category/drones-cams.html": (
+                f'<a class="cam-title" href="{drone}">Drone</a>'
+            ),
+            _SITEMAP: _sitemap(beach, drone),
+            f"{_BASE}{beach}": _OWN_PAGE,
+            f"{_BASE}{drone}": _OWN_PAGE,
+        }
+    )
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.skyline"):
-        cands = list(SkylineSource(_FakeFetch(pages)).discover())
-    by_page = {c.source_page_url: c for c in cands}
-    assert by_page[f"{_BASE}/{cam}"].category == "drones"
+        by_page = {c.source_page_url: c for c in SkylineSource(fetch).discover()}
+
+    assert by_page[f"{_BASE}{beach}"].category == "Beaches"
+    # the raw slug passes through -> map_category -> "Unmapped Category"
+    assert by_page[f"{_BASE}{drone}"].category == "drones"
     assert any("drones" in r.getMessage() for r in caplog.records)

@@ -100,7 +100,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   `WARNING` naming the raw value, so a missing mapping surfaces instead of hiding in
   "Other". Sources that pre-map slugs (`camscape`, `skyline`) pass an unknown slug
   through raw so it reaches that path, and **crawl their category index first** —
-  camscape's `/showing/`, skyline's `/en/live-cams.html` — logging slugs absent from
+  camscape's `/showing/`, skyline's `/en/categories.html` — logging slugs absent from
   their slug map (worldcams/cxtvlive have no clean index, so they surface unmapped
   categories per-stream via `map_category`). A cam that still lands in **"Other"** (the
   source gave no category) gets a last-resort **title fallback** (`category_from_title`,
@@ -130,7 +130,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   carrying its own `FetchStats`** (wired in `build_app._source_fetcher`; the keys must
   match `Source.name` and a startup check raises if they don't), and `catalogue`
   reports that source's fetch outcome on its own `kept / discovered` line. Per-source,
-  NOT global: a fully blocked source makes very few requests (skyline: 11), so a global
+  NOT global: a fully blocked source makes very few requests (skyline: a dozen), so a global
   "top N failing hosts" view ranks it below healthy sources' routine dead-cam probes —
   the worse the outage, the better it hides. The second seam is the liveness probe,
   which returns a **reason** (`models.NO_EXTRACTOR` / `RESOLVE_FAILED` /
@@ -160,7 +160,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   blocked**, and the block does not look like an error. Two properties make it easy to
   miss, which is why the per-source fetch/liveness aggregation above exists: a **total
   block produces very few requests** (a source that can't read its index never reaches
-  its cam pages — skyline manages 11 fetches), so anything ranking failures globally
+  its cam pages — skyline manages a dozen fetches), so anything ranking failures globally
   buries the worst outages; and a block **can return HTTP 200** (a challenge or consent
   page), so "0 failed" is not the same as "nothing wrong" — fetched-ok-but-extracted-
   nothing needs its own warning. A gradual decline rather than a cliff points at
@@ -250,21 +250,30 @@ The app is two phases, decoupled by a catalogue snapshot:
   reports a huge `totalResults` but returns an empty page 3). `discover()` paginates
   by `publishedBefore` time-windows instead (walking back from the last item's
   `publishedAt`) to reach the deeper hundreds; `pageToken` silently caps you at ~100.
-- Skyline cam pages carry NO per-cam category — it lives only in which category page
-  lists the cam, so `SkylineSource` crawls the category pages for `cam -> category`
-  then BFS's country/region pages for the rest (uncategorised -> "Other"). Two embed
-  types: own Clappr HLS (`source:'livee.m3u8?a=<token>'`, resolved at serve-time by
+- Skyline's cam list is **`sitemap_en.xml`** (~6000 cam pages, many of them offline):
+  cam pages are exactly `/en/webcam/<country>/<region>/<city>/<cam>.html`; the sitemap's
+  shallower geo pages, per-cam `/timelapse.html` and weather pages are not cams. Don't
+  enumerate via the geo (country → region → city) or category pages: both omit live
+  cams, mostly "from the web" YouTube ones. Cam pages carry NO per-cam category — it
+  lives only in which category page lists the cam, so `SkylineSource` reads the
+  `/en/categories.html` index → each category page for `cam -> category` (unlisted ->
+  "Other"; listed under several -> the first in the index's order). Two embed types: own
+  Clappr HLS (`source: "livee.m3u8?a=<token>"`, resolved at serve-time by
   `SkylineResolver` to `hd-auth.skylinewebcams.com`) and "from the web" YouTube
-  (`videoId:'…'` → watch URL, dedups via `yt:`). Names come from the **breadcrumb**
-  (English geo), not the URL path (native: italia/espana).
-  The Clappr token is **not** regenerated per page-load (an earlier note here said it
-  was): the same page returns the same token string for at least tens of minutes. What
-  lapses is its AUTHORISATION — left unused it stops working in ~1-2 minutes (measured:
-  alive at 60s, dead by 150s across several cams), and re-fetching the page is what
-  re-arms it. So serve-time must still re-resolve the page, its `Resolved.ttl_seconds`
-  must stay under that lapse (60 → ~48s cached), and a discovery-time token is useless
-  to the liveness phase minutes later — which is why skyline's cam pages are
-  deliberately fetched twice per build and that cost is not a bug to optimise away.
+  (`videoId: "…"` → watch URL, dedups via `yt:`); an offline page's JSON-LD can still
+  name a YouTube `embedUrl`, but it has no `videoId:` config. The player JS is
+  hand-formatted and its quoting changes, so both patterns accept either quote and
+  optional spacing — the token pattern lives once, in `extractors.skyline.stream_token`,
+  shared by source and resolver. Names come from the page's JSON-LD **`BreadcrumbList`**
+  (English geo, minus its "Live Cams" root), not the URL path (native: italia/espana).
+  The Clappr token is **not** regenerated per page-load: the same page returns the same
+  token string for at least tens of minutes. What lapses is its AUTHORISATION — left
+  unused it stops working in ~1-2 minutes (measured: alive at 60s, dead by 150s across
+  several cams), and re-fetching the page is what re-arms it. So serve-time must still
+  re-resolve the page, its `Resolved.ttl_seconds` must stay under that lapse (60 → ~48s
+  cached), and a discovery-time token is useless to the liveness phase minutes later —
+  which is why skyline's cam pages are deliberately fetched twice per build and that
+  cost is not a bug to optimise away.
 - camscape aggregates from many providers — the cam page's `"streams":[{…}]` JSON is the
   source of truth (the rendered iframe shows only the active angle), one candidate per
   stream `url`. Most route to existing extractors (YouTube, ipcamlive, m3u8, feratel);

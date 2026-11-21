@@ -1,14 +1,21 @@
+from pathlib import Path
+
 import pytest
 
 from webcam_aggregator.extractors.skyline import SkylineResolver
 
+_FIX = Path(__file__).parent / "fixtures"
+
 
 def test_skyline_resolver_builds_hd_auth_manifest_url():
-    page = "<script>new Clappr.Player({source:'livee.m3u8?a=tok123abc456'});</script>"
+    page = (_FIX / "skyline_cam.html").read_text()  # a real, trimmed cam page
     r = SkylineResolver(lambda _u: page).resolve(
         "https://www.skylinewebcams.com/en/webcam/x.html"
     )
-    assert r.url == "https://hd-auth.skylinewebcams.com/live.m3u8?a=tok123abc456"
+    assert (
+        r.url
+        == "https://hd-auth.skylinewebcams.com/live.m3u8?a=k9l04et6asstdvt6ik56acjf4v"
+    )
     assert r.stream_type == "hls"
     # Under skyline's measured idle token lapse (~1-2 min): ResolveCache keeps the
     # entry for ttl * TTL_FACTOR = 48s, so a second viewer can't be handed a token
