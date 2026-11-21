@@ -57,3 +57,16 @@ def test_earthcam_handles_missing_and_bad_json():
             return "not json at all" if "network" in url else None
 
     assert list(EarthCamSource(_Broken()).discover()) == []
+
+
+def test_earthcam_reserved_youtube_embed_paths_are_not_video_ids():
+    from webcam_aggregator.sources.earthcam import (
+        _routable,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    assert _routable("https://www.youtube.com/embed/videoseries?list=PLx") is None
+    assert _routable("https://www.youtube.com/embed/live_stream?channel=UCx") is None
+    assert _routable("https://www.youtube.com/embed/aaaaaaaaaaa") == (
+        "https://www.youtube.com/watch?v=aaaaaaaaaaa",
+        "yt:aaaaaaaaaaa",
+    )

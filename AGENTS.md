@@ -34,7 +34,10 @@ The app is two phases, decoupled by a catalogue snapshot:
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
    `/stream/<id>` URLs. On play, `ResolveCache` resolves the upstream via the
    `Registry`→`Extractor`, and the HLS manifest is proxied — child manifests rewritten
-   through `/stream/<id>/m?u=…&sig=…`. Segments go **direct to the CDN by default**,
+   through `/stream/<id>/m?u=…&sig=…`. A ref in an `#EXT-X-` tag's `URI="…"` attribute
+   (an alternate audio rendition, an fMP4 `#EXT-X-MAP` init segment) takes the same
+   rewrite as a ref on its own line — left relative, a player resolves it against
+   `/stream/<id>` and 404s. Segments go **direct to the CDN by default**,
    with two per-host exceptions (their tokens are IP-bound to the fetcher):
    `_DIRECT_PLAYBACK_HOSTS` (pixelcaster) get a **302 passthrough** so the player
    fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, enhd.es,
@@ -74,7 +77,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   url, category, ctx)` — the base owns the concurrent fetch + the extraction ladder.
   Override `_candidates(html, url)` too when a site's embeds aren't in the standard
   ladder (e.g. Skyline's Clappr token / a `videoId` JS var → a page or watch URL).
-  Add the instance to `active_sources` in `build_app`. Set `Candidate.predisc_key` so
+  Add the instance to `active_sources` in `build_app`, built with
+  `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
+  `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
   dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
   `None` = never merged). Add the site to the README *Sources* table and the module
   to DEVELOPMENT's project-structure tree in the same change.
@@ -171,6 +176,12 @@ The app is two phases, decoupled by a catalogue snapshot:
   page), so "0 failed" is not the same as "nothing wrong" — fetched-ok-but-extracted-
   nothing needs its own warning. A gradual decline rather than a cliff points at
   progressive challenge/rate-limiting rather than a hard IP ban.
+- **A Cloudflare `Just a moment...` 403 is not proof the page needs JavaScript.** It is
+  also what a TLS/HTTP2 **fingerprint** gate serves to `requests`, whatever the headers.
+  Before writing a source off, A/B the same URL from the same egress through curl_cffi
+  (`impersonate="chrome"`): a 200 means a fingerprint gate, and `impersonate=True` on that
+  source's Fetcher fixes it. A 403 through every profile means an interactive
+  (Turnstile) challenge, which no client-side change gets past.
 - **A build can rate-limit itself off its biggest source.** A source's whole worker
   pool aims at ONE host, and the liveness phase then re-fetches the same site through
   the resolver at zero delay — the site sheds load (429/503) and every shed response
@@ -352,12 +363,34 @@ The app is two phases, decoupled by a catalogue snapshot:
   **partner** channel, so there's no single channel to enumerate. Trade-off: cams also on
   YouTube can't dedup (the `hls:` key won't merge a `yt:` one) — accepted as a small,
   bounded overlap. No category in the feed → "Other".
-- The Wildlife Trusts webcams index links out to ~17 **regional-trust** cam pages on their own
-  domains, mostly YouTube embeds the standard ladder resolves; all are wildlife → hardcoded
-  category **Animals**. Titles come from the index link text (the "`<Region> Wildlife Trust`"
-  prefix + trailing "Watch…" stripped). Pages whose embed is JS/consent-gated (no id in the
-  static HTML, or only a channel link) yield nothing and drop — so only the statically-
-  extractable ones (~11) make it.
+- The Wildlife Trusts (blanket category **Animals**): two lists, unioned. The national
+  `/webcams` index's featured **cards**, read structurally (a card's link is the cam page,
+  or the YouTube video/channel itself, and its `card__title` is the name — the cam URLs
+  share no naming pattern, so a URL keyword filter misses many), plus every regional
+  trust's own **sitemap** (trusts from the `/wildlife-trusts` page's `itemprop="url"`
+  links; `/sitemap.xml`, else the `robots.txt` `Sitemap:` line), filtered to cam-named
+  paths and to the trust's own host, `www.` or not (trusts are listed either way). The
+  sitemaps reach cam pages the index never links (Rutland's osprey cams, Essex's,
+  Gloucestershire's). Most cams are seasonal, so off-season most candidates are
+  `yt-offline` drops — normal. Besides the standard ladder, every `iframe`/`script` tag is
+  scanned for a player URL, because the ladder reads only a page's first iframe (here
+  usually the tag manager's): **camstreamer** (a wrapped YouTube, resolved at discovery
+  so it dedups on `yt:`), **camsecure** (→ its HLS via
+  `sources.camsecure.hls_from_player`, the camscape approach), a channel's
+  `embed/live_stream?channel=` (→ `/channel/<id>/live`), consent placeholders
+  (`data-src-cmplz`), and each embed's `title`. Every trust page's chrome links the
+  trust's YouTube channel, so a *linked* channel `/live` is the cam only on an index
+  card's page with nothing else — elsewhere it is chrome, and when that channel is live
+  it duplicates a cam already listed by video id. A cam reached from several places is
+  one candidate (keyed by `predisc_key`, else target), named by the page that embeds it
+  over a card over a page that links it; untitled YouTube embeds on a multi-cam page
+  take the video's title from YouTube's oEmbed (the Derby blog embeds Rutland's and
+  Holkham's cams). `angle_key` is the cam's key, never its position, so a stable id
+  stays with its cam when a page's embeds change. **streamdays** (Essex badgers,
+  Alderney gannets, Cumbria) is a tokened Wowza behind a refreshing privacy player — an
+  expected `no-extractor` drop. The national site is fingerprint-gated (see the lesson
+  above), so this source's Fetcher is `impersonate=True`; the trust sites are not
+  gated. Plain `http://` to the national site is challenged regardless — keep it https.
 - livespotting.tv (~135 DACH/Adriatic cams): hardcoded country pages list cam ids, each id's
   `player.livespotting.com/v2/livesource/<id>?type=hub` JSON carries a **stable, tokenless**
   `source` HLS on `cdn.livespotting.com` → `DirectHls`, `hls:` predisc key. The edge appends
@@ -519,15 +552,32 @@ The app is two phases, decoupled by a catalogue snapshot:
 is a thin wrapper for callers that don't need the rejection reason), an 8 MB cap, and
 **per-hop redirect re-validation** in the `requests` `Fetcher`; proxied `/m` and `/s`
 URLs are HMAC-signed (`signing.py`) so only server-emitted URLs are fetched.
+Titles and categories are scraped text, so `render_playlist` neutralises line breaks and
+`"` before writing `#EXTINF` — a newline in a title would otherwise inject a playlist line.
 **DNS-rebinding TOCTOU is now closed in-app** (no firewall needed): the `Fetcher`
 resolves+validates the host once (`_validate_ip`) and then **pins the DNS
 resolution to that validated IP** for the connect, via a thread-local `getaddrinfo`
 override scoped by `_PinDNS` (the curl `--resolve` approach). urllib3 still connects
 to the hostname, so SNI, the `Host` header, and certificate validation stay bound to
 the original hostname (and `verify` stays on) while the socket goes to the pinned IP;
-there's no second lookup between check and connect. (An earlier adapter + pool-kwargs
-attempt was dropped: urllib3 2.x ignores `server_hostname` passed that way, so SNI
-fell back to the IP and Cloudflare 403'd it.) **Known residual** (mitigate by running
+there's no second lookup between check and connect. While a pin is active the resolver
+answers **only** for the pinned name and refuses every other lookup on that thread (IP
+literals included): urllib3 does not always resolve the host `urlsplit` validated — it
+IDNA-encodes, requests decodes `%xx`, and `http://a\@b/` dials `a` where `urlsplit`
+reads `b` — so a miss must fail closed, not reach real DNS. A malformed port, or port
+0, is refused as `bad-scheme` before any lookup. A Fetcher built
+`impersonate=True` sends through **curl_cffi** (a browser's TLS/HTTP2 fingerprint) instead;
+libcurl never calls `getaddrinfo`, so `_ImpersonatingSession` reads the same `_PinDNS` map
+and hands it to libcurl as a **wildcard-host** `CURLOPT_RESOLVE` (`*:port:ip`) — never keyed
+by host, because libcurl and `urlsplit` parse hosts differently (IDNA, `%2e`) and a missed
+key lets libcurl do its own lookup — then refuses the response as `blocked-ip` if libcurl's
+`primary_ip` isn't an IP that thread's session validated for that host (not just the
+current pin: libcurl's connection/DNS caches can dial the host's earlier pin when
+round-robin DNS moves it), ignores proxy env vars, and refuses any request with no pin. Redirects,
+the byte cap, outcomes and pacing are the same Fetcher code on both transports, because
+it returns plain `requests` responses/exceptions. (Pinning through a requests adapter +
+urllib3 pool kwargs does not work: urllib3 2.x ignores `server_hostname` passed that
+way, so SNI falls back to the IP, which Cloudflare 403s.) **Known residual** (mitigate by running
 behind your own network controls): the **egress-proxy surface** — the proxy will sign
 and fetch any *public* host that appears in an upstream manifest; durable fix = a
 CDN-host allowlist on the rewritten `/m`/`/s` URLs.

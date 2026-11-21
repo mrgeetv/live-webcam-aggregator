@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.12...v2.14.0) (2026-11-21)
+
+### Features
+
+* **scraper:** add a curl_cffi fetch path and restore wildlife-trusts ([d50f021](https://github.com/mrgeetv/live-webcam-aggregator/commit/d50f0218b5c88edb915a7a61300e99e817224843)), closes [#149](https://github.com/mrgeetv/live-webcam-aggregator/issues/149) [#EXT-X-](https://github.com/mrgeetv/live-webcam-aggregator/issues/EXT-X-) [#149](https://github.com/mrgeetv/live-webcam-aggregator/issues/149)
+
 ## [2.13.12](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.11...v2.13.12) (2026-11-21)
 
 ### Bug Fixes
