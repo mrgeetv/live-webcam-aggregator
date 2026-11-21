@@ -405,6 +405,11 @@ def test_new_proxy_segment_hosts_relay_but_website_host_does_not() -> None:
     assert _proxy_segments_for("https://edge01.amsterdam.nginx.hdontap.com/x/seg.ts")
     assert _proxy_segments_for("https://use01-smr05-relay.ozolio.com/x/seg.ts")
     assert _proxy_segments_for("https://hoktastream1.webcamera.pl/x/seg.ts")
+    assert _proxy_segments_for(
+        "https://mediamtx-0.euw4.gcp.prod.explore.org:8888/44_muxed/seg0.ts"
+    )
+    # but explore's own website and API hosts are not relayed
+    assert not _proxy_segments_for("https://omega.explore.org/api/x.json")
     # but the hdontap CAM-PAGE website host is NOT relayed — the resolver reads its
     # JSON, so relaying it would let a tampered page steer signed segment fetches
     assert not _proxy_segments_for("https://hdontap.com/stream/1/cam/")

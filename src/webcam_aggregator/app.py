@@ -733,7 +733,11 @@ def main() -> None:
     # Unpaced by design: this is the serve-time hot path (manifest refreshes every
     # few seconds per viewer, plus segment relay) — per-host pacing here would stall
     # playback, and CDN traffic is not what the pacer protects against.
-    manifest_fetcher = Fetcher(delay=0.0, retries=1, byte_cap=MANIFEST_MAX_BYTES)
+    # Cookieless: it is shared by every viewer, so upstream session state must travel
+    # in the (signed, per-viewer) URLs rather than in one process-wide jar.
+    manifest_fetcher = Fetcher(
+        delay=0.0, retries=1, byte_cap=MANIFEST_MAX_BYTES, keep_cookies=False
+    )
     handler_cls = make_handler(
         store,
         cache,

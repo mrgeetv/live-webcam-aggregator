@@ -8,9 +8,10 @@ from ..models import Candidate
 from .base import predisc_key
 
 # explore.org's livecams app pulls every stream from this CloudFront JSON (the `id_in`
-# filter is ignored — one call returns them all). Each live stream has a direct HLS
-# `playlistUrl` on an open CDN (no token/Referer), served by DirectHls.
-_API = "https://d11gsgd2hj8qxd.cloudfront.net/streams.json"
+# filter is ignored — one call returns them all). Each live stream's `playlistUrl` is a
+# direct HLS on explore's MediaMTX edges, served by DirectHls; their segments are bound
+# to the fetcher's IP, hence the segment relay (`serving._PROXY_SEGMENT_HOSTS`).
+_API = "https://d3ll4jl6s7s24a.cloudfront.net/streams.json"
 
 
 class ExploreOrgSource:
