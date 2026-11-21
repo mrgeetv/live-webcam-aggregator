@@ -5,16 +5,23 @@ import logging
 import socket
 import threading
 import time
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
 import requests
+from curl_cffi import requests as curl_requests
 
 from webcam_aggregator.fetch import (
+    MAX_BYTES,
+    UA,
     Fetcher,
     FetchStats,
+    HostPacer,
+    _as_requests_error,  # pyright: ignore[reportPrivateUsage]
     _classify,  # pyright: ignore[reportPrivateUsage]
     _FetchFailure,  # pyright: ignore[reportPrivateUsage]
+    _ImpersonatingSession,  # pyright: ignore[reportPrivateUsage]
     _pin,  # pyright: ignore[reportPrivateUsage]
     _PinDNS,  # pyright: ignore[reportPrivateUsage]
     _referer_for,  # pyright: ignore[reportPrivateUsage]
@@ -1082,3 +1089,138 @@ def test_fetcher_cookie_jar_only_when_asked(
     finally:
         httpd.shutdown()
         thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# impersonate=True — the curl_cffi transport. libcurl does its own DNS and never
+# calls socket.getaddrinfo, so these use a hostname libcurl cannot resolve: a
+# fetch that succeeds can only have dialled the IP Fetcher validated and pinned.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def pinned_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[int, list[dict[str, str]]]]:
+    """Plain-HTTP server on 127.0.0.1:0. Validation resolves every name to loopback
+    except `private.test` (10.0.0.1, which stays blocked). Yields (port, the request
+    headers it saw, names lowercased)."""
+    seen: list[dict[str, str]] = []
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            seen.append({k.lower(): v for k, v in self.headers.items()})
+            if self.path == "/hop":
+                self.send_response(302)
+                self.send_header("Location", "/body")
+                self.end_headers()
+            elif self.path == "/to-private":
+                self.send_response(302)
+                self.send_header("Location", "http://private.test/secret")
+                self.end_headers()
+            elif self.path == "/shed":
+                self.send_response(503)
+                self.end_headers()
+            else:
+                body = b"x" * 50_000 if self.path == "/big" else b"pinned-ok"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        def log_message(  # noqa: A002 # pyright: ignore[reportImplicitOverride]
+            self, format: str, *args: object
+        ) -> None: ...
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+
+    def addrinfo(host: str, *_a: object, **_k: object) -> list[tuple[object, ...]]:
+        ip = "10.0.0.1" if host == "private.test" else "127.0.0.1"
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0))]
+
+    monkeypatch.setattr("webcam_aggregator.fetch.socket.getaddrinfo", addrinfo)
+    # Loopback is the test server; every other unsafe range stays blocked.
+    monkeypatch.setattr(
+        "webcam_aggregator.fetch._ip_is_unsafe", lambda ip: ip != "127.0.0.1"
+    )
+    try:
+        yield port, seen
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=5)
+
+
+def test_impersonating_fetcher_dials_the_pinned_ip(
+    pinned_server: tuple[int, list[dict[str, str]]],
+) -> None:
+    port, seen = pinned_server
+    stats = FetchStats()
+    f = Fetcher(delay=0.0, retries=1, stats=stats, impersonate=True)
+    assert f.get(f"http://pinned.test:{port}/page") == "pinned-ok"
+    assert stats.drain() == {"pinned.test": {"ok": 1}}
+    # The browser profile's own User-Agent, not the requests one it would contradict.
+    assert seen[0]["user-agent"] != UA
+    assert "Chrome/" in seen[0]["user-agent"]
+
+
+def test_impersonating_fetcher_validates_every_redirect_hop(
+    pinned_server: tuple[int, list[dict[str, str]]],
+) -> None:
+    port, seen = pinned_server
+    stats = FetchStats()
+    f = Fetcher(delay=0.0, retries=1, stats=stats, impersonate=True)
+    assert f.get(f"http://pinned.test:{port}/hop") == "pinned-ok"
+    assert len(seen) == 2  # Fetcher followed the 302 itself, not libcurl
+    # A hop into a private range is refused before any request is made.
+    assert f.get(f"http://pinned.test:{port}/to-private") is None
+    assert stats.drain()["private.test"] == {"blocked-ip": 1}
+    assert len(seen) == 3
+
+
+def test_impersonating_fetcher_enforces_the_byte_cap(
+    pinned_server: tuple[int, list[dict[str, str]]],
+) -> None:
+    port, _ = pinned_server
+    stats = FetchStats()
+    f = Fetcher(delay=0.0, retries=1, stats=stats, byte_cap=10_000, impersonate=True)
+    assert f.get(f"http://pinned.test:{port}/big") is None
+    assert stats.drain() == {"pinned.test": {"too-large": 1}}
+
+
+def test_impersonating_fetcher_feeds_shedding_to_the_pacer(
+    pinned_server: tuple[int, list[dict[str, str]]],
+) -> None:
+    port, _ = pinned_server
+    pacer = HostPacer(sleep=lambda _s: None)
+    stats = FetchStats()
+    f = Fetcher(delay=0.0, retries=1, stats=stats, pacer=pacer, impersonate=True)
+    assert f.get(f"http://pinned.test:{port}/shed") is None
+    assert stats.drain() == {"pinned.test": {"http-503": 1}}
+    assert pacer.drain()["pinned.test"]["penalties"] == 1
+
+
+def test_impersonating_session_refuses_an_unpinned_host() -> None:
+    """Outside a _PinDNS block libcurl would resolve the name itself, reopening the
+    rebinding window, so the transport refuses before sending anything."""
+    with pytest.raises(RuntimeError):
+        _ImpersonatingSession(MAX_BYTES, True).get("http://pinned.test/", timeout=1)
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (curl_requests.exceptions.ConnectTimeout("t"), "timeout"),
+        (curl_requests.exceptions.Timeout("t"), "timeout"),
+        (curl_requests.exceptions.SSLError("t"), "conn-error"),
+        (curl_requests.exceptions.ConnectionError("t"), "conn-error"),
+    ],
+)
+def test_impersonating_errors_classify_like_requests_ones(
+    exc: curl_requests.exceptions.RequestException, expected: str
+) -> None:
+    mapped = _as_requests_error(exc, "GET", "https://cam.example/x")
+    assert _classify(mapped) == expected
+    assert getattr(mapped.request, "url", None) == "https://cam.example/x"

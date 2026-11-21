@@ -159,7 +159,7 @@ live-webcam-aggregator/
 │       ├── app.py              # App wiring and main loop
 │       ├── config.py           # Environment variable config
 │       ├── models.py           # Data contracts and stream models
-│       ├── fetch.py            # HTTP fetch: SSRF guard, per-host pacing, stats
+│       ├── fetch.py            # HTTP fetch: SSRF guard, per-host pacing, stats, browser-fingerprint transport
 │       ├── registry.py         # Extractor registry
 │       ├── dedup.py            # Deduplication and field merge
 │       ├── categories.py       # Category taxonomy mapping

@@ -74,7 +74,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   url, category, ctx)` — the base owns the concurrent fetch + the extraction ladder.
   Override `_candidates(html, url)` too when a site's embeds aren't in the standard
   ladder (e.g. Skyline's Clappr token / a `videoId` JS var → a page or watch URL).
-  Add the instance to `active_sources` in `build_app`. Set `Candidate.predisc_key` so
+  Add the instance to `active_sources` in `build_app`, built with
+  `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
+  `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
   dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
   `None` = never merged). Add the site to the README *Sources* table and the module
   to DEVELOPMENT's project-structure tree in the same change.
@@ -171,6 +173,12 @@ The app is two phases, decoupled by a catalogue snapshot:
   page), so "0 failed" is not the same as "nothing wrong" — fetched-ok-but-extracted-
   nothing needs its own warning. A gradual decline rather than a cliff points at
   progressive challenge/rate-limiting rather than a hard IP ban.
+- **A Cloudflare `Just a moment...` 403 is not proof the page needs JavaScript.** It is
+  also what a TLS/HTTP2 **fingerprint** gate serves to `requests`, whatever the headers.
+  Before writing a source off, A/B the same URL from the same egress through curl_cffi
+  (`impersonate="chrome"`): a 200 means a fingerprint gate, and `impersonate=True` on that
+  source's Fetcher fixes it. A 403 through every profile means an interactive
+  (Turnstile) challenge, which no client-side change gets past.
 - **A build can rate-limit itself off its biggest source.** A source's whole worker
   pool aims at ONE host, and the liveness phase then re-fetches the same site through
   the resolver at zero delay — the site sheds load (429/503) and every shed response
@@ -504,7 +512,12 @@ resolution to that validated IP** for the connect, via a thread-local `getaddrin
 override scoped by `_PinDNS` (the curl `--resolve` approach). urllib3 still connects
 to the hostname, so SNI, the `Host` header, and certificate validation stay bound to
 the original hostname (and `verify` stays on) while the socket goes to the pinned IP;
-there's no second lookup between check and connect. (An earlier adapter + pool-kwargs
+there's no second lookup between check and connect. A Fetcher built
+`impersonate=True` sends through **curl_cffi** (a browser's TLS/HTTP2 fingerprint) instead;
+libcurl never calls `getaddrinfo`, so `_ImpersonatingSession` reads the same `_PinDNS` map
+and hands it to libcurl as `CURLOPT_RESOLVE`, and refuses any host with no pin. Redirects,
+the byte cap, outcomes and pacing are the same Fetcher code on both transports, because
+it returns plain `requests` responses/exceptions. (An earlier adapter + pool-kwargs
 attempt was dropped: urllib3 2.x ignores `server_hostname` passed that way, so SNI
 fell back to the IP and Cloudflare 403'd it.) **Known residual** (mitigate by running
 behind your own network controls): the **egress-proxy surface** — the proxy will sign

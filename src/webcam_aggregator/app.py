@@ -555,10 +555,12 @@ def build_app(
     # to explain an empty source would name hosts the build never touched.
     source_stats: dict[str, FetchStats] = {}
 
-    def _source_fetcher(name: str) -> Fetcher:
+    def _source_fetcher(name: str, *, impersonate: bool = False) -> Fetcher:
+        # impersonate=True for a site whose Cloudflare gate 403s the requests client
+        # on its TLS/HTTP2 fingerprint (see fetch._ImpersonatingSession).
         stats = FetchStats()
         source_stats[name] = stats
-        return Fetcher(stats=stats, pacer=pacer)
+        return Fetcher(stats=stats, pacer=pacer, impersonate=impersonate)
 
     active_sources: list[Any] = [
         s
