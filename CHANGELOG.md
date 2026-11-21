@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.13.8](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.7...v2.13.8) (2026-11-21)
+
+### Bug Fixes
+
+* **deps:** bump the python-dependencies group with 2 updates ([#143](https://github.com/mrgeetv/live-webcam-aggregator/issues/143)) ([32c9ded](https://github.com/mrgeetv/live-webcam-aggregator/commit/32c9ded803c658da51cd413f76873a87f9efff86))
+
+### Maintenance
+
+* **deps:** bump docker/login-action from 4.7.0 to 4.8.0 ([#142](https://github.com/mrgeetv/live-webcam-aggregator/issues/142)) ([d65c1a7](https://github.com/mrgeetv/live-webcam-aggregator/commit/d65c1a7a90d86491842046f8b511783a8df2d9e4))
+
 ## [2.13.7](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.6...v2.13.7) (2026-11-06)
 
 ### Bug Fixes
