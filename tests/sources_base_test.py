@@ -143,6 +143,19 @@ def test_youtube_video_predisc_key():
     assert cands[0].predisc_key == "yt:aaaaaaaaaaa"
 
 
+def test_reserved_embed_paths_are_not_video_ids():
+    """`embed/videoseries` and `embed/live_stream` are 11 characters, like an id."""
+    html = (
+        '<iframe src="https://www.youtube.com/embed/videoseries?list=PLx"></iframe>'
+        '<iframe src="https://www.youtube.com/embed/live_stream?channel=UCx"></iframe>'
+        '<iframe src="https://www.youtube.com/embed/bbbbbbbbbbb"></iframe>'
+    )
+    cands = list(extract_candidates(html, page_url="https://s/x", source="t"))
+    assert [c.target_url for c in cands] == [
+        "https://www.youtube.com/watch?v=bbbbbbbbbbb"
+    ]
+
+
 def test_multiangle_distinct_keys():
     html = (
         'streams[0] = "<iframe src=\\"https://www.youtube.com/embed/aaaaaaaaaaa\\"></iframe>";'
