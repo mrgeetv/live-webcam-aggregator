@@ -504,6 +504,20 @@ hook) plus the same checks in CI — not ruff/mypy. The `pytest` hook runs
 `scripts/run-pytest.sh`, which prefers `.venv/bin/pytest` and falls back to
 `pytest` on `PATH` — no venv activation needed to commit.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues, driven with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles map to same-named labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one root `GLOSSARY.md` plus `docs/adr/`, both created lazily. See `docs/agents/domain.md`.
+
 ## Branching Workflow
 
 For any new work (fixes, features, chores, etc.):
