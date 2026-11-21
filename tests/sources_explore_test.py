@@ -2,14 +2,14 @@ from webcam_aggregator.sources.explore import ExploreOrgSource
 
 _STREAMS_JSON = """{"streams":[
  {"id":1,"name":"Brown Bear Cam","state":"live",
-  "playlistUrl":"https://outbound-production.explore.org/stream-production-1/.m3u8"},
+  "playlistUrl":"https://mediamtx-0.usc1.gcp.prod.explore.org:8888/1_muxed/index.m3u8"},
  {"id":2,"name":"Great Horned Owl","state":"on_demand",
-  "playlistUrl":"https://outbound-production.explore.org/stream-production-2/.m3u8"},
+  "playlistUrl":"https://mediamtx-0.usc1.gcp.prod.explore.org:8888/2_muxed/index.m3u8"},
  {"id":3,"name":"Tropical Reef","state":"live",
-  "playlistUrl":"https://outbound-production.explore.org/stream-production-3/.m3u8"},
+  "playlistUrl":"https://mediamtx-0.usc1.gcp.prod.explore.org:8888/3_muxed/index.m3u8"},
  {"id":4,"name":"No Stream","state":"live","playlistUrl":""},
  {"id":5,"name":"Brown Bear (dup feed)","state":"live",
-  "playlistUrl":"https://outbound-production.explore.org/stream-production-1/.m3u8"}
+  "playlistUrl":"https://mediamtx-0.usc1.gcp.prod.explore.org:8888/1_muxed/index.m3u8"}
 ]}"""
 
 
@@ -26,7 +26,7 @@ def test_explore_keeps_live_m3u8_and_dedups():
     assert set(by_title) == {"Brown Bear Cam", "Tropical Reef"}
     assert (
         by_title["Brown Bear Cam"].target_url
-        == "https://outbound-production.explore.org/stream-production-1/.m3u8"
+        == "https://mediamtx-0.usc1.gcp.prod.explore.org:8888/1_muxed/index.m3u8"
     )
     for c in cands:
         assert c.source == "explore"

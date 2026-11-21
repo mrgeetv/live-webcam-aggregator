@@ -38,8 +38,14 @@ The app is two phases, decoupled by a catalogue snapshot:
    with two per-host exceptions (their tokens are IP-bound to the fetcher):
    `_DIRECT_PLAYBACK_HOSTS` (pixelcaster) get a **302 passthrough** so the player
    fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, enhd.es,
-   skylinewebcams, earthcam, wetmet, iol.pt/beachcam, hdontap, ozolio, webcamera.pl)
+   skylinewebcams, earthcam, wetmet, iol.pt/beachcam, hdontap, ozolio, webcamera.pl,
+   explore's MediaMTX edges)
    get their **segments relayed** through `/stream/<id>/s?u=…&sig=…`.
+   That manifest/segment fetcher is ONE `Fetcher` shared by every viewer, so it is
+   built `keep_cookies=False`: a cookie jar there would carry one viewer's upstream
+   session onto every other fetch to that host (MediaMTX keys its HLS session on a
+   cookie when it gets one, so a second cam on the same edge would 401 the first). On this
+   path upstream session state must travel in the URLs, which the rewrite carries per viewer.
    **YouTube cams 302-redirect straight to googlevideo by default** (`PROXY_YOUTUBE`
    off): lower latency / less buffering on shallow live windows, but playback stops
    when the ~6h googlevideo token expires. `PROXY_YOUTUBE=true` proxies them like the
@@ -327,13 +333,24 @@ The app is two phases, decoupled by a catalogue snapshot:
   manifest passes liveness but segments 404). Titles come from the page `<title>` (boilerplate
   stripped, the "… from `<place>`" tail when it leads with boilerplate, the URL filename as a
   last resort). No category → "Other".
-- explore.org is a source via its **`streams.json`** API (`d11gsgd2hj8qxd.cloudfront.net`,
+- explore.org is a source via its **`streams.json`** API (`d3ll4jl6s7s24a.cloudfront.net`,
   the `id_in` filter is ignored — one call returns all ~160). Keep `state == "live"` with a
-  `.m3u8` `playlistUrl` (~140) — a direct, open HLS served by `DirectHls` (no token/Referer).
+  `.m3u8` `playlistUrl` (~120) — a direct HLS on explore's **MediaMTX** edges
+  (`mediamtx-N.<region>.gcp.prod.explore.org:8888`), served by `DirectHls`. No token or
+  Referer, but MediaMTX answers the first manifest fetch with a cookie-check 302 (to
+  `?cookieCheck=1`) and then mints a session that every child playlist and segment must
+  carry and that is **checked against the client IP** → `gcp.prod.explore.org` is in
+  `_PROXY_SEGMENT_HOSTS`; it rides in the URL as `session=` only because the serve-time
+  fetcher is cookieless (see the serve phase above). The CloudFront hostname lives in the
+  site's Next.js bundle: when the source drops to `dns-error`, grep the
+  `/_next/static/chunks/*.js` of `explore.org/livecams` for `streams.json`.
+  `streams.json` is complete: the site's own catalogue (`omega.explore.org/api/initial?
+  contenttype=livecams` → camgroups → feeds, each feed's `get_livecam_info.json` carrying a
+  `stream_id`) maps every online feed to exactly one `live` stream, and its offline/inactive
+  feeds to `on_demand` or absent ones — no YouTube-only live cams exist outside the feed.
   We deliberately use the HLS, **not** YouTube: explore embeds each cam's YouTube from its
-  **partner** channel (so there's no single channel to enumerate, and the per-cam id is
-  JS-redacted on the page), and `streams.json` is the only complete list. Trade-off: cams
-  also on YouTube can't dedup (the `hls:` key won't merge a `yt:` one) — accepted as a small,
+  **partner** channel, so there's no single channel to enumerate. Trade-off: cams also on
+  YouTube can't dedup (the `hls:` key won't merge a `yt:` one) — accepted as a small,
   bounded overlap. No category in the feed → "Other".
 - The Wildlife Trusts webcams index links out to ~17 **regional-trust** cam pages on their own
   domains, mostly YouTube embeds the standard ladder resolves; all are wildlife → hardcoded

@@ -68,7 +68,9 @@ def _is_direct_playback(url: str) -> bool:
 # balticlivecam's token is IP-bound to OUR fetch; enhd.es 403s when the player
 # re-encodes the literal "+" in its stream path to %2B; iol.pt (beachcam) and
 # ozolio mint a per-manifest-fetch Nimble/Wowza session that 403s any other
-# client (the wetmet shape); hdontap's t/e token may be bound to the fetcher.
+# client (the wetmet shape); hdontap's t/e token may be bound to the fetcher;
+# explore's MediaMTX edges mint a `session=` per manifest fetch that is checked
+# against the client IP.
 # Fetching the segment server-side and handing the player a clean /s URL
 # sidesteps all of these.
 _PROXY_SEGMENT_HOSTS = (
@@ -85,6 +87,8 @@ _PROXY_SEGMENT_HOSTS = (
     "nginx.hdontap.com",
     "ozolio.com",
     "webcamera.pl",
+    # explore's MediaMTX stream edges only, not explore.org's website/API hosts
+    "gcp.prod.explore.org",
 )
 
 

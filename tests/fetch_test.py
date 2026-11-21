@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.server
 import logging
 import socket
 import threading
@@ -711,10 +712,8 @@ def test_fetcher_tls_verified_against_hostname_while_connecting_to_ip(
     This is the regression guard for the hard requirement: connecting to the IP
     must not weaken TLS. If cert validation were done against the IP (or disabled),
     this fetch would fail."""
-    import http.server
     import ssl
     import tempfile
-    import threading
 
     crypto = pytest.importorskip("cryptography")
     from datetime import datetime, timedelta, timezone
@@ -1029,3 +1028,57 @@ def test_scrape_workers_blank_means_unset(
         result = resolve_scrape_workers()
     assert result == min(16, (_os.cpu_count() or 2) * 4)
     assert caplog.text == ""
+
+
+# ---------------------------------------------------------------------------
+# Cookies — the serve-time fetcher is shared by every viewer, so it must not keep them
+# ---------------------------------------------------------------------------
+
+
+def _cookie_server() -> tuple[http.server.HTTPServer, threading.Thread, int]:
+    """The MediaMTX shape: /index 302s to /child setting a cookie; /child echoes the
+    Cookie header it received (or "none")."""
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/index":
+                self.send_response(302)
+                self.send_header("Location", "/child")
+                self.send_header("Set-Cookie", "session=viewer-a; Path=/")
+                self.end_headers()
+                return
+            body = (self.headers.get("Cookie") or "none").encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(  # noqa: A002 # pyright: ignore[reportImplicitOverride]
+            self, format: str, *args: object
+        ) -> None: ...
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, thread, httpd.server_address[1]
+
+
+@pytest.mark.parametrize(
+    ("keep_cookies", "expected"), [(True, "session=viewer-a"), (False, "none")]
+)
+def test_fetcher_cookie_jar_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch, keep_cookies: bool, expected: str
+) -> None:
+    # A cookie an upstream sets for one viewer's stream would otherwise ride along on
+    # every later fetch to that host, for every viewer — MediaMTX keys its HLS session
+    # on exactly such a cookie, so a second cam on the same edge clobbers the first.
+    monkeypatch.setattr("webcam_aggregator.fetch._ip_is_unsafe", lambda _ip: False)
+    httpd, thread, port = _cookie_server()
+    try:
+        f = Fetcher(delay=0.0, retries=1, keep_cookies=keep_cookies)
+        # across the redirect hop, and across separate calls
+        assert f.get(f"http://127.0.0.1:{port}/index") == expected
+        assert f.get(f"http://127.0.0.1:{port}/child") == expected
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=5)

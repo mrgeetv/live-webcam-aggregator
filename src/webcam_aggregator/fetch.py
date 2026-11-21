@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http.cookiejar import DefaultCookiePolicy
 from typing import Any, Protocol, TypeVar
 from urllib.parse import urlencode, urljoin, urlsplit
 
@@ -545,6 +546,7 @@ class Fetcher:
         stats: FetchStats | None = None,
         pacer: HostPacer | None = None,
         retry_only_shedding: bool = False,
+        keep_cookies: bool = True,
     ) -> None:
         self._delay = delay
         self._retries = retries
@@ -558,6 +560,11 @@ class Fetcher:
         self._retry_only_shedding = retry_only_shedding
         self._session = requests.Session()
         self._session.headers["User-Agent"] = UA
+        if not keep_cookies:
+            # The jar spans every call this Fetcher makes. On the serve-time fetcher that
+            # is every viewer and every cam: a cookie an upstream sets for one stream
+            # (MediaMTX keys its HLS session on one) would ride along on another's fetches.
+            self._session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
         # Size the connection pool to the worker count so concurrent fetches to one host
         # reuse connections instead of churning (urllib3 "Connection pool is full").
         adapter = HTTPAdapter(
