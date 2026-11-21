@@ -435,13 +435,19 @@ The app is two phases, decoupled by a catalogue snapshot:
   non-ASCII, so `with_location_parts` would drop Japanese parts entirely. Tags map via
   `_TAG_CATEGORY` (guarded by a test against `categories._MAP`); town/scenic tags stay
   unmapped on purpose — the geo title suffix files those under Travel & Events.
-- tomarigi.me (とまり木, ~4900 cams): a curated all-YouTube directory — Japanese-branded
-  but ~70% international. `sitemap.xml` is the ONLY complete index (both map views are
-  client-rendered; the `/spots/<slug>` listings cover just the ~1300 Japanese cams, and
-  robots.txt disallows the site's own `/api/`), so it costs one fetch per cam page —
-  our second-heaviest source by request count. Each page's `VideoObject` JSON-LD carries
-  the watch URL, the name and the category, so there is nothing to extract from a player
-  and every cam dedups on its `yt:` key; liveness rides the existing Data API batch.
+- tomarigi.me (とまり木, ~5400 cams): a curated all-YouTube directory — Japanese-branded
+  but ~70% international. The complete index is the `/world/spots/<region>` listings
+  (paginated `/<n>`, Japan under `asia`): the sitemap names them, and each listing's
+  links to its neighbours and the other regions are followed too, so a page the sitemap
+  lags on still gets read. The other indexes — `/spots/<slug>`, `/spots/area/<pref>`
+  (Japan only), `/world/country/<cc>` and the zh-tw/th mirrors — are all subsets.
+  Scrape the listing's `href="/spot/<uuid>"` links, NOT its `ItemList` JSON-LD, which
+  is truncated short of the links on the page. Both map views load from the site's
+  `/api/`, which robots.txt disallows. The listings carry no YouTube id, so it costs one
+  fetch per cam page — our second-heaviest source by request count. Each page's
+  `VideoObject` JSON-LD carries the YouTube `embedUrl`, the name and the category, so
+  there is nothing to extract from a player and every cam dedups on its `yt:` key;
+  liveness rides the existing Data API batch.
   The category is a Japanese word inside the LD **description** (`。<category>のライブ
   カメラを…`), not a tag or a URL segment. Sampled 20 at random: 20/20 live, all with a
   `startDate` inside 3 days — the site prunes ended cams, so a large `yt-offline` share
