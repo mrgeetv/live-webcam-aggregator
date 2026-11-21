@@ -9,14 +9,16 @@ _FIX = Path(__file__).parent / "fixtures"
 
 # The /embed/ twins live in <video:player_loc>, not <loc> — they must not become
 # pages. One cam (269629) is listed under two slugs: dedupe on the numeric id.
+# Locs come in either scheme; pages are fetched (and targeted) as https://,
+# which is all _FakeFetch answers, so an un-normalised URL yields nothing.
 _SITEMAP_XML = """<?xml version="1.0" encoding="UTF-8"?><urlset>
-<url><loc>https://hdontap.com/</loc></url>
-<url><loc>https://hdontap.com/explore/tag/beaches/</loc></url>
-<url><loc>https://hdontap.com/stream/269629/carmel-by-the-sea-live-webcam/</loc>
+<url><loc>http://hdontap.com/</loc></url>
+<url><loc>http://hdontap.com/explore/tag/beaches/</loc></url>
+<url><loc>http://hdontap.com/stream/269629/carmel-by-the-sea-live-webcam/</loc>
 <video:video><video:player_loc>https://hdontap.com/stream/269629/carmel-by-the-sea-live-webcam/embed/</video:player_loc></video:video></url>
-<url><loc>https://hdontap.com/stream/269629/tickle-pink-inn-big-sur-coast-live-webcam/</loc></url>
+<url><loc>http://hdontap.com/stream/269629/tickle-pink-inn-big-sur-coast-live-webcam/</loc></url>
 <url><loc>https://hdontap.com/stream/390711/cook-inlet-alaska-bear-viewing/</loc></url>
-<url><loc>https://hdontap.com/stream/723586/bay-point-marina-ospreys/</loc></url>
+<url><loc>http://hdontap.com/stream/723586/bay-point-marina-ospreys/</loc></url>
 </urlset>"""
 
 # Pages without a player-data blob go through the standard ladder: a YouTube embed

@@ -13,7 +13,9 @@ _SITEMAP = "https://hdontap.com/sitemap.xml"
 # Cam pages are /stream/<id>/<slug>/. Their /embed/ twins sit in the sitemap's
 # <video:player_loc> tags, so the <loc> scan never sees them — but the numeric id is
 # still the dedupe key, because a cam can be listed under more than one slug.
-_LOC = re.compile(r"<loc>(https://hdontap\.com/stream/(\d+)/[^<]*)</loc>")
+# The sitemap's locs carry either scheme; the page URL is also the candidate target,
+# so it is rebuilt as https:// rather than left to ride the site's 301.
+_LOC = re.compile(r"<loc>https?://hdontap\.com/(stream/(\d+)/[^<]*)</loc>")
 _TITLE = re.compile(r"<title>([^<]*)</title>", re.I)
 # "Carmel-By-The-Sea Live Webcam - HDOnTap" -> "Carmel-By-The-Sea"; the boilerplate
 # tail is stripped once, anchored at the end, so a mid-name "Cam" ("PA Peregrine
@@ -50,10 +52,10 @@ class HdOnTapSource(HtmlScraperSource[str]):
         sm = self._fetch.get(_SITEMAP) or ""
         seen: set[str] = set()
         out: list[str] = []
-        for url, cam_id in sorted(set(_LOC.findall(sm))):
+        for path, cam_id in sorted(set(_LOC.findall(sm))):
             if cam_id not in seen:
                 seen.add(cam_id)
-                out.append(url)
+                out.append(f"https://hdontap.com/{path}")
         return out
 
     @override
