@@ -218,10 +218,10 @@ def build_catalogue(
     # camscape) carry the same cams as the first-party sources, so without this the same
     # feratel page gets probed two or three times per build — extra load aimed at
     # exactly the hosts that already rate-limit us. Keyed on target_url (why not
-    # predisc_key: see the lookup below), shared across every source in THIS build
-    # only — a verdict must never outlive the build, tokens expire. The check-then-probe window means two
-    # sources racing on the same key can still probe twice; that rare duplicate is
-    # cheaper than holding a lock across a network fetch.
+    # predisc_key: see the lookup below), shared across every source in THIS build only
+    # — a verdict must never outlive the build, tokens expire. The check-then-probe
+    # window means two sources racing on the same key can still probe twice; that rare
+    # duplicate is cheaper than holding a lock across a network fetch.
     verdicts: dict[str, str | None] = {}
     verdicts_lock = threading.Lock()
 
