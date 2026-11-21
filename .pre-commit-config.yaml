@@ -127,3 +127,4 @@ repos:
           - types-psutil==7.2.2.20260518
           - types-requests==2.33.0.20260518
           - pytest==9.1.1  # so basedpyright can resolve pytest types in tests/
+          - curl_cffi==0.17.0  # fetch.py imports it; ships its own type hints
