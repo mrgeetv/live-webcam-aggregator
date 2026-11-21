@@ -166,6 +166,46 @@ def test_rewrite_manifest_wowza_segment_becomes_absolute_direct() -> None:
     ).replace(absolute_seg, "")
 
 
+def test_rewrite_manifest_rewrites_uri_attributes_on_tag_lines() -> None:
+    """Wowza's separate audio rendition and an fMP4 init segment are referenced from
+    URI="…" on a tag line; left relative, the player resolves them against
+    /stream/<id> and gets a 404."""
+    master = (
+        "#EXTM3U\n"
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="chunklist_w1_ao.m3u8"\n'
+        '#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO="a"\n'
+        "chunklist_w1_vo.m3u8\n"
+    )
+    out = rewrite_manifest(
+        master, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
+    )
+    audio = quote("https://cdn.x/cam/chunklist_w1_ao.m3u8", safe="")
+    assert f'URI="{BASE}/stream/{ENTRY_ID}/m?u={audio}&sig=' in out
+
+    media = '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:2,\nseg1.m4s\n'
+    out = rewrite_manifest(
+        media, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
+    )
+    assert '#EXT-X-MAP:URI="https://cdn.x/cam/init.mp4"' in out
+    init = quote("https://cdn.x/cam/init.mp4", safe="")
+    out = rewrite_manifest(
+        media,
+        upstream_url=WOWZA_UPSTREAM,
+        entry_id=ENTRY_ID,
+        base_url=BASE,
+        proxy_segments=True,
+    )
+    assert f'#EXT-X-MAP:URI="{BASE}/stream/{ENTRY_ID}/s?u={init}&sig=' in out
+
+
+def test_rewrite_manifest_off_site_uri_attribute_is_not_proxied() -> None:
+    master = '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI="https://evil.example/a.m3u8"\n'
+    out = rewrite_manifest(
+        master, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
+    )
+    assert 'URI="https://evil.example/a.m3u8"' in out
+
+
 def test_rewrite_manifest_wowza_segment_not_proxied() -> None:
     """Segment URL must appear verbatim (absolute), not wrapped in our /stream/ proxy path."""
     out = rewrite_manifest(

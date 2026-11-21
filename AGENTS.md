@@ -34,7 +34,9 @@ The app is two phases, decoupled by a catalogue snapshot:
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
    `/stream/<id>` URLs. On play, `ResolveCache` resolves the upstream via the
    `Registry`→`Extractor`, and the HLS manifest is proxied — child manifests rewritten
-   through `/stream/<id>/m?u=…&sig=…`. Segments go **direct to the CDN by default**,
+   through `/stream/<id>/m?u=…&sig=…`, including refs in a tag's `URI="…"` attribute
+   (alternate audio renditions, fMP4 `#EXT-X-MAP` init segments), which a player would
+   otherwise resolve against `/stream/<id>` and 404. Segments go **direct to the CDN by default**,
    with two per-host exceptions (their tokens are IP-bound to the fetcher):
    `_DIRECT_PLAYBACK_HOSTS` (pixelcaster) get a **302 passthrough** so the player
    fetches the whole chain itself; `_PROXY_SEGMENT_HOSTS` (balticlivecam, enhd.es,
