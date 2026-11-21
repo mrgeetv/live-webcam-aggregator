@@ -70,6 +70,20 @@ def test_render_playlist_extinf_line() -> None:
     )
 
 
+def test_render_playlist_neutralises_scraped_line_breaks_and_quotes() -> None:
+    """A scraped title must not be able to add a playlist line or end its attribute."""
+    title = 'Owl "cam"\r\nhttps://evil.example/x.m3u8\u2028more'
+    out = render_playlist([_entry(title=title, category="Ani\nmals")], base_url=BASE)
+    lines = out.splitlines()
+    assert len(lines) == 3  # header, #EXTINF, the stream URL: nothing injected
+    assert lines[1] == (
+        f'#EXTINF:-1 tvg-id="{ENTRY_ID}" '
+        "tvg-name=\"Owl 'cam' https://evil.example/x.m3u8 more\" "
+        "group-title=\"Ani mals\",Owl 'cam' https://evil.example/x.m3u8 more"
+    )
+    assert lines[2] == f"{BASE}/stream/{ENTRY_ID}"
+
+
 def test_render_playlist_tvg_id_equals_stream_id() -> None:
     """tvg-id must equal the /stream/<id> id so players keep favourites linked to the
     right cam across rebuilds (the count/order changing must not re-link them)."""

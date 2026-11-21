@@ -126,15 +126,26 @@ Response = tuple[int, str, bytes]
 SegmentResponse = tuple[int, str, str | None, bytes]
 
 
+# Titles and categories are scraped text. A line break in one would start a new
+# playlist line (a different stream URL, say), and a double quote would end its
+# attribute early, so both are neutralised before they reach #EXTINF.
+_LINE_BREAKS = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]+")
+
+
+def _m3u_text(value: str) -> str:
+    return " ".join(_LINE_BREAKS.sub(" ", value).replace('"', "'").split())
+
+
 def render_playlist(entries: list[CatalogueEntry], *, base_url: str) -> str:
     lines = ["#EXTM3U"]
     for e in entries:
+        title, category = _m3u_text(e.title), _m3u_text(e.category)
         # tvg-id is the STABLE per-cam id (same value as the /stream/<id> URL). It
         # gives players (TiViMate) a fixed key to keep favourites linked to the right
         # stream across catalogue rebuilds, independent of count, order, or title.
         lines.append(
-            f'#EXTINF:-1 tvg-id="{e.id}" tvg-name="{e.title}" '
-            f'group-title="{e.category}",{e.title}'
+            f'#EXTINF:-1 tvg-id="{e.id}" tvg-name="{title}" '
+            f'group-title="{category}",{title}'
         )
         lines.append(f"{base_url}/stream/{e.id}")
     return "\n".join(lines) + "\n"

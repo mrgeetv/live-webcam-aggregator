@@ -526,6 +526,8 @@ The app is two phases, decoupled by a catalogue snapshot:
 is a thin wrapper for callers that don't need the rejection reason), an 8 MB cap, and
 **per-hop redirect re-validation** in the `requests` `Fetcher`; proxied `/m` and `/s`
 URLs are HMAC-signed (`signing.py`) so only server-emitted URLs are fetched.
+Titles and categories are scraped text, so `render_playlist` neutralises line breaks and
+`"` before writing `#EXTINF` — a newline in a title would otherwise inject a playlist line.
 **DNS-rebinding TOCTOU is now closed in-app** (no firewall needed): the `Fetcher`
 resolves+validates the host once (`_validate_ip`) and then **pins the DNS
 resolution to that validated IP** for the connect, via a thread-local `getaddrinfo`
