@@ -382,6 +382,27 @@ The app is two phases, decoupled by a catalogue snapshot:
   ~24 outlives the token; an empty-guard-preserved stale set carries a lapsing one. The
   ladder is bypassed (`_candidates` override) because every page footer links the site's
   YouTube channel, which the channel rule would emit as a bogus extra candidate per page.
+- cxtvlive.com (~770 global cams): the index is `sitemap.php` **unioned with** the
+  `data/cxl_mapa.php` JSON feed (the old `sitemap.xml` is gone — a `dns-error`/404 there
+  is the tell). The feed is the fuller list and the only place the category and geo live:
+  the cam pages render both client-side (the `cxp-tags` div is empty server-side, and the
+  only `cameras/category/` links in the HTML are the site nav — reading those tags every
+  cam "Beaches"). Per-cam category is the first content segment of the feed's `A · B`
+  field (quality tags like `High Definition` skipped → the content category wins); geo is
+  its `Country - Region - City`. The sitemap adds the few cams the feed omits (scraped
+  without category/geo). Streams are heterogeneous — JSON-LD `embedUrl`
+  (YouTube/ipcamlive/feratel), a `data-stream-url` direct HLS, or an off-site `cxp-ext`
+  player — all handled by the standard ladder, with a `_candidates` override dropping the
+  site's own YouTube channel link (the beachcam channel-chrome problem) whenever the page
+  also carries a real embed. CF-fronted and **TLS-fingerprint-gated**: `requests`/`curl`
+  with a browser UA get a `Just a moment` 403, and only a real-browser fingerprint
+  (curl_cffi `impersonate`) gets 200 (verified same-egress on the index endpoints —
+  requests/curl 403, curl_cffi 200; not IP reputation). So the index move above is
+  necessary but NOT sufficient: with the plain `Fetcher`, discovery is a flat 403 and 0
+  cams until the source fetches through a browser-fingerprint client (the curl_cffi path,
+  shared with wildlife-trusts). The `HostPacer` (429/503 only) does not back off on the
+  403, so a gated build just burns every fetch fast — a sudden `Nx http-403
+  www.cxtvlive.com` on the source line is this gate, not a code fault.
 - resortcams.com (~100 US-Southeast cams): WP sitemap → pages with an **open** Wowza HLS
   (`stream.resortcams.com`) in static HTML; fully tokenless chain, plain `DirectHls`, no
   host-list entries. Pages with no static player yield nothing and drop.
