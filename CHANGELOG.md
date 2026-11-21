@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.13.9](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.8...v2.13.9) (2026-11-21)
+
+### Bug Fixes
+
+* **scraper:** accept http:// sitemap locs for hdontap ([#152](https://github.com/mrgeetv/live-webcam-aggregator/issues/152)) ([5fee741](https://github.com/mrgeetv/live-webcam-aggregator/commit/5fee7418244b90efbf75ec9c531ef83a703a4730)), closes [#144](https://github.com/mrgeetv/live-webcam-aggregator/issues/144)
+
 ## [2.13.8](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.7...v2.13.8) (2026-11-21)
 
 ### Bug Fixes
