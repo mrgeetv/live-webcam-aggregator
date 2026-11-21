@@ -19,8 +19,10 @@ _GLOBAL = (
     "&sex=-85&sey=180&swx=-85&swy=-180&zoom=3"
 )
 
+# `embed/videoseries` and `embed/live_stream` are 11 characters, like a video id.
 _YT = re.compile(
-    r"(?:youtube\.com/(?:watch\?v=|embed/|live/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})"
+    r"(?:youtube\.com/(?:watch\?v=|embed/|live/|v/)|youtu\.be/)"
+    r"(?!(?:videoseries|live_stream)\b)([A-Za-z0-9_-]{11})"
 )
 
 
