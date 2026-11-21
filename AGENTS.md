@@ -364,28 +364,32 @@ The app is two phases, decoupled by a catalogue snapshot:
   YouTube can't dedup (the `hls:` key won't merge a `yt:` one) — accepted as a small,
   bounded overlap. No category in the feed → "Other".
 - The Wildlife Trusts (blanket category **Animals**): two lists, unioned. The national
-  `/webcams` index's featured **cards** (read structurally — a card's link is the cam page,
-  or the YouTube video/channel itself, and its `card__title` is the name; a URL keyword
-  filter dropped a third of them), plus each of the 46 trusts' own **sitemaps** (trusts
-  from the `/wildlife-trusts` page's `itemprop="url"` links), filtered to cam-named paths:
-  the trusts host cam pages the index never links (Rutland's four osprey cams, Essex's,
+  `/webcams` index's featured **cards**, read structurally (a card's link is the cam page,
+  or the YouTube video/channel itself, and its `card__title` is the name — the cam URLs
+  share no naming pattern, so a URL keyword filter misses many), plus every regional
+  trust's own **sitemap** (trusts from the `/wildlife-trusts` page's `itemprop="url"`
+  links; `/sitemap.xml`, else the `robots.txt` `Sitemap:` line), filtered to cam-named
+  paths and to the trust's own host, `www.` or not (trusts are listed either way). The
+  sitemaps reach cam pages the index never links (Rutland's osprey cams, Essex's,
   Gloucestershire's). Most cams are seasonal, so off-season most candidates are
-  `yt-offline` drops — normal. The pages embed in forms the standard ladder misses (it reads
-  only the FIRST iframe, here the GTM one), so `_candidates` scans every player attribute,
-  consent-gated ones included (Complianz `data-src-cmplz`): YouTube; **camstreamer**
-  (a wrapped YouTube, resolved at discovery so it dedups on `yt:`); **camsecure** (→ its
-  HLS via `sources.camsecure.hls_from_player`, the camscape approach); a channel's
-  `embed/live_stream?channel=` (→ `/channel/<id>/live`). Every trust page's chrome links
-  the trust's YouTube channel, so a channel `/live` candidate counts only from an embed or
-  an index card — a bare channel link on a sitemap page is chrome, and when that channel
-  is live it duplicates a cam already listed by video id. Targets are deduped across
-  pages, named by the page that embeds them over a card over a page that links them;
-  untitled YouTube embeds on a multi-cam page take the video's title from YouTube's
-  oEmbed (the Derby blog embeds Rutland's and Holkham's cams). **streamdays** (Essex badgers, Alderney gannets,
-  Cumbria) is a tokened Wowza behind a refreshing privacy player — an expected
-  `no-extractor` drop. The national site is behind a Cloudflare **fingerprint** gate
-  (`Just a moment…` 403 to `requests` with any headers; 200 to a browser fingerprint),
-  so this source's Fetcher is built `impersonate=True`; the trust sites themselves are not
+  `yt-offline` drops — normal. Besides the standard ladder, every `iframe`/`script` tag is
+  scanned for a player URL, because the ladder reads only a page's first iframe (here
+  usually the tag manager's): **camstreamer** (a wrapped YouTube, resolved at discovery
+  so it dedups on `yt:`), **camsecure** (→ its HLS via
+  `sources.camsecure.hls_from_player`, the camscape approach), a channel's
+  `embed/live_stream?channel=` (→ `/channel/<id>/live`), consent placeholders
+  (`data-src-cmplz`), and each embed's `title`. Every trust page's chrome links the
+  trust's YouTube channel, so a *linked* channel `/live` is the cam only on an index
+  card's page with nothing else — elsewhere it is chrome, and when that channel is live
+  it duplicates a cam already listed by video id. A cam reached from several places is
+  one candidate (keyed by `predisc_key`, else target), named by the page that embeds it
+  over a card over a page that links it; untitled YouTube embeds on a multi-cam page
+  take the video's title from YouTube's oEmbed (the Derby blog embeds Rutland's and
+  Holkham's cams). `angle_key` is the cam's key, never its position, so a stable id
+  stays with its cam when a page's embeds change. **streamdays** (Essex badgers,
+  Alderney gannets, Cumbria) is a tokened Wowza behind a refreshing privacy player — an
+  expected `no-extractor` drop. The national site is fingerprint-gated (see the lesson
+  above), so this source's Fetcher is `impersonate=True`; the trust sites are not
   gated. Plain `http://` to the national site is challenged regardless — keep it https.
 - livespotting.tv (~135 DACH/Adriatic cams): hardcoded country pages list cam ids, each id's
   `player.livespotting.com/v2/livesource/<id>?type=hub` JSON carries a **stable, tokenless**

@@ -31,7 +31,7 @@ stream is actually played.
 | viewsurf.com | French coastal, harbour, ski and city cams |
 | webcamera.pl | Polish network — Baltic beaches, Tatra mountains, ski resorts |
 | whatsupcams.com | Adriatic network — Croatia, Slovenia, Italy and beyond |
-| wildlifetrusts.org | UK wildlife-trust cams — the national index plus all 46 regional trusts |
+| wildlifetrusts.org | UK wildlife-trust cams — the national index plus every regional trust |
 | windy.com | Meta-aggregator — routes each live cam to its original provider's stream |
 | worldcams.tv | Camera directory |
 | YouTube Data API | Live webcam broadcasts found by search |

@@ -2,40 +2,42 @@ from __future__ import annotations
 
 import html as htmllib
 import json
+import logging
 import re
 from collections.abc import Iterator
-from dataclasses import replace
-from itertools import chain
-from typing import override
 from urllib.parse import quote, urljoin, urlsplit
 
 from ..fetch import FetcherProtocol, thread_map
 from ..models import Candidate
-from .base import HtmlScraperSource, extract_candidates, predisc_key
+from .base import extract_candidates, predisc_key
 from .camsecure import hls_from_player
+
+log = logging.getLogger("webcam-aggregator.wildlife-trusts")
 
 _SITE = "https://www.wildlifetrusts.org"
 _INDEX = f"{_SITE}/webcams"
 _TRUSTS = f"{_SITE}/wildlife-trusts"
+_CATEGORY = "Animals"
 
-# Index: each cam is a featured card whose one link is the cam page (or the YouTube
-# video/channel itself) and whose h3 is the cam's name.
-_CARD = re.compile(
-    r'featured-cards-custom[^"]*"\s*>\s*<a href="([^"]+)"(.*?)</a>', re.S | re.I
-)
-_CARD_TITLE = re.compile(r"card__title[^>]*>([^<]+)<", re.I)
+# Index: each cam is a featured card whose link is the cam page (or the YouTube video
+# or channel itself) and whose h3 is the cam's name. Cards are cut out with str.split
+# and read a bounded slice at a time, so a hostile page cannot make a regex backtrack
+# across the whole body.
+_CARD_MARK = "paragraph--type--featured-cards-custom"
+_CARD_HREF = re.compile(r'<a href="([^"<>]+)"')
+_CARD_TITLE = re.compile(r"card__title[^<>]*>([^<]+)<", re.I)
 # The trusts page: each trust's own site is its card's schema.org `url` link.
-_TRUST_SITE = re.compile(r'<a href="(https?://[^"]+)"[^>]*itemprop="url"', re.I)
+_TRUST_SITE = re.compile(r'<a href="(https?://[^"<>]+)"[^<>]*itemprop="url"', re.I)
 
 # A trust site's sitemap holds thousands of pages; these are the ones named for a cam
-# or for the osprey/peregrine nests the trusts stream. A page is only a candidate
-# source: liveness keeps the ones whose embed is live, so a false positive here costs
-# a fetch, never a dead playlist entry.
-_LOC = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>")
+# or for the osprey/peregrine nests the trusts stream. A page is only a place to look:
+# liveness keeps the cams that are live, so a false positive costs a fetch, never a
+# dead playlist entry.
+_LOC = re.compile(r"<loc>\s*(?:<!\[CDATA\[\s*)?([^<\s\]]+)")
 _ROBOTS_SITEMAP = re.compile(r"^sitemap:\s*(\S+)", re.I | re.M)
 _CAM_PATH = re.compile(
-    r"web-?cam|cams?(?=[/_.-]|$)|camera|live-?stream|wildlife-windows"
-    r"|watch-wildlife-online|osprey|peregrine",
+    r"web-?cam|cams?\d*(?=[/_.-]|$)|camera|live-?stream|(?:^|[/_-])live(?=[/_.-]|$)"
+    r"|wildlife-windows|watch-wildlife-online|osprey|peregrine",
     re.I,
 )
 # ...minus the article, species, event and how-to pages that mention a cam: they
@@ -47,109 +49,129 @@ _NOT_CAM_PATH = re.compile(
     re.I,
 )
 _MAX_SITEMAPS = 40  # per trust: bounds a runaway sitemap index
+_MAX_PAGES = 100  # per trust: bounds a runaway sitemap
 
-# Embeds the standard ladder misses on these pages. It reads only a page's first
-# iframe (here usually the tag-manager one) and not the consent-gated or script
-# forms, so every attribute holding a player URL is scanned instead.
+# Player embeds, read from every tag rather than the ladder's first iframe (often the
+# tag manager's): later iframes, script embeds, and consent placeholders that hold the
+# real URL in data-src-cmplz. `\bsrc` also matches inside `data-src` and
+# `data-litespeed-src`. `[^<>]` keeps a tag match from running past the next tag.
+_TAG = re.compile(r"<(?:iframe|script)\b[^<>]*>", re.I)
 _PLAYER_ATTR = re.compile(
-    r'\b(?:src|data-src|data-src-cmplz|data-litespeed-src)="('
-    r"(?:https?:)?//(?:www\.)?(?:youtube(?:-nocookie)?\.com/embed/|camstreamer\.com/embed/"
-    r'|camsecure\.(?:co|uk)/|live\.streamdays\.com/)[^"]+)"',
+    r"""\b(?:src|data-src-cmplz)=["']((?:https?:)?//(?:www\.)?"""
+    r"(?:youtube(?:-nocookie)?\.com/embed|camstreamer\.com/embed|camsecure\.[a-z.]+"
+    r"""|live\.streamdays\.com)/[^"'\s<>]+)""",
     re.I,
 )
-_TAG = re.compile(r"<(?:iframe|script)\b[^>]*>", re.I)
-_TAG_TITLE = re.compile(r'\btitle="([^"]+)"', re.I)
+_TAG_TITLE = re.compile(r"""\btitle=["']([^"'<>]+)""", re.I)
 _GENERIC_TITLE = re.compile(r"^(?:youtube( video player)?|video|webcam|iframe)$", re.I)
 _QUOTED_TITLE = re.compile(r'^youtube video\s*["“](.+)["”]$', re.I)  # one embed plugin
-_YT_ID = re.compile(r"youtube\.com/watch\?v=([\w-]{11})$")
-_OEMBED = "https://www.youtube.com/oembed?format=json&url="
-_YT_EMBED = re.compile(
-    r"youtube(?:-nocookie)?\.com/embed/(?!(?:videoseries|live_stream)\b)([\w-]{11})"
-)
 # A channel's "current live" embed (Scottish Wildlife Trust's ospreys).
-_YT_LIVE_EMBED = re.compile(r"youtube\.com/embed/live_stream\?channel=([\w-]+)", re.I)
+_YT_LIVE_EMBED = re.compile(
+    r"youtube(?:-nocookie)?\.com/embed/live_stream\?(?:[^\"'\s<>]*&)?channel=([\w-]+)",
+    re.I,
+)
 # The index links some cams straight at a channel's /streams or /videos tab.
 _YT_CHANNEL_TAB = re.compile(
     r"^(https://www\.youtube\.com/(?:@[\w.-]+|channel/[\w-]+))/(?:streams|videos)/?$"
 )
 _YT_CHANNEL_LIVE = re.compile(r"youtube\.com/(?:channel/[\w-]+|@[\w.-]+)/live$", re.I)
-# camstreamer's embed page wraps a YouTube embed of the camera's live stream.
-_CAMSTREAMER_YT = re.compile(r"youtube\.com/embed/([\w-]{11})")
+_YT_EMBED_URL = re.compile(r"youtube(?:-nocookie)?\.com/embed/[\w-]+")
+_OEMBED = "https://www.youtube.com/oembed?format=json&url="
 _PAGE_TITLE = re.compile(
-    r'<meta property="og:title" content="([^"]+)"|<title>([^<]+)</title>', re.I
+    r'<meta property="og:title" content="([^"<>]+)"|<title>([^<]+)</title>', re.I
 )
 _TITLE_SUFFIX = re.compile(r"\s*[|–-]\s*[^|–-]*(?:Wildlife|Trust)[^|–-]*$", re.I)
+
+# Where a target was found, best first. A cam reached from several places takes its
+# name from the best one: the page that embeds it, then an index card, then a page
+# that merely links it.
+_EMBEDDED, _CARD, _LINKED = 0, 1, 2
 
 
 def _text(raw: str) -> str:
     return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", " ", raw))).strip()
 
 
-def _cand(target: str, page_url: str, title: str = "") -> Candidate:
+def _site(url: str) -> str:
+    return (urlsplit(url).hostname or "").removeprefix("www.")
+
+
+def _cand(target: str, page_url: str, title: str) -> Candidate:
+    key = predisc_key(target)
     return Candidate(
         title=title,
-        angle_key=None,
-        category=None,
+        # Keyed by the cam, not its position: the stable id must not move to another
+        # cam when a page gains, loses or reorders embeds, and the index's YouTube
+        # cards all share one page.
+        angle_key=key or target,
+        category=_CATEGORY,
         source=WildlifeTrustsSource.name,
         source_page_url=page_url,
         target_url=target,
-        predisc_key=predisc_key(target),
+        predisc_key=key,
     )
 
 
-class WildlifeTrustsSource(HtmlScraperSource[str]):
-    """The Wildlife Trusts' cams, from two lists: the national /webcams index (the
-    curated cards, some on non-trust sites) and every trust's own sitemap, which
-    carries cam pages the index never links. The national site sits behind a
-    Cloudflare fingerprint gate, so this source's Fetcher impersonates a browser.
+class WildlifeTrustsSource:
+    """The Wildlife Trusts' cams, from two lists: the national /webcams index (curated
+    cards, some on non-trust sites) and every trust's own sitemap, which carries cam
+    pages the index never links. The national site is behind a Cloudflare fingerprint
+    gate, so this source's Fetcher impersonates a browser.
 
     Pages embed YouTube (often behind a consent placeholder), camstreamer (a wrapped
     YouTube, resolved here so it dedups on its `yt:` key), camsecure (resolved to its
     open HLS, as camscape does) and direct HLS. All wildlife -> category Animals."""
 
     name: str = "wildlife-trusts"
-    _titles: dict[str, str]
-    _direct: list[Candidate]
-    _embedded: set[tuple[str, str]]  # (page, target) pairs read from a player embed
+    _fetch: FetcherProtocol
 
-    @override
     def __init__(self, fetch: FetcherProtocol) -> None:
-        super().__init__(fetch)
-        self._titles = {}
-        self._direct = []
-        self._embedded = set()
+        self._fetch = fetch
 
-    @override
-    def _page_urls(self) -> list[str]:
-        self._titles = {}
-        self._direct = []
-        self._embedded = set()
-        pages: set[str] = set()
-        for href, body in _CARD.findall(self._fetch.get(_INDEX) or ""):
-            url = htmllib.unescape(href)
-            m = _CARD_TITLE.search(body)
-            title = _text(m.group(1)) if m else ""
-            if "youtube.com/" in url:
+    def discover(self) -> Iterator[Candidate]:
+        found: list[tuple[int, Candidate]] = []
+        card_titles: dict[str, str] = {}
+        for href, title in self._cards():
+            if "youtube.com/" in href:
                 # Not a page to scrape: the card IS the video (or the channel).
-                tab = _YT_CHANNEL_TAB.match(url)
-                target = f"{tab.group(1)}/live" if tab else url
-                self._direct.append(_cand(target, _INDEX, title))
-                continue
-            self._titles.setdefault(url, title)
-            pages.add(url)
-        sites = {
-            f"https://{urlsplit(u).hostname}"
-            for u in _TRUST_SITE.findall(self._fetch.get(_TRUSTS) or "")
-        }
-        for found in thread_map(self._cam_pages, sorted(sites)):
-            pages.update(found)
-        return sorted(pages)
+                tab = _YT_CHANNEL_TAB.match(href)
+                target = f"{tab.group(1)}/live" if tab else href
+                found.append((_CARD, _cand(target, _INDEX, title)))
+            else:
+                card_titles.setdefault(href, title)
+        trusts = _TRUST_SITE.findall(self._fetch.get(_TRUSTS) or "")
+        origins = sorted({f"https://{urlsplit(u).hostname}" for u in trusts})
+        pages = set(card_titles)
+        for trust_pages in thread_map(self._cam_pages, origins):
+            pages.update(trust_pages)
+        ordered = sorted(pages)
+        for url, html in zip(ordered, thread_map(self._fetch.get, ordered)):
+            if html:
+                found.extend(self._page(url, html, card_titles.get(url)))
+        best: dict[str, tuple[int, Candidate]] = {}
+        for rank, c in found:
+            cam = c.predisc_key or c.target_url
+            if cam not in best or rank < best[cam][0]:
+                best[cam] = (rank, c)
+        for _, c in best.values():
+            yield c
+
+    def _cards(self) -> Iterator[tuple[str, str]]:
+        for chunk in (self._fetch.get(_INDEX) or "").split(_CARD_MARK)[1:]:
+            block = chunk[:4000]
+            href = _CARD_HREF.search(block)
+            if href:
+                title = _CARD_TITLE.search(block)
+                name = _text(title.group(1)) if title else ""
+                yield htmllib.unescape(href.group(1)), name
 
     def _cam_pages(self, origin: str) -> list[str]:
         """The cam-named pages in one trust's sitemap (following a sitemap index).
-        Most trusts serve it at /sitemap.xml; the rest name it in robots.txt."""
+        Most trusts serve it at /sitemap.xml; the rest name it in robots.txt. Only the
+        trust's own site is followed, `www.` or not: the trusts list it either way."""
+        site = _site(origin)
         queue, seen, pages = [f"{origin}/sitemap.xml"], set[str](), list[str]()
-        while queue and len(seen) < _MAX_SITEMAPS:
+        while queue and len(seen) < _MAX_SITEMAPS and len(pages) < _MAX_PAGES:
             sitemap = queue.pop(0)
             if sitemap in seen:
                 continue
@@ -158,135 +180,114 @@ class WildlifeTrustsSource(HtmlScraperSource[str]):
             if not body and len(seen) == 1:
                 robots = self._fetch.get(f"{origin}/robots.txt") or ""
                 queue.extend(
-                    u for u in _ROBOTS_SITEMAP.findall(robots) if u.startswith(origin)
+                    u for u in _ROBOTS_SITEMAP.findall(robots) if _site(u) == site
                 )
             locs = [htmllib.unescape(u) for u in _LOC.findall(body)]
+            locs = [u for u in locs if _site(u) == site]
             if "<sitemapindex" in body:
-                queue.extend(u for u in locs if u.startswith(origin))
+                queue.extend(locs)
                 continue
             for u in locs:
                 path = urlsplit(u).path
                 if _CAM_PATH.search(path) and not _NOT_CAM_PATH.search(path):
                     pages.append(u)
-        return pages
+        if queue or len(pages) >= _MAX_PAGES:
+            log.info("%s: sitemap walk hit its bound; cam pages may be missed", site)
+        return pages[:_MAX_PAGES]
 
-    @override
-    def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
-        title = self._titles.get(url, "")
-        if not title:
-            m = _PAGE_TITLE.search(html)
-            title = _TITLE_SUFFIX.sub(
-                "", _text((m.group(1) or m.group(2)) if m else "")
-            )
-        return "Animals", title
-
-    @override
-    def _title_for(
-        self, cand: Candidate, url: str, category: str | None, ctx: str
-    ) -> str:
-        return cand.title or ctx
-
-    @override
-    def _candidates(self, html: str, url: str) -> list[Candidate]:
-        found: dict[str, Candidate] = {}
-
-        def add(target: str, title: str = "") -> None:
-            if target not in found:
-                found[target] = _cand(target, url, title)
-
+    def _page(
+        self, url: str, html: str, card_title: str | None
+    ) -> list[tuple[int, Candidate]]:
+        titled: dict[str, str] = {}  # embedded target -> the embed's own title, or ""
+        raw_embeds: set[str] = set()
         for tag in _TAG.findall(html):
             m = _PLAYER_ATTR.search(tag)
             if not m:
                 continue
-            target = urljoin(url, htmllib.unescape(m.group(1)))
+            raw = urljoin(url, htmllib.unescape(m.group(1)))
+            raw_embeds.add(raw)
             tm = _TAG_TITLE.search(tag)
             title = _text(tm.group(1)) if tm else ""
             quoted = _QUOTED_TITLE.match(title)
             title = quoted.group(1) if quoted else title
             title = "" if _GENERIC_TITLE.match(title) else title
-            for resolved in self._resolve_embed(target):
-                add(resolved, title)
-                self._embedded.add((url, resolved))
-        for c in extract_candidates(html, page_url=url, source=self.name):
-            add(c.target_url)
-        cands = list(found.values())
-        # Every trust page's chrome links the trust's YouTube channel; it is only
-        # the cam when the page has nothing else.
-        real = [c for c in cands if not _YT_CHANNEL_LIVE.search(c.target_url)]
-        cands = real or cands
-        if len(cands) > 1:
+            for target in self._resolve_embed(raw):
+                titled.setdefault(target, title)
+        linked = [
+            c.target_url
+            for c in extract_candidates(html, page_url=url, source=self.name)
+            # The ladder's first-iframe fallback re-reads an embed resolved above (or
+            # a consent placeholder's about:blank); those are not further cams.
+            if c.target_url not in titled
+            and c.target_url not in raw_embeds
+            and urlsplit(c.target_url).scheme in ("http", "https")
+        ]
+        # Every trust page's chrome links the trust's YouTube channel. A linked channel
+        # live is the cam only on an index card's page with nothing else; elsewhere it
+        # is chrome, and when that channel is live it duplicates a cam listed by id.
+        channel = [t for t in linked if _YT_CHANNEL_LIVE.search(t)]
+        linked = [t for t in linked if not _YT_CHANNEL_LIVE.search(t)]
+        if not titled and not linked and card_title is not None:
+            linked = channel
+        targets = [*titled, *linked]
+        titles = [titled.get(t, "") for t in targets]
+        if len(targets) > 1:
             # Several cams on one page, often other projects' (the Derby blog embeds
             # Rutland's and Holkham's): an untitled YouTube one takes the video's own
-            # title, and any still untitled are numbered after the page. angle_key
-            # keeps each cam's stable id distinct.
-            titles = thread_map(self._yt_title, cands)
-            untitled = titles.count("")
-            page = self._page_meta(html, url)[1]
-            n = 0
-            for i, (c, t) in enumerate(zip(cands, titles)):
-                if not t and untitled > 1:
-                    n += 1
-                    t = f"{page} {n}"
-                cands[i] = replace(c, angle_key=str(i), title=t)
-        return cands
+            # title, and any still untitled are numbered after the page.
+            titles = thread_map(self._yt_title, list(zip(targets, titles)))
+        page_title = card_title or self._page_title(html)
+        untitled = titles.count("")
+        n = 0
+        out: list[tuple[int, Candidate]] = []
+        for target, title in zip(targets, titles):
+            if not title:
+                n += 1
+                title = f"{page_title} {n}" if untitled > 1 else page_title
+            if target in titled:
+                rank = _EMBEDDED
+            else:
+                rank = _CARD if card_title is not None else _LINKED
+            out.append((rank, _cand(target, url, title)))
+        return out
 
-    def _yt_title(self, cand: Candidate) -> str:
-        if cand.title or not _YT_ID.search(cand.target_url):
-            return cand.title
-        body = self._fetch.get(_OEMBED + quote(cand.target_url, safe="")) or ""
+    @staticmethod
+    def _page_title(html: str) -> str:
+        m = _PAGE_TITLE.search(html)
+        return _TITLE_SUFFIX.sub("", _text((m.group(1) or m.group(2)) if m else ""))
+
+    def _yt_title(self, target_title: tuple[str, str]) -> str:
+        target, title = target_title
+        if title or not (predisc_key(target) or "").startswith("yt:"):
+            return title
+        body = self._fetch.get(_OEMBED + quote(target, safe="")) or ""
         try:
-            title = json.loads(body).get("title", "")
-        except ValueError:
+            found = json.loads(body).get("title", "")
+        except (ValueError, AttributeError):
             return ""
-        return title if isinstance(title, str) else ""
+        return found.strip() if isinstance(found, str) else ""
 
-    def _resolve_embed(self, target: str) -> list[str]:
+    def _resolve_embed(self, embed: str) -> list[str]:
         """An embed URL -> the target(s) the extractors serve."""
-        live = _YT_LIVE_EMBED.search(target)
+        live = _YT_LIVE_EMBED.search(embed)
         if live:
             return [f"https://www.youtube.com/channel/{live.group(1)}/live"]
-        video = _YT_EMBED.search(target)
-        if video:
-            return [f"https://www.youtube.com/watch?v={video.group(1)}"]
-        if "youtube" in target:
+        key = predisc_key(embed) or ""
+        if key.startswith("yt:"):
+            return [f"https://www.youtube.com/watch?v={key[3:]}"]
+        host = urlsplit(embed).hostname or ""
+        if "youtube" in host:
             return []  # a playlist: recordings, never a live cam
-        host = urlsplit(target).hostname or ""
         if host.endswith("camstreamer.com"):
-            m = _CAMSTREAMER_YT.search(self._fetch.get(target) or "")
-            return [f"https://www.youtube.com/watch?v={m.group(1)}"] if m else [target]
-        if host.startswith("camsecure."):
+            m = _YT_EMBED_URL.search(self._fetch.get(embed) or "")
+            video = (predisc_key(m.group(0)) or "") if m else ""
+            if video.startswith("yt:"):
+                return [f"https://www.youtube.com/watch?v={video[3:]}"]
+            return [embed]
+        if "camsecure." in host:
             # The m3u8 is the key the camsecure source shares; it is not derivable
             # from the player URL, so read it from the player page.
-            return [hls_from_player(self._fetch.get(target) or "", target) or target]
-        # streamdays: a tokened player with no extractor yet — kept as a visible
-        # no-extractor drop rather than hidden.
-        return [target]
-
-    @override
-    def discover(self) -> Iterator[Candidate]:
-        # A target reached from several pages is one cam, named by the page that
-        # embeds it, else by an index card, else by whichever page links it.
-        # Cards that are YouTube links come after the pages, which read them.
-        best: dict[str, tuple[int, Candidate]] = {}
-        for c in chain(super().discover(), self._direct_cands()):
-            rank = self._rank(c)
-            if rank == 2 and _YT_CHANNEL_LIVE.search(c.target_url):
-                # A bare link to a channel's current live, on a page we found by its
-                # URL: usually site chrome, and when that channel IS live it is one
-                # of the cams already listed by video id (Rutland's blog page).
-                continue
-            if c.target_url not in best or rank < best[c.target_url][0]:
-                best[c.target_url] = (rank, c)
-        for _, c in best.values():
-            yield c
-
-    def _rank(self, c: Candidate) -> int:
-        if (c.source_page_url, c.target_url) in self._embedded:
-            return 0
-        if c.source_page_url == _INDEX or c.source_page_url in self._titles:
-            return 1
-        return 2
-
-    def _direct_cands(self) -> Iterator[Candidate]:
-        for c in self._direct:
-            yield replace(c, category="Animals")
+            return [hls_from_player(self._fetch.get(embed) or "", embed) or embed]
+        # streamdays: a tokened player no extractor serves. Kept, so it shows as a
+        # no-extractor drop rather than vanishing.
+        return [embed]
