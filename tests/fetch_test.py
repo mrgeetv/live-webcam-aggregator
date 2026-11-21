@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -1200,6 +1201,40 @@ def test_impersonating_fetcher_feeds_shedding_to_the_pacer(
     assert f.get(f"http://pinned.test:{port}/shed") is None
     assert stats.drain() == {"pinned.test": {"http-503": 1}}
     assert pacer.drain()["pinned.test"]["penalties"] == 1
+
+
+def test_impersonating_fetcher_dials_the_pin_whatever_libcurl_makes_of_the_host(
+    pinned_server: tuple[int, list[dict[str, str]]],
+) -> None:
+    """urlsplit reads `bücher.test`; libcurl IDNA-encodes it to `xn--bcher-kva.test`.
+    A pin keyed by urlsplit's host would miss and let libcurl resolve the name
+    itself (here: fail; in the wild: a rebinding window). Every connection must go to
+    the validated IP regardless."""
+    port, _ = pinned_server
+    f = Fetcher(delay=0.0, retries=1, impersonate=True)
+    assert f.get(f"http://b\u00fccher.test:{port}/page") == "pinned-ok"
+
+
+def test_impersonating_fetcher_refuses_a_response_from_an_unpinned_ip(
+    pinned_server: tuple[int, list[dict[str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backstop for a parser difference the wildcard cannot cover (the RESOLVE entry
+    still keys on the port): libcurl reporting any IP but the validated one is a
+    blocked fetch, whatever came back."""
+    port, _ = pinned_server
+    real = curl_requests.Session.request
+
+    def elsewhere(self: Any, *a: Any, **k: Any) -> Any:
+        resp = real(self, *a, **k)
+        resp.primary_ip = "10.0.0.9"
+        return resp
+
+    monkeypatch.setattr(curl_requests.Session, "request", elsewhere)
+    stats = FetchStats()
+    f = Fetcher(delay=0.0, retries=1, stats=stats, impersonate=True)
+    assert f.get(f"http://pinned.test:{port}/page") is None
+    assert stats.drain() == {"pinned.test": {"blocked-ip": 1}}
 
 
 def test_impersonating_session_refuses_an_unpinned_host() -> None:

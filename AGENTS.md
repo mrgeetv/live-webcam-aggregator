@@ -535,7 +535,10 @@ the original hostname (and `verify` stays on) while the socket goes to the pinne
 there's no second lookup between check and connect. A Fetcher built
 `impersonate=True` sends through **curl_cffi** (a browser's TLS/HTTP2 fingerprint) instead;
 libcurl never calls `getaddrinfo`, so `_ImpersonatingSession` reads the same `_PinDNS` map
-and hands it to libcurl as `CURLOPT_RESOLVE`, and refuses any host with no pin. Redirects,
+and hands it to libcurl as a **wildcard-host** `CURLOPT_RESOLVE` (`*:port:ip`) — never keyed
+by host, because libcurl and `urlsplit` parse hosts differently (IDNA, `%2e`) and a missed
+key lets libcurl do its own lookup — then refuses the response as `blocked-ip` if libcurl's
+`primary_ip` isn't the validated one, and refuses any request with no pin. Redirects,
 the byte cap, outcomes and pacing are the same Fetcher code on both transports, because
 it returns plain `requests` responses/exceptions. (An earlier adapter + pool-kwargs
 attempt was dropped: urllib3 2.x ignores `server_hostname` passed that way, so SNI

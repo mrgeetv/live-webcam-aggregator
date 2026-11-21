@@ -202,10 +202,15 @@ class _ImpersonatingSession:
 
     libcurl resolves names itself and never calls socket.getaddrinfo, so the
     `_PinDNS` patch cannot reach it. Instead this reads the same thread-local pin map
-    `_PinDNS` writes and hands it to libcurl as CURLOPT_RESOLVE, so the connection
-    still dials the validated IP while SNI, Host and the certificate check stay on the
-    hostname. A request for a host with no pin is refused rather than letting libcurl
-    look the name up: that lookup is exactly the DNS-rebinding window the pin closes.
+    `_PinDNS` writes and hands the IP to libcurl as a wildcard-host CURLOPT_RESOLVE
+    (`*:port:ip`), so the connection dials the validated IP while SNI, Host and the
+    certificate check stay on the hostname. Wildcard, not keyed by host: libcurl
+    parses URLs differently from urlsplit (it IDNA-encodes `bücher` to `xn--bcher-kva`,
+    decodes `%2e` to a dot), and a host key that missed would let libcurl look the
+    name up itself — exactly the DNS-rebinding window the pin closes. The entry still
+    keys on the port, so libcurl's own report of the IP it dialled is checked after
+    the transfer and any other answer is refused as blocked-ip. A request with no pin
+    is refused before anything is sent.
 
     Responses come back as plain `requests.Response` objects, and transport failures
     as requests exceptions, so Fetcher's redirect, cap, pacing and outcome logic is the
@@ -280,7 +285,7 @@ class _ImpersonatingSession:
         session = self._session()
         # The session's only curl option, replaced per request (the session is
         # this thread's alone, so the next request cannot see a stale pin).
-        session.curl_options[CurlOpt.RESOLVE] = [f"{host}:{port}:{addr}"]
+        session.curl_options[CurlOpt.RESOLVE] = [f"*:{port}:{addr}"]
 
         chunks: list[bytes] = []
         size = 0
@@ -306,6 +311,8 @@ class _ImpersonatingSession:
             if size <= self._limit or exc.response is None:
                 raise _as_requests_error(exc, method, url) from exc
             resp = exc.response  # aborted by the sink: hand back the overflow
+        if ipaddress.ip_address(resp.primary_ip) != ipaddress.ip_address(ip):
+            raise _FetchFailure(BLOCKED_IP, host=host)
         out = requests.Response()
         out.status_code = resp.status_code
         out.reason = resp.reason
@@ -888,7 +895,7 @@ class Fetcher:
                     resp.headers.get("Content-Range"),
                     b"".join(chunks),
                 )
-        except requests.RequestException:
+        except (requests.RequestException, _FetchFailure):
             return None
 
     def post(
