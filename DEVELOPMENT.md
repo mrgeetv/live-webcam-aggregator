@@ -207,6 +207,7 @@ live-webcam-aggregator/
 │   ├── run.sh                  # Docker build/run script
 │   ├── run-pytest.sh           # pytest wrapper for the pre-commit hook (prefers .venv)
 │   └── check-python-version.sh
+├── docs/agents/                # Agent-skill config: issue tracker, triage labels, domain docs
 ├── .github/workflows/          # CI/CD pipelines
 ├── Dockerfile                  # Container definition
 ├── docker-compose.yml          # Development compose file
