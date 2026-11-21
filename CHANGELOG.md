@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.13.11](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.10...v2.13.11) (2026-11-21)
+
+### Bug Fixes
+
+* **scraper:** enumerate skyline from its sitemap after the site restructure ([#154](https://github.com/mrgeetv/live-webcam-aggregator/issues/154)) ([55bad5d](https://github.com/mrgeetv/live-webcam-aggregator/commit/55bad5dfdd941dc410f9486e9f95f330b3a92558)), closes [#146](https://github.com/mrgeetv/live-webcam-aggregator/issues/146)
+
 ## [2.13.10](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.9...v2.13.10) (2026-11-21)
 
 ### Bug Fixes
