@@ -51,6 +51,13 @@ def loggable(url: str) -> str:
 
 
 _NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.M)
+# Tags that carry a reference in a URI="…" attribute instead of on the next line: an
+# alternate rendition (#EXT-X-MEDIA — Wowza's separate audio), an fMP4 init segment
+# (#EXT-X-MAP), an I-frame playlist, a key. Left relative, the player resolves them
+# against /stream/<id> and 404s.
+# An attribute list item only (after `:` or `,`), on an #EXT-X- tag (never an #EXTINF
+# title), and never past the end of the line.
+_TAG_URI = re.compile(r'^(#EXT-X-[^\n]*?[:,]URI=")([^"\n]+)(")', re.M)
 
 # Hosts whose HLS sessions are bound to the IP that fetches the manifest. Proxying
 # the manifest (our IP) while the player fetches segments direct (its IP) makes the
@@ -121,15 +128,27 @@ Response = tuple[int, str, bytes]
 SegmentResponse = tuple[int, str, str | None, bytes]
 
 
+# Titles and categories are scraped text. A line break in one would start a new
+# playlist line (a different stream URL, say), and a double quote would end its
+# attribute early, so both are neutralised before they reach #EXTINF. Control
+# characters go too (str.split() alone keeps NUL and friends).
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]+")
+
+
+def _m3u_text(value: str) -> str:
+    return " ".join(_CONTROL_CHARS.sub(" ", value).replace('"', "'").split())
+
+
 def render_playlist(entries: list[CatalogueEntry], *, base_url: str) -> str:
     lines = ["#EXTM3U"]
     for e in entries:
+        title, category = _m3u_text(e.title), _m3u_text(e.category)
         # tvg-id is the STABLE per-cam id (same value as the /stream/<id> URL). It
         # gives players (TiViMate) a fixed key to keep favourites linked to the right
         # stream across catalogue rebuilds, independent of count, order, or title.
         lines.append(
-            f'#EXTINF:-1 tvg-id="{e.id}" tvg-name="{e.title}" '
-            f'group-title="{e.category}",{e.title}'
+            f'#EXTINF:-1 tvg-id="{e.id}" tvg-name="{title}" '
+            f'group-title="{category}",{title}'
         )
         lines.append(f"{base_url}/stream/{e.id}")
     return "\n".join(lines) + "\n"
@@ -145,8 +164,7 @@ def rewrite_manifest(
 ) -> str:
     up_host = urlsplit(upstream_url).hostname or ""
 
-    def repl(m: re.Match[str]) -> str:
-        ref = m.group(1)
+    def rewrite(ref: str) -> str:
         absolute = urljoin(upstream_url, ref)
         # Open-proxy guard: an upstream manifest is attacker-influenceable, so only
         # sign/relay refs on the upstream's OWN site. An off-site ref is passed
@@ -159,7 +177,8 @@ def rewrite_manifest(
             return f"{base_url}/stream/{entry_id}/s?u={quote(absolute, safe='')}&sig={sign(absolute)}"
         return absolute
 
-    return _NONCOMMENT.sub(repl, text)
+    text = _NONCOMMENT.sub(lambda m: rewrite(m.group(1)), text)
+    return _TAG_URI.sub(lambda m: m.group(1) + rewrite(m.group(2)) + m.group(3), text)
 
 
 # DVR YouTube live streams hand us the entire rewind buffer (thousands of segments,

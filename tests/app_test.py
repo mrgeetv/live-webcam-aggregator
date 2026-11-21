@@ -232,6 +232,48 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
     )
 
 
+def test_only_fingerprint_gated_sources_get_the_impersonating_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """wildlife-trusts' index 403s the requests client on its TLS fingerprint; the
+    `impersonate=True` it is built with is the whole fix, so it must survive wiring
+    changes — and must not leak onto sources that don't need it."""
+    import webcam_aggregator.app as _app
+    from webcam_aggregator.config import Config
+    from webcam_aggregator.fetch import (
+        _ImpersonatingSession,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    seen: dict[str, Any] = {}
+
+    def recorder(name: str) -> type:
+        class _Rec:
+            def __init__(self, fetch: Any) -> None:
+                seen[name] = fetch
+
+            def discover(self) -> Any:
+                return iter(())
+
+        _Rec.name = name  # pyright: ignore[reportAttributeAccessIssue]
+        return _Rec
+
+    monkeypatch.setattr(_app, "WildlifeTrustsSource", recorder("wildlife-trusts"))
+    monkeypatch.setattr(_app, "ExploreOrgSource", recorder("explore"))
+    cfg = Config(
+        youtube_api_key="",
+        public_base_url="http://localhost",
+        catalogue_interval_hours=6,
+        search_query="q",
+        log_level="INFO",
+        exclude_categories=frozenset(),
+        proxy_youtube=False,
+        max_parallel_sources=4,
+    )
+    _app.build_app(cfg)
+    assert isinstance(seen["wildlife-trusts"]._session, _ImpersonatingSession)
+    assert not isinstance(seen["explore"]._session, _ImpersonatingSession)
+
+
 def test_health_sources_stay_lean() -> None:
     """Per-source payload is kept/discovered/crashed/status only; the diagnostic
     detail lives on the per-cycle log lines."""

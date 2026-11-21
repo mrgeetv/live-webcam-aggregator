@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import ipaddress
 import logging
 import os
@@ -10,11 +11,16 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.cookiejar import DefaultCookiePolicy
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 from urllib.parse import urlencode, urljoin, urlsplit
 
 import requests
+from curl_cffi import CurlError
+from curl_cffi import requests as curl_requests
+from curl_cffi.const import CurlOpt
+from curl_cffi.curl import CURL_WRITEFUNC_ERROR
 from requests.adapters import HTTPAdapter
+from requests.structures import CaseInsensitiveDict
 
 log = logging.getLogger("webcam-aggregator.fetch")
 
@@ -111,6 +117,12 @@ def _validate_ip(url: str) -> tuple[str | None, str]:
     if not host:
         return None, BAD_SCHEME
     try:
+        port = parts.port  # raises on a malformed or out-of-range port
+    except ValueError:
+        return None, BAD_SCHEME
+    if port == 0:
+        return None, BAD_SCHEME  # libcurl and urlsplit disagree on what :0 means
+    try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
         return None, DNS_ERROR
@@ -138,18 +150,31 @@ def _resolve_validated_ip(url: str) -> str | None:
 # There is no second DNS lookup between the safety check and the connect, which is
 # what closes the rebinding TOCTOU.
 #
-# (An earlier attempt pinned via a requests adapter + urllib3 pool kwargs. urllib3
-# 2.x ignores `server_hostname` passed that way, so SNI fell back to the IP and
-# Cloudflare 403'd it. Pinning the resolver instead keeps SNI/Host/cert correct,
-# which is exactly what `curl --resolve` does.)
+# Pinning via a requests adapter + urllib3 pool kwargs does not work: urllib3 2.x
+# ignores `server_hostname` passed that way, so SNI falls back to the IP (and
+# Cloudflare 403s that). Pinning the resolver keeps SNI/Host/cert correct.
+#
+# While a pin is active the resolver answers ONLY for the pinned name and refuses
+# every other lookup on that thread, IP literals included. urllib3 does not resolve
+# exactly the host urlsplit validated: it IDNA-encodes `bücher` to `xn--bcher-kva`,
+# requests decodes `%61` to `a`, and `http://a\@b/` dials `a` where urlsplit reads
+# `b`. A pin keyed by urlsplit's host would miss those and let the lookup reach real
+# DNS; refusing the miss fails closed instead.
 _pin = threading.local()
 _real_getaddrinfo = socket.getaddrinfo
 
 
+def _pin_key(host: str) -> str:
+    return host.lower().rstrip(".")  # urllib3 strips a trailing dot before resolving
+
+
 def _pinning_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
     pinned: dict[str, str] | None = getattr(_pin, "map", None)
-    if pinned and host in pinned:
-        host = pinned[host]  # resolve the pre-validated IP literal, not the hostname
+    if pinned:
+        key = _pin_key(host.decode() if isinstance(host, bytes) else str(host))
+        if key not in pinned:
+            raise socket.gaierror(socket.EAI_NONAME, "lookup outside the active pin")
+        host = pinned[key]  # resolve the pre-validated IP literal, not the hostname
     return _real_getaddrinfo(host, *args, **kwargs)
 
 
@@ -176,12 +201,181 @@ class _PinDNS:
         if m is None:
             m = {}
             _pin.map = m
-        m[self._host] = self._ip
+        m[_pin_key(self._host)] = self._ip
 
     def __exit__(self, *_exc: object) -> None:
         m: dict[str, str] | None = getattr(_pin, "map", None)
         if m is not None:
-            m.pop(self._host, None)
+            m.pop(_pin_key(self._host), None)
+
+
+# --- browser-fingerprint transport ---------------------------------------------
+# Some Cloudflare-fronted sites answer python-requests with a 403 "Just a moment"
+# page however the headers look, because the gate is the TLS/HTTP2 fingerprint. A
+# Fetcher built with impersonate=True sends through curl_cffi with a real browser's
+# fingerprint instead. curl_cffi cannot help with a Turnstile (interactive) challenge.
+_IMPERSONATE_PROFILE = "chrome"  # curl_cffi's alias for its newest Chrome profile
+
+
+class _ImpersonatingSession:
+    """The slice of `requests.Session` that Fetcher uses, sent through curl_cffi.
+
+    libcurl resolves names itself and never calls socket.getaddrinfo, so the
+    `_PinDNS` patch cannot reach it. Instead this reads the same thread-local pin map
+    `_PinDNS` writes and hands the IP to libcurl as a wildcard-host CURLOPT_RESOLVE
+    (`*:port:ip`), so the connection dials the validated IP while SNI, Host and the
+    certificate check stay on the hostname. Wildcard, not keyed by host: libcurl
+    parses URLs differently from urlsplit (it IDNA-encodes `bücher` to `xn--bcher-kva`,
+    decodes `%2e` to a dot), and a host key that missed would let libcurl look the
+    name up itself — exactly the DNS-rebinding window the pin closes. The entry still
+    keys on the port, so libcurl's own report of the IP it dialled is checked after
+    the transfer: it must be an IP this thread's session validated for that host, or
+    the response is refused as blocked-ip. (Not only the current pin: libcurl's
+    connection and DNS caches can dial the host's earlier pin when round-robin DNS
+    moves it, and an IP once validated is still safe.) A request with no pin is
+    refused before anything is sent. (libcurl may still send an HTTPS-record DNS
+    query for the name; what it dials is the pinned IP regardless.) Proxy environment
+    variables are ignored: a proxy would be dialled instead of the pinned IP.
+
+    Responses come back as plain `requests.Response` objects, and transport failures
+    as requests exceptions, so Fetcher's redirect, cap, pacing and outcome logic is the
+    same code on both transports. The body is buffered up to `limit` bytes plus the
+    chunk that crossed it; the transfer is then aborted and the caller's own byte-cap
+    loop sees the overflow and refuses it. Two differences remain: `timeout` bounds
+    the whole transfer rather than each read, and the cookie jar is per thread."""
+
+    _limit: int
+    _keep_cookies: bool
+    _local: threading.local
+
+    def __init__(self, limit: int, keep_cookies: bool) -> None:
+        self._limit = limit
+        self._keep_cookies = keep_cookies
+        # One curl_cffi Session per thread: the pin travels in the session's
+        # curl_options, which must not be shared between concurrent requests.
+        self._local = threading.local()
+
+    def _session(self) -> curl_requests.Session[curl_requests.Response]:
+        s: curl_requests.Session[curl_requests.Response] | None = getattr(
+            self._local, "session", None
+        )
+        if s is None:
+            s = curl_requests.Session(impersonate=_IMPERSONATE_PROFILE, trust_env=False)
+            self._local.session = s
+            self._local.validated = {}
+        return s
+
+    def get(
+        self,
+        url: str,
+        *,
+        timeout: float,
+        stream: bool = True,
+        allow_redirects: bool = False,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        del stream  # the body is always buffered, under the cap `_send` enforces
+        return self._send("GET", url, timeout, headers or {}, None, allow_redirects)
+
+    def post(
+        self,
+        url: str,
+        *,
+        data: bytes,
+        headers: dict[str, str],
+        timeout: float,
+        stream: bool = True,
+        allow_redirects: bool = False,
+    ) -> requests.Response:
+        del stream  # as in get()
+        return self._send("POST", url, timeout, headers, data, allow_redirects)
+
+    def _send(
+        self,
+        method: Literal["GET", "POST"],
+        url: str,
+        timeout: float,
+        headers: dict[str, str],
+        data: bytes | None,
+        allow_redirects: bool,
+    ) -> requests.Response:
+        if allow_redirects:
+            # Every hop must pass through Fetcher's validate-and-pin loop.
+            raise ValueError("redirects are followed by Fetcher, hop by hop")
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        ip = (getattr(_pin, "map", None) or {}).get(_pin_key(host))
+        if ip is None:
+            raise RuntimeError("refusing an unpinned host: libcurl would resolve it")
+        # _validate_ip has already refused a malformed port and port 0.
+        port = (
+            parts.port
+            if parts.port is not None
+            else 443 if parts.scheme == "https" else 80
+        )
+        addr = f"[{ip}]" if ":" in ip else ip
+        session = self._session()
+        validated: dict[str, set[str]] = self._local.validated
+        validated.setdefault(host, set()).add(str(ipaddress.ip_address(ip)))
+        # Replaced per request; the session is this thread's alone, so the next
+        # request cannot see a stale pin.
+        session.curl_options.clear()
+        session.curl_options.update({CurlOpt.RESOLVE: [f"*:{port}:{addr}"]})
+
+        chunks: list[bytes] = []
+        size = 0
+
+        def sink(chunk: bytes) -> int:
+            nonlocal size
+            size += len(chunk)
+            chunks.append(chunk)
+            return CURL_WRITEFUNC_ERROR if size > self._limit else len(chunk)
+
+        try:
+            resp = session.request(
+                method,
+                url,
+                data=data,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=False,
+                content_callback=sink,
+                discard_cookies=not self._keep_cookies,
+            )
+        except CurlError as exc:
+            aborted: curl_requests.Response | None = getattr(exc, "response", None)
+            if size <= self._limit or aborted is None:
+                raise _as_requests_error(exc, method, url) from exc
+            resp = aborted  # aborted by the sink: hand back the overflow
+        if _canonical_ip(resp.primary_ip) not in validated[host]:
+            raise _FetchFailure(BLOCKED_IP, host=host)
+        out = requests.Response()
+        out.status_code = resp.status_code
+        out.reason = resp.reason
+        out.url = url
+        out.headers = CaseInsensitiveDict(
+            {k: v for k, v in resp.headers.items() if v is not None}
+        )
+        out.raw = io.BytesIO(b"".join(chunks))
+        return out
+
+
+def _canonical_ip(value: str) -> str:
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return ""  # no connection was reported: nothing proves the pin held
+
+
+def _as_requests_error(
+    exc: CurlError, method: str, url: str
+) -> requests.RequestException:
+    """Map a curl_cffi failure onto the requests exception `_classify` labels.
+    Timeout is checked first, as in `_classify`: curl_cffi's ConnectTimeout is both."""
+    request = requests.Request(method, url)
+    if isinstance(exc, curl_requests.exceptions.Timeout):
+        return requests.Timeout(str(exc), request=request)
+    return requests.ConnectionError(str(exc), request=request)
 
 
 class FetcherProtocol(Protocol):
@@ -530,7 +724,7 @@ def _classify(exc: BaseException) -> str:
 
 
 class Fetcher:
-    _session: requests.Session
+    _session: requests.Session | _ImpersonatingSession
     _delay: float
     _retries: int
     _byte_cap: int
@@ -547,6 +741,7 @@ class Fetcher:
         pacer: HostPacer | None = None,
         retry_only_shedding: bool = False,
         keep_cookies: bool = True,
+        impersonate: bool = False,
     ) -> None:
         self._delay = delay
         self._retries = retries
@@ -558,20 +753,27 @@ class Fetcher:
         # cost one attempt, while a shedding host earns the post-cooldown retry.
         self._pacer = pacer
         self._retry_only_shedding = retry_only_shedding
-        self._session = requests.Session()
-        self._session.headers["User-Agent"] = UA
+        # keep_cookies=False on the serve-time fetcher: its jar would span every
+        # viewer and every cam, so a cookie an upstream sets for one stream (MediaMTX
+        # keys its HLS session on one) would ride along on another's fetches.
+        if impersonate:
+            # The browser profile brings its own User-Agent; ours would contradict it.
+            self._session = _ImpersonatingSession(
+                max(byte_cap, MAX_BYTES, SEGMENT_MAX_BYTES), keep_cookies
+            )
+            return
+        session = requests.Session()
+        session.headers["User-Agent"] = UA
         if not keep_cookies:
-            # The jar spans every call this Fetcher makes. On the serve-time fetcher that
-            # is every viewer and every cam: a cookie an upstream sets for one stream
-            # (MediaMTX keys its HLS session on one) would ride along on another's fetches.
-            self._session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
+            session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
         # Size the connection pool to the worker count so concurrent fetches to one host
         # reuse connections instead of churning (urllib3 "Connection pool is full").
         adapter = HTTPAdapter(
             pool_connections=SCRAPE_WORKERS, pool_maxsize=SCRAPE_WORKERS
         )
-        self._session.mount("https://", adapter)
-        self._session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        self._session = session
 
     def get(self, url: str, timeout: float = 20.0) -> str | None:
         host = urlsplit(url).hostname or "?"
@@ -736,7 +938,7 @@ class Fetcher:
                     resp.headers.get("Content-Range"),
                     b"".join(chunks),
                 )
-        except requests.RequestException:
+        except (requests.RequestException, _FetchFailure):
             return None
 
     def post(

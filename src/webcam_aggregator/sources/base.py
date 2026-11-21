@@ -10,8 +10,12 @@ from urllib.parse import unquote, urljoin, urlsplit
 from ..fetch import FetcherProtocol, thread_map
 from ..models import Candidate
 
+# `embed/videoseries?list=` (a playlist) and `embed/live_stream?channel=` (a channel's
+# current live) are 11 characters long, exactly like a video id: the lookahead keeps
+# them from reading as one.
 _YT_VIDEO = re.compile(
-    r"youtube(?:-nocookie)?\.com/(?:embed/|watch\?v=|live/)([A-Za-z0-9_-]{11})"
+    r"youtube(?:-nocookie)?\.com/(?:embed/|watch\?v=|live/)"
+    r"(?!(?:videoseries|live_stream)\b)([A-Za-z0-9_-]{11})"
 )
 _YT_PLAYLIST = re.compile(r"youtube(?:-nocookie)?\.com/embed\?list=([A-Za-z0-9_-]+)")
 _YT_CHANNEL = re.compile(
