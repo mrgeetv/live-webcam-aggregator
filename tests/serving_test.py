@@ -1064,6 +1064,131 @@ def test_truncate_master_unchanged() -> None:
     assert truncate_to_live_edge(master) == master
 
 
+def _segs(start: int, stop: int) -> str:
+    return "".join(f"#EXTINF:1.0,\nseg_{i}.m4s\n" for i in range(start, stop))
+
+
+_HEAD = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n"
+
+
+def test_truncate_keeps_key_and_map_in_force_at_the_cut() -> None:
+    pl = (
+        _HEAD
+        + "#EXT-X-MEDIA-SEQUENCE:0\n"
+        + '#EXT-X-KEY:METHOD=AES-128,URI="k.key"\n#EXT-X-MAP:URI="init.mp4"\n'
+        + _segs(0, 300)
+    )
+    out = truncate_to_live_edge(pl, window=120.0).splitlines()
+    first = out.index("seg_180.m4s")  # the cut: segments 0-179 dropped
+    assert "seg_179.m4s" not in out
+    assert '#EXT-X-KEY:METHOD=AES-128,URI="k.key"' in out[:first]
+    assert '#EXT-X-MAP:URI="init.mp4"' in out[:first]
+
+
+def test_truncate_carries_the_latest_key_and_map_not_the_first() -> None:
+    pl = (
+        _HEAD
+        + '#EXT-X-MAP:URI="a.mp4"\n#EXT-X-KEY:METHOD=AES-128,URI="a.key"\n'
+        + _segs(0, 100)
+        + '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="b.mp4"\n'
+        + '#EXT-X-KEY:METHOD=AES-128,URI="b.key"\n'
+        + _segs(100, 250)
+        + '#EXT-X-MAP:URI="c.mp4"\n'  # changes again inside the kept window
+        + _segs(250, 300)
+    )
+    out = truncate_to_live_edge(pl, window=120.0).splitlines()
+    head = out[: out.index("seg_180.m4s")]
+    # in force at the cut = the last of each tag before the first kept segment
+    assert [ln for ln in head if ln.startswith("#EXT-X-MAP")][-1].endswith('"b.mp4"')
+    assert [ln for ln in head if ln.startswith("#EXT-X-KEY")][-1].endswith('"b.key"')
+    assert out.index("seg_249.m4s") < out.index('#EXT-X-MAP:URI="c.mp4"')
+    assert out.index('#EXT-X-MAP:URI="c.mp4"') < out.index("seg_250.m4s")
+
+
+def test_truncate_keeps_the_key_that_encrypted_the_init_section() -> None:
+    # The key in force at a MAP encrypts its init section; the segments after a
+    # later key use that one. Carried in the wrong order, the init gets the wrong key.
+    k1 = '#EXT-X-KEY:METHOD=AES-128,URI="k1.key",IV=0x1'
+    k2 = '#EXT-X-KEY:METHOD=AES-128,URI="k2.key"'
+    pl = (
+        _HEAD
+        + f'{k1}\n#EXT-X-MAP:URI="init.mp4"\n'
+        + _segs(0, 100)
+        + f"{k2}\n"
+        + _segs(100, 300)
+    )
+    out = truncate_to_live_edge(pl, window=120.0).splitlines()
+    first = out.index("seg_180.m4s")
+    carried = [ln for ln in out[:first] if ln.startswith(("#EXT-X-KEY", "#EXT-X-MAP"))]
+    assert carried == [k1, '#EXT-X-MAP:URI="init.mp4"', k2]
+
+
+def test_truncate_keeps_every_key_format_in_force() -> None:
+    keys = [
+        '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://a",KEYFORMAT="com.apple.streamingkeydelivery"',
+        '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="data:,b",KEYFORMAT="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"',
+    ]
+    pl = _HEAD + "\n".join(keys) + "\n" + _segs(0, 300)
+    out = truncate_to_live_edge(pl, window=120.0).splitlines()
+    assert all(k in out[: out.index("seg_180.m4s")] for k in keys)
+
+
+def test_truncate_reads_playlist_tags_wherever_they_sit() -> None:
+    # Tag order is free: a playlist tag after a segment tag still describes the
+    # playlist, and losing MEDIA-SEQUENCE renumbers every kept segment.
+    pl = (
+        _HEAD
+        + '#EXT-X-KEY:METHOD=AES-128,URI="k.key"\n#EXT-X-MEDIA-SEQUENCE:1000\n'
+        + _segs(0, 300)
+    )
+    out = truncate_to_live_edge(pl, window=120.0).splitlines()
+    assert [ln for ln in out if ln.startswith("#EXT-X-MEDIA-SEQUENCE")] == [
+        "#EXT-X-MEDIA-SEQUENCE:1180"
+    ]
+
+
+def test_truncate_keeps_tags_after_the_last_segment() -> None:
+    tail = [
+        '#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part_300.m4s"',
+        '#EXT-X-RENDITION-REPORT:URI="../audio/index.m3u8",LAST-MSN=299',
+    ]
+    pl = _HEAD + "#EXT-X-MEDIA-SEQUENCE:0\n" + _segs(0, 300) + "\n".join(tail) + "\n"
+    out = truncate_to_live_edge(pl, window=120.0).splitlines()
+    assert out[-3:] == ["seg_299.m4s", *tail]
+
+
+def test_truncate_keeps_playlist_wide_tags() -> None:
+    wide = ["#EXT-X-INDEPENDENT-SEGMENTS", '#EXT-X-DEFINE:NAME="tok",VALUE="abc"']
+    pl = (
+        _HEAD
+        + "#EXT-X-MEDIA-SEQUENCE:0\n"
+        + "\n".join(wide)
+        + "\n"
+        + "".join(f"#EXTINF:1.0,\nseg_{i}.m4s?t={{$tok}}\n" for i in range(300))
+    )
+    out = truncate_to_live_edge(pl, window=120.0).splitlines()
+    assert all(w in out for w in wide)
+
+
+def test_serve_child_manifest_rewrites_the_carried_map_and_key() -> None:
+    # The trim runs before the URI rewrite, so a carried tag must still be rewritten:
+    # left relative, a player resolves it against /stream/<id> and 404s.
+    upstream_url = "https://cdn.x/cam/chunklist.m3u8"
+    dvr = (
+        _HEAD
+        + '#EXT-X-MAP:URI="init.mp4"\n#EXT-X-KEY:METHOD=AES-128,URI="k.key"\n'
+        + _segs(0, 300)
+    )
+    status, _ct, body = serve_child_manifest(
+        ENTRY_ID, upstream_url, sign(upstream_url), fetch=lambda _u: dvr, base_url=BASE
+    )
+    assert status == 200
+    out = body.decode().splitlines()
+    first = out.index("https://cdn.x/cam/seg_180.m4s")
+    assert '#EXT-X-MAP:URI="https://cdn.x/cam/init.mp4"' in out[:first]
+    assert '#EXT-X-KEY:METHOD=AES-128,URI="https://cdn.x/cam/k.key"' in out[:first]
+
+
 def test_serve_stream_truncates_dvr() -> None:
     resolved = Resolved(
         url="https://cdn.x/index.m3u8", stream_type="hls", ttl_seconds=60

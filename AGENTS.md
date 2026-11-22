@@ -61,6 +61,10 @@ The app is two phases, decoupled by a catalogue snapshot:
    Keep that trim even though the pinned player clients (below) usually answer with a
    short live-edge window rather than the full rewind buffer — the window size is the
    client's choice and the url still says `playlist_type/DVR`, so it is not a guarantee.
+   The trim also runs on every other proxied manifest, and hdontap's DVR edges serve
+   ~10h windows (~6000 segments) whatever YouTube does. It carries the `#EXT-X-KEY` /
+   `#EXT-X-MAP` in force at the cut onto the first kept segment, since either tag
+   governs every segment after it.
    A redirected cam's cached resolve can also go dud well before its token expires:
    its segments 403 while a fresh resolve of the same broadcast (same `id/<vid>.N`,
    so not a reconnect) plays, and the server never sees it, because the player
