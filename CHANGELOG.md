@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.5](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.4...v2.14.5) (2026-11-22)
+
+### Bug Fixes
+
+* **playlist:** re-resolve a youtube redirect when the player retries ([#175](https://github.com/mrgeetv/live-webcam-aggregator/issues/175)) ([9366cb0](https://github.com/mrgeetv/live-webcam-aggregator/commit/9366cb03a295f006072dc54326c539c5bcea0be4)), closes [#162](https://github.com/mrgeetv/live-webcam-aggregator/issues/162)
+
 ## [2.14.4](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.3...v2.14.4) (2026-11-22)
 
 ### Bug Fixes
