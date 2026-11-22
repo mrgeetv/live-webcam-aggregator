@@ -181,12 +181,13 @@ def test_rewrite_manifest_wowza_segment_becomes_absolute_direct() -> None:
 
 
 def test_rewrite_manifest_rewrites_uri_attributes_on_tag_lines() -> None:
-    """Wowza's separate audio rendition and an fMP4 init segment are referenced from
-    URI="…" on a tag line; left relative, the player resolves them against
-    /stream/<id> and gets a 404."""
+    """Wowza's separate audio rendition, an I-frame playlist, a key and an fMP4 init
+    segment are referenced from URI="…" on a tag line; left relative, the player
+    resolves them against /stream/<id> and gets a 404."""
     master = (
         "#EXTM3U\n"
         '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="chunklist_w1_ao.m3u8"\n'
+        '#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1,URI="iframes.m3u8"\n'
         '#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO="a"\n'
         "chunklist_w1_vo.m3u8\n"
     )
@@ -195,11 +196,19 @@ def test_rewrite_manifest_rewrites_uri_attributes_on_tag_lines() -> None:
     )
     audio = quote("https://cdn.x/cam/chunklist_w1_ao.m3u8", safe="")
     assert f'URI="{BASE}/stream/{ENTRY_ID}/m?u={audio}&sig=' in out
+    iframes = quote("https://cdn.x/cam/iframes.m3u8", safe="")
+    assert f'BANDWIDTH=1,URI="{BASE}/stream/{ENTRY_ID}/m?u={iframes}&sig=' in out
 
-    media = '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:2,\nseg1.m4s\n'
+    media = (
+        "#EXTM3U\n"
+        '#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\n'
+        '#EXT-X-MAP:URI="init.mp4"\n'
+        "#EXTINF:2,\nseg1.m4s\n"
+    )
     out = rewrite_manifest(
         media, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
     )
+    assert '#EXT-X-KEY:METHOD=AES-128,URI="https://cdn.x/cam/key.bin"' in out
     assert '#EXT-X-MAP:URI="https://cdn.x/cam/init.mp4"' in out
     init = quote("https://cdn.x/cam/init.mp4", safe="")
     out = rewrite_manifest(
@@ -210,6 +219,37 @@ def test_rewrite_manifest_rewrites_uri_attributes_on_tag_lines() -> None:
         proxy_segments=True,
     )
     assert f'#EXT-X-MAP:URI="{BASE}/stream/{ENTRY_ID}/s?u={init}&sig=' in out
+
+
+def test_rewrite_manifest_rewrites_reference_attributes_not_named_uri() -> None:
+    """Content steering's SERVER-URI, an interstitial's X-ASSET-LIST and a preload's
+    X-URI may be relative too (RFC 8216bis)."""
+    master = (
+        "#EXTM3U\n"
+        '#EXT-X-CONTENT-STEERING:SERVER-URI="steer.json",PATHWAY-ID="a"\n'
+        '#EXT-X-DATERANGE:ID="ad",CLASS="com.apple.hls.interstitial",'
+        'START-DATE="2020-01-01T00:00:00Z",X-ASSET-LIST="ads.json"\n'
+        '#EXT-X-DATERANGE:ID="p",CLASS="com.apple.hls.preload",'
+        'START-DATE="2020-01-01T00:00:00Z",X-URI="next.m3u8"\n'
+    )
+    out = rewrite_manifest(
+        master, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
+    )
+    assert 'SERVER-URI="https://cdn.x/cam/steer.json",PATHWAY-ID="a"' in out
+    assert 'X-ASSET-LIST="https://cdn.x/cam/ads.json"' in out
+    preload = quote("https://cdn.x/cam/next.m3u8", safe="")
+    assert f'X-URI="{BASE}/stream/{ENTRY_ID}/m?u={preload}&sig=' in out
+
+
+def test_rewrite_manifest_leaves_malformed_attributes_alone() -> None:
+    """Only a whole attribute with a quoted value is a reference: an unquoted value
+    with a stray quote, and a name that merely ends in URI, pass through untouched."""
+    media = '#EXTM3U\n#EXT-X-MAP:URI=init.mp4"\n#EXT-X-FOO:xURI="a.mp4"\n'
+    out = rewrite_manifest(
+        media, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
+    )
+    assert '#EXT-X-MAP:URI=init.mp4"\n' in out
+    assert '#EXT-X-FOO:xURI="a.mp4"\n' in out
 
 
 def test_rewrite_manifest_uri_rewrite_stays_inside_tag_attributes() -> None:
@@ -227,6 +267,16 @@ def test_rewrite_manifest_uri_rewrite_stays_inside_tag_attributes() -> None:
     )
     assert '#EXTINF:2,title URI="a.ts"' in out
     assert '#EXT-X-MAP:URI="https://cdn.x/cam/init.mp4"' in out
+
+
+def test_rewrite_manifest_reads_a_quoted_value_whole() -> None:
+    """A rendition NAME is free text: `,URI="` inside it is not the URI attribute."""
+    master = '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,NAME="a,URI=",URI="ao.m3u8"\n'
+    out = rewrite_manifest(
+        master, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
+    )
+    audio = quote("https://cdn.x/cam/ao.m3u8", safe="")
+    assert f'NAME="a,URI=",URI="{BASE}/stream/{ENTRY_ID}/m?u={audio}&sig=' in out
 
 
 def test_rewrite_manifest_off_site_uri_attribute_is_not_proxied() -> None:

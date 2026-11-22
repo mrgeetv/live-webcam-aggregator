@@ -51,13 +51,21 @@ def loggable(url: str) -> str:
 
 
 _NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.M)
-# Tags that carry a reference in a URI="…" attribute instead of on the next line: an
-# alternate rendition (#EXT-X-MEDIA — Wowza's separate audio), an fMP4 init segment
-# (#EXT-X-MAP), an I-frame playlist, a key. Left relative, the player resolves them
-# against /stream/<id> and 404s.
-# An attribute list item only (after `:` or `,`), on an #EXT-X- tag (never an #EXTINF
-# title), and never past the end of the line.
-_TAG_URI = re.compile(r'^(#EXT-X-[^\n]*?[:,]URI=")([^"\n]+)(")', re.M)
+# Tags that carry a reference in an attribute instead of on the next line. These are
+# every attribute RFC 8216bis defines as a possibly-relative reference: URI (an fMP4
+# init segment on #EXT-X-MAP, a key, an alternate rendition on #EXT-X-MEDIA — Wowza's
+# separate audio — an I-frame playlist, session data, and LL-HLS parts, preload hints
+# and rendition reports), content steering's SERVER-URI, an interstitial's
+# X-ASSET-LIST and a preload date range's X-URI. (An interstitial's X-ASSET-URI is
+# absolute by definition.) Left relative, the player resolves them against
+# /stream/<id> and 404s.
+_URI_ATTRIBUTES = frozenset({"URI", "SERVER-URI", "X-ASSET-LIST", "X-URI"})
+# An #EXT-X- tag's attribute list (never an #EXTINF title), read one attribute at a
+# time from the start of the list or a comma: a quoted value is consumed whole, so a
+# `,URI="` inside an earlier quoted value is never mistaken for an attribute. Never
+# past the end of the line.
+_TAG_LINE = re.compile(r"^(#EXT-X-[A-Z0-9-]+:)(.*)$", re.M)
+_ATTRIBUTE = re.compile(r'(?<![^,])([A-Z0-9-]+)=("[^"]*"|[^,]*)')
 
 # Hosts whose HLS sessions are bound to the IP that fetches the manifest. Proxying
 # the manifest (our IP) while the player fetches segments direct (its IP) makes the
@@ -177,8 +185,18 @@ def rewrite_manifest(
             return f"{base_url}/stream/{entry_id}/s?u={quote(absolute, safe='')}&sig={sign(absolute)}"
         return absolute
 
+    def rewrite_attribute(m: re.Match[str]) -> str:
+        name, value = m.group(1), m.group(2)
+        ref = value[1:-1]
+        if name not in _URI_ATTRIBUTES or not ref or value != f'"{ref}"':
+            return m.group(0)
+        return f'{name}="{rewrite(ref)}"'
+
+    def rewrite_tag(m: re.Match[str]) -> str:
+        return m.group(1) + _ATTRIBUTE.sub(rewrite_attribute, m.group(2))
+
     text = _NONCOMMENT.sub(lambda m: rewrite(m.group(1)), text)
-    return _TAG_URI.sub(lambda m: m.group(1) + rewrite(m.group(2)) + m.group(3), text)
+    return _TAG_LINE.sub(rewrite_tag, text)
 
 
 # DVR YouTube live streams hand us the entire rewind buffer (thousands of segments,
