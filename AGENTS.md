@@ -61,6 +61,24 @@ The app is two phases, decoupled by a catalogue snapshot:
    Keep that trim even though the pinned player clients (below) usually answer with a
    short live-edge window rather than the full rewind buffer — the window size is the
    client's choice and the url still says `playlist_type/DVR`, so it is not a guarantee.
+   A redirected cam's cached resolve can also go dud well before its token expires:
+   its segments 403 while a fresh resolve of the same broadcast (same `id/<vid>.N`,
+   so not a reconnect) plays, and the server never sees it, because the player
+   fetches googlevideo itself. So `ResolveCache.record_redirect` reads a player back
+   for the same `/stream/<id>` between `RETRY_MIN_GAP` and `RETRY_WINDOW` after the
+   last redirect as a retry, and serves it a fresh resolve (logged at INFO). The gap
+   floor skips the start-up double-open players such as TiviMate and IPTV Player do;
+   requests inside it don't restart it, so a fast retry loop still counts. An entry
+   refreshed within `RETRY_MIN_AGE` stands, and anyone arriving during the fresh
+   resolve waits for it, so a retry burst costs one yt-dlp call. Retries that keep
+   coming double that age floor per resolve, up to `RETRY_MAX_AGE`, until the cam
+   goes quiet for a window: then fresh URLs are failing too (a leash, yt-dlp
+   blocked), and re-resolving at the floor rate would only hammer YouTube. A failed fresh
+   resolve keeps the old URL, since the "retry" may be a second viewer of a working
+   cam. The cost of a false retry (a second viewer, zapping back) is a yt-dlp wait
+   on channel open for everyone opening that cam meanwhile. Redirect path only:
+   proxied, the player polls `/stream/<id>` as its live playlist, so with
+   `PROXY_YOUTUBE=true` a dud cached resolve still holds until its TTL.
 
 **`build_app()` in `app.py` is the wiring seam.** To extend:
 
@@ -275,7 +293,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   not catch it either: the segments are fine at t=0. Staying current with yt-dlp is
   the only defence, since upstream drops a leashed client from its defaults. "Plays
   for under a minute, then stops" across MANY YouTube cams at once is this, and the
-  fix is a version bump, not a code change.
+  fix is a version bump, not a code change. ONE cam whose fresh resolve plays fine
+  is the dud-cached-resolve case instead (serve phase above), which a player retry
+  heals; under a leash a retry's fresh resolve only buys another short play, at a
+  backed-off rate.
 - YouTube's `eventType=live` search is capped at ~100 results via `pageToken` (it
   reports a huge `totalResults` but returns an empty page 3). `discover()` paginates
   by `publishedBefore` time-windows instead (walking back from the last item's

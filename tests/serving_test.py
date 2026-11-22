@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from collections.abc import Callable
 from urllib.parse import quote
 
 import pytest
@@ -434,6 +436,204 @@ def test_serve_stream_youtube_proxied_when_enabled() -> None:
     assert status == 200
     assert "mpegurl" in ct
     assert "#EXTM3U" in body.decode()
+
+
+class _Clock:
+    t: float = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+_YT_MANIFEST = "#EXTM3U\n#EXTINF:5.0,\nhttps://x.googlevideo.com/seg.ts\n"
+
+
+class _YtResolver:
+    """Each resolve mints a distinct googlevideo URL (~6h token, as real ones).
+    Call numbers in `fail` raise; call number `hold` blocks until `release` is set."""
+
+    calls: int
+    fail: tuple[int, ...]
+    hold: int | None
+    started: threading.Event
+    release: threading.Event
+
+    def __init__(self, *, fail: tuple[int, ...] = (), hold: int | None = None) -> None:
+        self.calls = 0
+        self.fail = fail
+        self.hold = hold
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, _entry_id: str, _target_url: str) -> Resolved:
+        self.calls += 1
+        n = self.calls
+        if n == self.hold:
+            self.started.set()
+            self.release.wait(5)
+        if n in self.fail:
+            raise RuntimeError("yt-dlp failed")
+        yt = f"https://manifest.googlevideo.com/api/manifest/hls_playlist/r{n}/index.m3u8"
+        return Resolved(url=yt, stream_type="hls", ttl_seconds=21600)
+
+
+def _youtube_cache(clock: _Clock, resolver: _YtResolver | None = None) -> ResolveCache:
+    return ResolveCache(resolver or _YtResolver(), clock=clock)
+
+
+def _play(
+    cache: ResolveCache,
+    *,
+    proxy_youtube: bool = False,
+    fetch: Callable[[str], str | None] = lambda _u: _YT_MANIFEST,
+) -> str:
+    _status, loc, _ = serve_stream(
+        ENTRY_ID,
+        catalogue={ENTRY_ID: _entry()},
+        cache=cache,
+        fetch=fetch,
+        base_url=BASE,
+        proxy_youtube=proxy_youtube,
+    )
+    return loc
+
+
+def test_serve_stream_youtube_retry_gets_fresh_resolve() -> None:
+    # The player fetches googlevideo itself, so a dead URL never reaches the server;
+    # the player coming back for the same stream is the only sign it failed.
+    clock = _Clock()
+    cache = _youtube_cache(clock)
+    first = _play(cache)
+    clock.t = 40.0
+    second = _play(cache)
+    assert second != first
+    clock.t = 100.0
+    assert _play(cache) != second  # back again: the fresh URL failed too
+
+
+def test_serve_stream_youtube_startup_double_open_keeps_resolve() -> None:
+    # TiviMate, IPTV Player and others open each stream twice on start-up.
+    clock = _Clock()
+    cache = _youtube_cache(clock)
+    first = _play(cache)
+    clock.t = 200.0
+    assert _play(cache) == first  # a later play of an old entry
+    clock.t = 204.9
+    assert _play(cache) == first
+
+
+def test_serve_stream_youtube_rapid_retries_count_from_burst_start() -> None:
+    # A player retrying faster than the start-up floor still gets a fresh resolve.
+    clock = _Clock()
+    cache = _youtube_cache(clock)
+    first = _play(cache)
+    clock.t = 200.0
+    assert _play(cache) == first  # a later play, outside the window
+    for t in (201.0, 202.0, 204.9):
+        clock.t = t
+        assert _play(cache) == first
+    clock.t = 205.0
+    assert _play(cache) != first
+
+
+def test_serve_stream_youtube_retry_burst_resolves_at_most_every_30s() -> None:
+    clock = _Clock()
+    cache = _youtube_cache(clock)
+    first = _play(cache)
+    clock.t = 10.0
+    assert _play(cache) == first  # resolved 10s ago: too young to be the dud
+    clock.t = 35.0
+    second = _play(cache)
+    assert second != first
+    clock.t = 50.0
+    assert _play(cache) == second  # the fresh resolve stands through the burst
+
+
+def test_serve_stream_youtube_repeated_retries_back_off() -> None:
+    # Retries that keep coming (a leashed client, yt-dlp failing) double the wait
+    # between fresh resolves; a quiet spell resets it.
+    clock = _Clock()
+    resolver = _YtResolver()
+    cache = _youtube_cache(clock, resolver)
+    _play(cache)
+    for t, resolves in (
+        (40.0, 2),  # 1st retry: entry >=30s old
+        (80.0, 2),  # 2nd needs 60s
+        (100.0, 3),
+        (200.0, 3),  # 3rd needs 120s
+        (220.0, 4),
+        (341.0, 4),  # quiet for over the window: a new play, backoff reset
+        (380.0, 5),  # first retry of the new run needs only 30s again
+    ):
+        clock.t = t
+        _play(cache)
+        assert resolver.calls == resolves, t
+
+
+@pytest.mark.parametrize(
+    "second_open_at",
+    [41.0, 46.0],  # the retry's own start-up double-open; a second retry
+)
+def test_serve_stream_youtube_open_during_fresh_resolve_gets_its_result(
+    second_open_at: float,
+) -> None:
+    clock = _Clock()
+    resolver = _YtResolver(hold=2)
+    cache = _youtube_cache(clock, resolver)
+    first = _play(cache)
+    clock.t = 40.0
+    got: dict[str, str] = {}
+    a = threading.Thread(target=lambda: got.__setitem__("a", _play(cache)))
+    a.start()
+    assert resolver.started.wait(5)
+    clock.t = second_open_at
+    b = threading.Thread(target=lambda: got.__setitem__("b", _play(cache)))
+    b.start()
+    b.join(0.2)  # let b reach the in-flight resolve before it completes
+    resolver.release.set()
+    a.join(5)
+    b.join(5)
+    assert got["a"] == got["b"] != first
+    assert resolver.calls == 2
+
+
+def test_serve_stream_youtube_failed_fresh_resolve_keeps_old_url() -> None:
+    # The "retry" may be a second viewer of a working cam: a yt-dlp failure on
+    # the fresh resolve must not turn it into a 502 for everyone.
+    clock = _Clock()
+    resolver = _YtResolver(fail=(2,))
+    cache = _youtube_cache(clock, resolver)
+    first = _play(cache)
+    clock.t = 40.0
+    assert _play(cache) == first
+    clock.t = 50.0
+    assert _play(cache) == first
+    assert resolver.calls == 2  # the failed attempt also holds off the next one
+
+
+def test_serve_stream_youtube_replay_after_window_keeps_resolve() -> None:
+    clock = _Clock()
+    cache = _youtube_cache(clock)
+    first = _play(cache)
+    clock.t = 121.0
+    assert _play(cache) == first
+
+
+def test_serve_stream_youtube_proxied_refreshes_keep_resolve() -> None:
+    # Proxied, the player re-fetches /stream/<id> as its live playlist every few
+    # seconds — normal playback, not a retry.
+    clock = _Clock()
+    cache = _youtube_cache(clock)
+    fetched: list[str] = []
+
+    def _fetch(u: str) -> str:
+        fetched.append(u)
+        return _YT_MANIFEST
+
+    for t in (0.0, 40.0, 80.0):
+        clock.t = t
+        _play(cache, proxy_youtube=True, fetch=_fetch)
+    assert len(set(fetched)) == 1
 
 
 def test_serve_stream_hls_returns_200_rewritten_body() -> None:
