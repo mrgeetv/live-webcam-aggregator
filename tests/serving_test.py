@@ -741,20 +741,39 @@ def test_new_proxy_segment_hosts_relay_but_website_host_does_not() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_serve_child_manifest_fetch_failure_returns_502() -> None:
+def test_serve_child_manifest_fetch_failure_returns_502(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     url = "https://cdn.x/cam/chunklist.m3u8"
-    status, _, _ = serve_child_manifest(
-        ENTRY_ID,
-        url,
-        sign(url),
-        fetch=lambda u: None,
-        base_url=BASE,
-    )
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.serving"):
+        status, _, _ = serve_child_manifest(
+            ENTRY_ID,
+            url,
+            sign(url),
+            fetch=lambda u: None,
+            base_url=BASE,
+        )
     assert status == 502
+    assert ENTRY_ID in caplog.text and "cdn.x/cam/chunklist.m3u8" in caplog.text
+
+
+def test_serve_child_manifest_refuses_an_unplayable_child(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A variant can die behind a master that still answers 200 — upstream sends a
+    15-byte `#EXT-X-ENDLIST`. Relaying that as a 200 gives the player nothing to
+    start and leaves no trace in the log."""
+    url = "https://cdn.x/cam/media_0.m3u8"
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.serving"):
+        status, _, _ = serve_child_manifest(
+            ENTRY_ID, url, sign(url), fetch=lambda _u: "#EXT-X-ENDLIST\n", base_url=BASE
+        )
+    assert status == 502
+    assert ENTRY_ID in caplog.text and "cdn.x/cam/media_0.m3u8" in caplog.text
 
 
 def test_serve_child_manifest_returns_200_rewritten_body() -> None:
-    media_manifest = "#EXTM3U\nseg_001.ts\n"
+    media_manifest = "#EXTM3U\n#EXTINF:2.0,\nseg_001.ts\n"
     upstream_url = "https://cdn.x/cam/chunklist.m3u8"
     status, ct, body = serve_child_manifest(
         ENTRY_ID,
@@ -778,7 +797,7 @@ def test_serve_child_manifest_returns_200_rewritten_body() -> None:
 
 def test_serve_child_manifest_valid_sig_returns_200() -> None:
     url = "https://cdn.x/cam/chunklist.m3u8"
-    media_manifest = "#EXTM3U\nseg_001.ts\n"
+    media_manifest = "#EXTM3U\n#EXTINF:2.0,\nseg_001.ts\n"
     status, ct, _ = serve_child_manifest(
         ENTRY_ID,
         url,

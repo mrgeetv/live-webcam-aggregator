@@ -45,6 +45,7 @@ from .models import (
 )
 from .registry import Registry
 from .serving import (
+    first_variant,
     is_playable_manifest,
     render_playlist,
     serve_child_manifest,
@@ -238,12 +239,21 @@ _DETAIL_CHARS = 80
 _URL_QUERY = re.compile(r"(https?://[^\s?\"']+)(?:\?\S*)?")
 
 
+# A first variant that fails with one of these is gone, or its origin can't produce
+# it. Any other failure gets the benefit of the doubt: a 401/403 is a session or gate
+# refusing THIS fetch (MediaMTX behaves as if it keeps one HLS session per client IP,
+# so a build's concurrent probes 401 each other's variants), and shedding, gateway
+# errors and timeouts say nothing about the cam.
+_VARIANT_GONE = frozenset({"http-404", "http-410", "http-500"})
+
+
 def make_liveness_check(
     resolve: Callable[[str, str], Resolved],
-    fetch: Callable[[str], str | None],
+    fetch: Callable[[str], tuple[str | None, str]],
 ) -> Callable[[Candidate], str | None]:
     """Build the build-time liveness probe: None if the cam is live, else the reason
-    it was dropped."""
+    it was dropped. `fetch` returns a body (None on failure) and its outcome label,
+    as `Fetcher.get_with_outcome` does."""
 
     def check(c: Candidate) -> str | None:
         try:
@@ -264,9 +274,24 @@ def make_liveness_check(
         # fetching, so this is what catches offline (404), DASH, and the empty
         # playlist a CDN serves for an expired token (a 200 that looks like HLS
         # until you notice it lists nothing — see serving.is_playable_manifest).
-        if not is_playable_manifest(fetch(r.url)):
+        manifest, _ = fetch(r.url)
+        if manifest is None or not is_playable_manifest(manifest):
             log.debug("liveness: dead/non-HLS manifest %s -> %s", c.target_url, r.url)
             return DEAD_MANIFEST
+        # A master can answer 200 while the variant behind it is gone (an empty
+        # body, a header-only stub, a 404 chunklist), so judge the variant a player
+        # starts on as well.
+        if "#EXT-X-STREAM-INF" in manifest:
+            variant = first_variant(manifest, r.url)
+            if variant is None:
+                log.debug("liveness: master names no variant %s", c.target_url)
+                return DEAD_MANIFEST
+            body, outcome = fetch(variant)
+            if (
+                body is not None and not is_playable_manifest(body)
+            ) or outcome in _VARIANT_GONE:
+                log.debug("liveness: dead variant %s -> %s", c.target_url, variant)
+                return DEAD_MANIFEST
         return None
 
     return check
@@ -612,7 +637,7 @@ def build_app(
         pacer=pacer,
         retry_only_shedding=True,
     )
-    drop_reason_for = make_liveness_check(resolve_build, probe_fetcher.get)
+    drop_reason_for = make_liveness_check(resolve_build, probe_fetcher.get_with_outcome)
 
     def youtube_live(ids: Any) -> dict[str, str]:
         if yt_source is None:

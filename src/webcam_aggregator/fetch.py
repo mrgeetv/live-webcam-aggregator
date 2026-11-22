@@ -796,6 +796,13 @@ class Fetcher:
         self._session = session
 
     def get(self, url: str, timeout: float = 20.0) -> str | None:
+        return self.get_with_outcome(url, timeout)[0]
+
+    def get_with_outcome(
+        self, url: str, timeout: float = 20.0
+    ) -> tuple[str | None, str]:
+        """`get`, plus the outcome label it recorded (`ok`, `http-404`, `timeout`…),
+        for a caller that must tell a missing resource from a refused one."""
         host = urlsplit(url).hostname or "?"
         outcome = CONN_ERROR
         for attempt in range(self._retries):
@@ -803,7 +810,7 @@ class Fetcher:
                 body = self._fetch_following(url, timeout)
                 time.sleep(self._delay)
                 self._stats.record(host, OK)
-                return body
+                return body, OK
             except _FetchFailure as exc:
                 outcome = exc.reason
                 host = exc.host or host  # the failing HOP, not the original URL
@@ -834,7 +841,7 @@ class Fetcher:
                     break  # a dead cam costs one attempt; only shedding earns more
                 time.sleep(2**attempt)
         self._stats.record(host, outcome)
-        return None
+        return None, outcome
 
     def _fetch_following(self, url: str, timeout: float) -> str:
         # Follow redirects manually so EVERY hop is re-resolved, re-validated, and

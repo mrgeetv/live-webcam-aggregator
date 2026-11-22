@@ -21,9 +21,10 @@ The app is two phases, decoupled by a catalogue snapshot:
    a source that crashes is isolated (reuses its last good set, the rest proceed). Each
    `Source.discover()` yields `Candidate`s → liveness filter (YouTube via the Data
    API batch; everything else via a **fetch-verified probe** — `make_liveness_check`
-   actually fetches the HLS manifest and drops dead/404 and DASH cams; probed **once
-   per distinct `target_url` across sources** — two sources carrying the identical URL
-   share one probe and the verdict counts in each's stats. The key is `target_url`, NOT
+   actually fetches the HLS manifest (and a master playlist's first variant) and drops
+   dead/404 and DASH cams; probed **once per distinct `target_url` across sources** —
+   two sources carrying the identical URL share one probe and the verdict counts in
+   each's stats. The key is `target_url`, NOT
    `predisc_key`: the merge identity is lossy (strips tokens, collapses feratel URL
    shapes), so sharing a verdict across it would apply one URL's result to a different
    one) → per-source
@@ -240,11 +241,19 @@ The app is two phases, decoupled by a catalogue snapshot:
   lapsed or bogus token, a CDN commonly returns a well-formed HLS document listing
   nothing (skyline: `#EXTM3U` + `#EXT-X-ENDLIST`, zero segments, 109 bytes). Testing for
   the `#EXTM3U` header therefore reads a dead stream as live — the cam ships in the
-  playlist and the player gets something it can never start. Both gates
-  (`app.make_liveness_check` and `serving.serve_stream`) judge on CONTENT via
-  `serving.is_playable_manifest`: a media playlist with `#EXTINF`, or a master playlist
-  with `#EXT-X-STREAM-INF`. Accepting either matters — requiring segments alone would
-  reject every master playlist, which is what most CDN top-level URLs return. This is
+  playlist and the player gets something it can never start. Every gate
+  (`app.make_liveness_check`, `serving.serve_stream`, `serving.serve_child_manifest`)
+  judges on CONTENT via `serving.is_playable_manifest`: a media playlist with
+  `#EXTINF`, or a master playlist with `#EXT-X-STREAM-INF`. Accepting either matters —
+  requiring segments alone would reject every master playlist, which is what most CDN
+  top-level URLs return. But a live master says nothing about its variants: a
+  webcamera.pl master keeps answering 200 while its chunklist 404s, a baltic one while
+  its track 500s, and viewsurf's variants can answer a 15-byte `#EXT-X-ENDLIST`. So
+  liveness also fetches the master's first variant (where a player starts) and drops
+  the cam on an unplayable 200 or a 404/410/500 (`app._VARIANT_GONE`, via
+  `Fetcher.get_with_outcome`) — and ONLY those. Any other failure keeps the cam: a 401
+  there is usually our own probes evicting each other's MediaMTX session (see
+  explore.org below), not a dead cam. This is
   the same failure shape as the rtsp.me stub that is dodged by skipping that host by
   URL; content-based detection catches the class rather than one domain at a time.
 - **A regex over a fetched body must stay linear.** `re` holds the GIL for the whole
@@ -420,9 +429,13 @@ The app is two phases, decoupled by a catalogue snapshot:
   `?cookieCheck=1`) and then mints a session that every child playlist and segment must
   carry and that is **checked against the client IP** → `gcp.prod.explore.org` is in
   `_PROXY_SEGMENT_HOSTS`; it rides in the URL as `session=` only because the serve-time
-  fetcher is cookieless (see the serve phase above). The CloudFront hostname lives in the
-  site's Next.js bundle: when the source drops to `dns-error`, grep the
-  `/_next/static/chunks/*.js` of `explore.org/livecams` for `streams.json`.
+  fetcher is cookieless (see the serve phase above). The edges behave as if they hold
+  ONE HLS session per client IP: opening another evicts the earlier one, whose next
+  child fetch answers 401 `authentication error`. Fetched one at a time every cam plays;
+  two at once already 401s some, and a pause between master and child makes it far
+  worse. That is why liveness never drops a cam on a 401 variant. The CloudFront
+  hostname lives in the site's Next.js bundle: when the source drops to `dns-error`,
+  grep the `/_next/static/chunks/*.js` of `explore.org/livecams` for `streams.json`.
   `streams.json` is complete: the site's own catalogue (`omega.explore.org/api/initial?
   contenttype=livecams` → camgroups → feeds, each feed's `get_livecam_info.json` carrying a
   `stream_id`) maps every online feed to exactly one `live` stream, and its offline/inactive

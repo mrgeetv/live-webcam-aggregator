@@ -894,6 +894,24 @@ def test_one_outcome_per_call_not_per_retry() -> None:
     assert s.drain() == {"e.example": {"http-500": 1}}
 
 
+def test_get_with_outcome_says_why_a_fetch_failed() -> None:
+    """A caller judging a cam needs to tell "gone" (404) from "not for you right
+    now" (401) — `get` collapses both to None."""
+    f = Fetcher(delay=0.0, retries=1)
+    resp = requests.Response()
+    resp.status_code = 404
+    resp.url = "https://cdn.example/media_0.m3u8"
+    with (
+        patch.object(
+            Fetcher, "_fetch_following", side_effect=requests.HTTPError(response=resp)
+        ),
+        patch("webcam_aggregator.fetch.time.sleep"),
+    ):
+        assert f.get_with_outcome(resp.url) == (None, "http-404")
+    with patch.object(Fetcher, "_fetch_following", return_value="#EXTM3U\n"):
+        assert f.get_with_outcome(resp.url) == ("#EXTM3U\n", "ok")
+
+
 def test_failure_mid_redirect_attributed_to_the_failing_hop() -> None:
     """An HTTPError raised on hop 2 of a redirect chain must be counted against the
     host that failed, not the URL the caller asked for — otherwise the "0 ok (11x

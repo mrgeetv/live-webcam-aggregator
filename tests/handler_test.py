@@ -38,7 +38,7 @@ _CANDIDATE = Candidate(
     predisc_key=f"yt:{_YT_VID}",
 )
 
-_CHILD_MANIFEST = "#EXTM3U\nseg_a.ts\n"
+_CHILD_MANIFEST = "#EXTM3U\n#EXTINF:2.0,\nseg_a.ts\n"
 _CDN_MANIFEST = "#EXTM3U\nchunk.m3u8\nseg_b.ts\n"
 _RESOLVED_URL = "https://cdn.example/cam/playlist.m3u8"
 
