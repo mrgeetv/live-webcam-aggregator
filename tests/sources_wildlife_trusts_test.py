@@ -125,9 +125,8 @@ _PAGES = {
     "https://www.essexwt.org/osprey-blogs": (
         '<a href="https://www.youtube.com/@OspreyProject/live">Our channel</a>'
     ),
-    # The channel's current live, behind a consent placeholder, first on the page
-    # (no GTM iframe before it): the ladder's first-iframe fallback must not add the
-    # placeholder's about:blank as a second cam.
+    # The channel's current live, behind a consent placeholder: the ladder's iframe
+    # fallback must not add the placeholder's about:blank as a second cam.
     "https://www.essexwt.org/owl-cam": (
         '<iframe src="about:blank" data-src-cmplz="//www.youtube.com/embed/'
         'live_stream?channel=UCowls"></iframe>'
@@ -135,7 +134,7 @@ _PAGES = {
     ),
     # A card page whose only YouTube is the trust's channel link: that IS the cam.
     "https://www.essexwt.org/feeder": _CHROME,
-    # Pages with nothing for the ladder but its first-iframe fallback: a consent
+    # Pages with nothing for the ladder but its iframe fallback: a consent
     # placeholder (about:blank) and a bare player URL. One cam each, not two.
     "https://www.essexwt.org/marsh": (
         '<iframe src="about:blank" data-src-cmplz="https://camsecure.uk/httpswebcam/'
