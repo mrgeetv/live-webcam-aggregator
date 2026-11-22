@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.6](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.5...v2.14.6) (2026-11-22)
+
+### Bug Fixes
+
+* **scraper:** keep every regex linear on hostile input ([#178](https://github.com/mrgeetv/live-webcam-aggregator/issues/178)) ([93cf795](https://github.com/mrgeetv/live-webcam-aggregator/commit/93cf795074215abd397613152f37581ee57ac127)), closes [#163](https://github.com/mrgeetv/live-webcam-aggregator/issues/163) [#163](https://github.com/mrgeetv/live-webcam-aggregator/issues/163)
+
 ## [2.14.5](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.4...v2.14.5) (2026-11-22)
 
 ### Bug Fixes
