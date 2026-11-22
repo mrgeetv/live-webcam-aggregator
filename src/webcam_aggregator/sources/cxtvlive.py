@@ -1,37 +1,115 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import override
 
 from ..models import Candidate
-from .base import HtmlScraperSource, with_location
+from .base import (
+    HtmlScraperSource,
+    extract_candidates,
+    with_location,
+    with_location_parts,
+)
 
-_SLUG = re.compile(r"live-camera/([^<\s]+)")
+_BASE = "https://www.cxtvlive.com/live-camera/"
+_SITEMAP = "https://www.cxtvlive.com/sitemap.php"
+_MAP = "https://www.cxtvlive.com/data/cxl_mapa.php"
+
+_SLUG = re.compile(r"live-camera/([^<\s?#]+)")
 _TITLE = re.compile(r"<h1[^>]*>([^<]{1,120})</h1>")
-_CATEGORY = re.compile(r"cameras/category/([a-z0-9-]+)")
+# The site's own YouTube channel link sits in every YouTube cam page's chrome; the
+# shared ladder emits it as `…/live` beside the real video embed. Drop it when the page
+# has a real candidate too (same reasoning as beachcam) — keep it only if it's the lone
+# signal, when it IS the cam.
+_YT_CHANNEL_LIVE = re.compile(r"youtube\.com/(?:channel/[\w-]+|@[\w.-]+)/live$", re.I)
+
+# Quality/format tags the map lists as a "category" alongside the real one
+# ("High Definition · Cities"): skip them so the content category wins.
+_NOISE_TAGS = {"high definition", "high definition hd"}
+
+# Per-cam context carried from _page_meta to _title_for: the title base and the map's
+# geo parts (general -> specific), empty for cams present only in the sitemap.
+_Ctx = tuple[str, list[str]]
 
 
-class CxtvliveSource(HtmlScraperSource[str]):
+def _primary_category(field: object) -> str | None:
+    """The first real content category in a map entry's "A · B" category field,
+    skipping quality tags like "High Definition". None when nothing's left."""
+    for seg in str(field).split("·"):
+        seg = seg.strip()
+        if seg and seg.lower() not in _NOISE_TAGS:
+            return seg
+    return None
+
+
+def _geo_parts(field: object) -> list[str]:
+    """Split the map's "Country - Region - City" geo field into title parts."""
+    return [p.strip() for p in str(field).split(" - ") if p.strip()]
+
+
+class CxtvliveSource(HtmlScraperSource[_Ctx]):
     name: str = "cxtvlive"
+
+    # slug -> (raw category, cam name, geo parts); populated by _page_urls from the map
+    # feed, read back per page in _page_meta. Sitemap-only cams are absent (no geo/cat).
+    _by_slug: dict[str, tuple[str | None, str | None, list[str]]]
 
     @override
     def _page_urls(self) -> list[str]:
-        sm = self._fetch.get("https://www.cxtvlive.com/sitemap.xml") or ""
-        slugs = list(dict.fromkeys(_SLUG.findall(sm)))
-        return ["https://www.cxtvlive.com/live-camera/" + s for s in slugs]
+        # The map feed (cxl_mapa.php) is the fuller, structured list — it carries each
+        # cam's category and geo, which the cam pages themselves render client-side and
+        # so don't serve. The sitemap (sitemap.php) is unioned in for the wider net; its
+        # extra cams are scraped without the map's metadata. (sitemap.xml is gone.)
+        self._by_slug = {}
+        slugs: list[str] = []
+        raw = self._fetch.get(_MAP)
+        if raw:
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                data = {}
+            for p in data.get("p", []):
+                if not isinstance(p, list) or len(p) < 8:
+                    continue
+                name, slug, geo, cats = p[2], p[3], p[5], p[7]
+                if not isinstance(slug, str) or not slug:
+                    continue
+                self._by_slug[slug] = (
+                    _primary_category(cats),
+                    name if isinstance(name, str) and name else None,
+                    _geo_parts(geo),
+                )
+                slugs.append(slug)
+        sitemap = self._fetch.get(_SITEMAP) or ""
+        slugs.extend(_SLUG.findall(sitemap))
+        seen: set[str] = set()
+        return [_BASE + s for s in slugs if not (s in seen or seen.add(s))]
 
     @override
-    def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
-        tm = _TITLE.search(html)
-        cm = _CATEGORY.search(html)
-        category = cm.group(1).replace("-", " ").title() if cm else None
-        # ctx is the title base: the page <h1>, or a prettified slug as a fallback.
+    def _candidates(self, html: str, url: str):
+        cands = list(extract_candidates(html, page_url=url, source=self.name))
+        real = [c for c in cands if not _YT_CHANNEL_LIVE.search(c.target_url)]
+        return real if real else cands
+
+    @override
+    def _page_meta(self, html: str, url: str) -> tuple[str | None, _Ctx]:
         slug = url.split("/live-camera/", 1)[-1]
-        title_base = tm.group(1).strip() if tm else slug.replace("-", " ").title()
-        return category, title_base
+        category, map_name, geo = self._by_slug.get(slug, (None, None, []))
+        tm = _TITLE.search(html)
+        title_base = (
+            (tm.group(1).strip() if tm else None)
+            or map_name
+            or slug.replace("-", " ").title()
+        )
+        return category, (title_base, geo)
 
     @override
     def _title_for(
-        self, cand: Candidate, url: str, category: str | None, ctx: str
+        self, cand: Candidate, url: str, category: str | None, ctx: _Ctx
     ) -> str:
-        return with_location(ctx, url, drop=category or "")
+        title_base, geo = ctx
+        drop = category or ""
+        if geo:
+            return with_location_parts(title_base, geo, drop=drop)
+        return with_location(title_base, url, drop=drop)

@@ -16,7 +16,7 @@ stream is actually played.
 | beachcam.meo.pt | Portuguese beach and surf cams |
 | camscape.com | Aggregator directory — pulls in cams from many third-party providers |
 | camsecure.co.uk | Directory of hosted webcams |
-| cxtvlive.com | Camera directory |
+| cxtvlive.com | Global webcam directory — beaches, cities, wildlife, transit and traffic |
 | earthcam.com | EarthCam's own cams plus its partner network |
 | explore.org | Nature and wildlife cams |
 | feratel.com | Alpine/European tourism cams (panorama-sweep video, refreshed every few minutes) |

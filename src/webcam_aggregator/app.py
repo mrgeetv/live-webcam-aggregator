@@ -567,7 +567,7 @@ def build_app(
         for s in (
             yt_source,  # googleapiclient, not Fetcher — no fetch stats to collect
             WorldcamsSource(_source_fetcher("worldcams")),
-            CxtvliveSource(_source_fetcher("cxtvlive")),
+            CxtvliveSource(_source_fetcher("cxtvlive", impersonate=True)),
             SkylineSource(_source_fetcher("skyline")),
             CamscapeSource(_source_fetcher("camscape")),
             EarthCamSource(_source_fetcher("earthcam")),
