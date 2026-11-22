@@ -1,3 +1,4 @@
+import threading
 from typing import override
 
 from webcam_aggregator.models import Candidate
@@ -59,6 +60,30 @@ def test_html_scraper_base_crawls_skips_empty_and_titles():
     assert c.category == "Beaches"
     assert c.title == "Page Title [Beaches]"
     assert c.predisc_key == "yt:aaaaaaaaaaa"
+
+
+class _CountingFetch(_FakeFetch):
+    fetched: int = 0
+    _lock: threading.Lock = threading.Lock()
+
+    @override
+    def get(self, url: str, _timeout: float = 20.0) -> str | None:
+        with self._lock:
+            self.fetched += 1
+        return super().get(url)
+
+
+def test_html_scraper_base_parses_pages_before_the_crawl_ends():
+    """A page is parsed while later ones are still to be fetched, so a big sitemap's
+    bodies are never all held in memory at once."""
+    urls = [f"https://s/{i}" for i in range(200)]
+    embed = '<iframe src="https://www.youtube.com/embed/{:011d}"></iframe>'
+    fetch = _CountingFetch({u: embed.format(i) for i, u in enumerate(urls)})
+    cands = _StubSource(fetch, urls).discover()
+    first = next(cands)
+    assert first.source_page_url == "https://s/0"
+    assert fetch.fetched < len(urls)
+    assert [c.source_page_url for c in cands] == urls[1:]
 
 
 def test_with_location_appends_only_new_parts():

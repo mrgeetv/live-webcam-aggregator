@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from html import unescape
 from urllib.parse import urlsplit
 
-from ..fetch import FetcherProtocol, thread_map
+from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
 from .base import predisc_key, with_location_parts
 
@@ -51,7 +51,7 @@ class WhatsupcamsSource:
             if _on_site(u) and _CAM_SITEMAP.search(urlsplit(u).path)
         ]
         pages: set[str] = set()
-        for sm in thread_map(self._fetch.get, maps):
+        for sm in thread_imap(self._fetch.get, maps):
             for loc in _LOC.findall(sm or ""):
                 # cam pages sit at /en/webcams/<country>/<region>/<town>/<slug>/;
                 # the sitemap also lists the bare /en/webcams/ archive page. Anchor to
@@ -62,7 +62,7 @@ class WhatsupcamsSource:
         page_list = sorted(pages)
         # hop 1: cam pages -> (page, title, cam id)
         found: list[tuple[str, str, str]] = []
-        for page, html in zip(page_list, thread_map(self._fetch.get, page_list)):
+        for page, html in zip(page_list, thread_imap(self._fetch.get, page_list)):
             m = _WGT_ID.search(html or "")
             if not m:
                 continue
@@ -71,7 +71,7 @@ class WhatsupcamsSource:
             found.append((page, title, m.group(1)))
         # hop 2: per-id CDN API -> the cam's HLS URL (concurrent)
         seen: set[str] = set()
-        raws = thread_map(self._fetch.get, [_API + f[2] for f in found])
+        raws = thread_imap(self._fetch.get, [_API + f[2] for f in found])
         for (page, title, _cam_id), raw in zip(found, raws):
             try:
                 data = json.loads(raw or "")

@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from html import unescape
 
-from ..fetch import FetcherProtocol, thread_map
+from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
 from .base import extract_candidates, with_location_parts
 
@@ -124,7 +124,7 @@ class WindySource:
         first = [_LIST.format(lat=lat, lon=lon, off=0) for lat, lon in points]
         extras: list[str] = []
         truncated = False
-        for (lat, lon), raw in zip(points, thread_map(self._fetch.get, first)):
+        for (lat, lon), raw in zip(points, thread_imap(self._fetch.get, first)):
             total, cams = _cams_of(raw)
             self._remember(cams)
             for off in range(_PAGE, min(total, _CIRCLE_CAP), _PAGE):
@@ -134,7 +134,7 @@ class WindySource:
                 extras.append(_LIST.format(lat=lat, lon=lon, off=off))
             if truncated:
                 break
-        for raw in thread_map(self._fetch.get, extras):
+        for raw in thread_imap(self._fetch.get, extras):
             _, cams = _cams_of(raw)
             self._remember(cams)
         # only latch a COMPLETE scan; a truncated one re-runs next build
@@ -157,7 +157,7 @@ class WindySource:
         self._cursor = (start + slice_n) % len(rest) if rest else 0
         ids = sorted(self._live) + rotation
         urls = [_STREAM.format(id=i) for i in ids]
-        for cid, page in zip(ids, thread_map(self._fetch.get, urls)):
+        for cid, page in zip(ids, thread_imap(self._fetch.get, urls)):
             if page is None:
                 # a fetch FAILURE (timeout/429/backoff), not a verdict: keep the cam in
                 # _live so it is retried first next build rather than exiled to the

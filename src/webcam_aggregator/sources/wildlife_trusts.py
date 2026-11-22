@@ -7,7 +7,7 @@ import re
 from collections.abc import Iterator
 from urllib.parse import quote, urljoin, urlsplit
 
-from ..fetch import FetcherProtocol, thread_map
+from ..fetch import FetcherProtocol, thread_imap, thread_map
 from ..models import Candidate
 from .base import extract_candidates, predisc_key
 from .camsecure import hls_from_player
@@ -145,7 +145,7 @@ class WildlifeTrustsSource:
         for trust_pages in thread_map(self._cam_pages, origins):
             pages.update(trust_pages)
         ordered = sorted(pages)
-        for url, html in zip(ordered, thread_map(self._fetch.get, ordered)):
+        for url, html in zip(ordered, thread_imap(self._fetch.get, ordered)):
             if html:
                 found.extend(self._page(url, html, card_titles.get(url)))
         best: dict[str, tuple[int, Candidate]] = {}

@@ -7,7 +7,7 @@ import os
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.cookiejar import DefaultCookiePolicy
@@ -63,11 +63,31 @@ _R = TypeVar("_R")
 def thread_map(
     fn: Callable[[_T], _R], items: list[_T], *, workers: int = SCRAPE_WORKERS
 ) -> list[_R]:
-    """Map fn over items concurrently, preserving order. Empty in → empty out."""
+    """Map fn over items concurrently, preserving order. Every item is submitted at
+    once, so one slow call never holds the rest back — right for small results. A map
+    whose results are page bodies goes through `thread_imap` instead, or the whole
+    batch sits in memory until the last fetch lands. Empty in → empty out."""
     if not items:
         return []
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(items)))) as ex:
         return list(ex.map(fn, items))
+
+
+def thread_imap(
+    fn: Callable[[_T], _R], items: list[_T], *, workers: int = SCRAPE_WORKERS
+) -> Iterator[_R]:
+    """Map fn over items concurrently, yielding results in input order as the caller
+    takes them. About 4 × workers calls are running or waiting to be taken, so a
+    caller parsing page bodies holds a bounded number of them rather than every page
+    of a large sitemap; the slack keeps the other workers busy past one slow fetch at
+    the head of the queue. Order is kept because it matters downstream:
+    dedup keeps the first of a source's duplicates, and that page fixes the cam's
+    stable id."""
+    if not items:
+        return
+    n = max(1, min(workers, len(items)))
+    with ThreadPoolExecutor(max_workers=n) as ex:
+        yield from ex.map(fn, items, buffersize=4 * n)
 
 
 def _ip_is_unsafe(ip_str: str) -> bool:

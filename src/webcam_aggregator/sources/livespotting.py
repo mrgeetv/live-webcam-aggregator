@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Iterator
 
-from ..fetch import FetcherProtocol, thread_map
+from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
 from .base import predisc_key, with_location_parts
 
@@ -41,11 +41,11 @@ class LivespottingSource:
 
     def discover(self) -> Iterator[Candidate]:
         page_for: dict[str, str] = {}
-        for html in thread_map(self._fetch.get, [_BASE + p for p in _COUNTRY_PATHS]):
+        for html in thread_imap(self._fetch.get, [_BASE + p for p in _COUNTRY_PATHS]):
             for path, cam_id in _CAM_LINK.findall(html or ""):
                 page_for.setdefault(cam_id, _BASE + path)
         ids = sorted(page_for)
-        raws = thread_map(self._fetch.get, [_API.format(cam_id=i) for i in ids])
+        raws = thread_imap(self._fetch.get, [_API.format(cam_id=i) for i in ids])
         seen: set[str] = set()
         for cam_id, raw in zip(ids, raws):
             try:

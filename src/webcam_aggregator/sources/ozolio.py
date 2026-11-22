@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 
-from ..fetch import FetcherProtocol, thread_map
+from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
 
 # Ozolio (resort/beach cams, mostly Hawaii) publishes one /explore/<CID> page per cam
@@ -35,7 +35,7 @@ class OzolioSource:
         pages = sorted(
             {loc.strip() for loc in _LOC.findall(sm) if _EXPLORE.match(loc.strip())}
         )
-        for page, html in zip(pages, thread_map(self._fetch.get, pages)):
+        for page, html in zip(pages, thread_imap(self._fetch.get, pages)):
             m = _TITLE.search(html or "")
             if not m:
                 continue  # fetch failed, or the page isn't a rendered cam page
