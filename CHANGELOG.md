@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.3](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.2...v2.14.3) (2026-11-22)
+
+### Bug Fixes
+
+* **scraper:** stream page bodies through a bounded buffer ([#171](https://github.com/mrgeetv/live-webcam-aggregator/issues/171)) ([0d52d4e](https://github.com/mrgeetv/live-webcam-aggregator/commit/0d52d4e21e6174d641cc50a7f1d25f7b7306190c)), closes [#155](https://github.com/mrgeetv/live-webcam-aggregator/issues/155)
+
 ## [2.14.2](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.1...v2.14.2) (2026-11-22)
 
 ### Bug Fixes
