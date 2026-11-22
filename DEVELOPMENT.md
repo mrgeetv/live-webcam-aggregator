@@ -53,7 +53,7 @@ Configure these in your `.env` file or pass directly to docker-compose.
 | `EXCLUDE_CATEGORIES` | (none) | Comma-separated categories to drop across all sources (case-insensitive) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `MAX_PARALLEL_SOURCES` | `4` | How many sources discover + liveness-check at once (min 1); total build concurrency ≈ this × `SCRAPE_WORKERS` |
-| `PROXY_YOUTUBE` | `false` | `true` proxies YouTube through the server (survives the ~6h token expiry, trims DVR to the live edge); `false` (default) redirects players direct to YouTube (lower latency, stops at token expiry) |
+| `PROXY_YOUTUBE` | `false` | `true` proxies YouTube through the server (survives the ~6h token expiry, trims DVR to the live edge); `false` (default) redirects players direct to YouTube (lower latency, stops at token expiry; a player retrying a stream that failed gets a freshly resolved one) |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Base URL used in playlist and manifest links |
 | `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness; sources also run in parallel, so build-peak concurrency ≈ this × the number running at once. A host answering 429/503 is backed off adaptively (see *Per-host pacing*), so the effective rate to that host can drop below what this implies |
 | `SEARCH_QUERY` | built-in webcam query | YouTube search terms (`\|`=OR, space=AND, `-`=exclude) |
@@ -307,11 +307,6 @@ segment `403`s, so the build-time liveness, the resolve and the manifest gate al
 pass and the cams ship looking healthy. The 403 is a player-to-CDN exchange the
 server is never part of, with `PROXY_YOUTUBE` on or off.
 
-A **single** cam whose segments 403 while a fresh resolve of it plays is a different
-fault: a cached resolve gone dud. The server re-resolves it when the player retries
-(see `ResolveCache.record_redirect`), so re-selecting the cam fixes it; re-selecting
-does nothing for a leash.
-
 To confirm: resolve one cam by hand, then fetch a segment straight away and again a
 minute later.
 
@@ -328,6 +323,12 @@ Use `curl -sL`: some segments 302 to an `rr*.googlevideo.com` edge, and without
 client from its defaults — plus a check that the pinned `player_client` in
 `extractors/ytdlp.py` still offers a **muxed** format, since the resolve emits one
 URL and cannot use split video-only/audio-only streams.
+
+A **single** cam whose segments 403 from the start while a fresh resolve of it plays
+is a different fault: a cached resolve gone dud. With `PROXY_YOUTUBE` off the server
+re-resolves it when the player comes back within a couple of minutes (a
+`player retry, re-resolving` line at `INFO`; see `ResolveCache.record_redirect`), so
+re-selecting the cam fixes it. Under a leash that only buys another short play.
 
 ### Per-host pacing
 

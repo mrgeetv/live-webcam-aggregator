@@ -21,22 +21,28 @@ RETRY_WINDOW = 120.0
 # ...but not one back sooner than this: players open each stream twice on start-up,
 # which is not a retry. Requests inside the gap don't restart it, so a player
 # retrying faster than this still counts once the gap has passed.
-RETRY_MIN_GAP = 3.0
+RETRY_MIN_GAP = 5.0
 # A retry doesn't re-resolve an entry refreshed more recently than this, so a
-# player's retry burst costs one resolve rather than one per attempt.
+# player's retry burst costs one resolve rather than one per attempt. Each further
+# retry-triggered resolve in one run of retries doubles it, up to RETRY_MAX_AGE:
+# retries that keep coming mean fresh URLs fail too (a leashed client, yt-dlp
+# blocked), and re-resolving at the first rate would hammer YouTube for nothing.
 RETRY_MIN_AGE = 30.0
+RETRY_MAX_AGE = 600.0
 
 
 @dataclass
 class _Entry:
     resolved: Resolved | None  # None = negative (a failed resolve)
     target_hash: str
-    # last time a resolve ran for this entry — including a fresh one that failed
-    # and left `resolved` in place
+    # when the last resolve for this entry began — including a fresh one that
+    # failed and left `resolved` in place
     refreshed_at: float
     expires_at: float
     # last time this resolve was handed out as a redirect (see record_redirect)
     redirected_at: float | None = None
+    # retry-triggered resolves in the current run of retries (see RETRY_MIN_AGE)
+    retry_streak: int = 0
 
 
 class ResolveCache:
@@ -69,7 +75,7 @@ class ResolveCache:
         """Record that `entry_id`'s resolve is being handed out as a redirect, and
         return whether this is a player retrying a URL that failed where the server
         can't see: back RETRY_MIN_GAP to RETRY_WINDOW after the last redirect, for
-        an entry not refreshed within RETRY_MIN_AGE."""
+        an entry not refreshed within the run's backed-off RETRY_MIN_AGE."""
         now = self._clock()
         with self._guard:
             e = self._data.get(entry_id)
@@ -79,19 +85,22 @@ class ResolveCache:
             gap = None if prev is None else now - prev
             if gap is None or gap >= RETRY_MIN_GAP:
                 e.redirected_at = now
-            return (
-                gap is not None
-                and RETRY_MIN_GAP <= gap <= RETRY_WINDOW
-                and now - e.refreshed_at >= RETRY_MIN_AGE
-            )
+            if gap is None or gap > RETRY_WINDOW:
+                e.retry_streak = 0  # a new play, not a retry: the run is over
+                return False
+            min_age = min(RETRY_MIN_AGE * 2**e.retry_streak, RETRY_MAX_AGE)
+            if gap < RETRY_MIN_GAP or now - e.refreshed_at < min_age:
+                return False
+            e.retry_streak += 1
+            return True
 
     def get(
         self, entry_id: str, target_url: str, *, fresh: bool = False
     ) -> Resolved | None:
         """The cached resolve for `entry_id`, resolving on a miss. A caller arriving
         while a resolve for the id is in flight waits for its result. `fresh` forces
-        a new resolve unless one finished after this call began; if it fails, the
-        cached resolve is kept rather than replaced by a negative entry."""
+        a new resolve; if it fails, the cached resolve is kept rather than replaced
+        by a negative entry."""
         start = self._clock()
         thash = str(hash(target_url))
 
@@ -100,7 +109,7 @@ class ResolveCache:
                 e is not None
                 and e.expires_at > now
                 and e.target_hash == thash
-                and (not fresh or e.refreshed_at >= start)
+                and not fresh
             )
 
         lock = self._lock_for(entry_id)
@@ -111,9 +120,10 @@ class ResolveCache:
                     self._data.move_to_end(entry_id)
                     return e.resolved
         with lock:  # single-flight per id
+            now = self._clock()
             with self._guard:
                 e = self._data.get(entry_id)
-                if usable(e, self._clock()):
+                if usable(e, now):
                     return e.resolved
             try:
                 resolved = self._resolve(entry_id, target_url)
@@ -126,22 +136,22 @@ class ResolveCache:
                     ttl = 0.0  # already-expired token → don't serve stale, re-resolve
             except Exception:
                 resolved, ttl = None, NEGATIVE_TTL
-            done = self._clock()
             with self._guard:
                 if (
                     resolved is None
                     and fresh
                     and e is not None
                     and e.resolved is not None
-                    and e.expires_at > done
+                    and e.expires_at > now
                     and e.target_hash == thash
                 ):
-                    e.refreshed_at = done
+                    e.refreshed_at = now
                     return e.resolved
-                entry = _Entry(resolved, thash, done, done + ttl)
+                entry = _Entry(resolved, thash, now, now + ttl)
                 if e is not None:
                     # retry detection spans re-resolves
                     entry.redirected_at = e.redirected_at
+                    entry.retry_streak = e.retry_streak
                 self._data[entry_id] = entry
                 self._data.move_to_end(entry_id)
                 while len(self._data) > self._cap:

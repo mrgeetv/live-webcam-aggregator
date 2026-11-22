@@ -505,7 +505,10 @@ def test_serve_stream_youtube_retry_gets_fresh_resolve() -> None:
     cache = _youtube_cache(clock)
     first = _play(cache)
     clock.t = 40.0
-    assert _play(cache) != first
+    second = _play(cache)
+    assert second != first
+    clock.t = 100.0
+    assert _play(cache) != second  # back again: the fresh URL failed too
 
 
 def test_serve_stream_youtube_startup_double_open_keeps_resolve() -> None:
@@ -513,7 +516,9 @@ def test_serve_stream_youtube_startup_double_open_keeps_resolve() -> None:
     clock = _Clock()
     cache = _youtube_cache(clock)
     first = _play(cache)
-    clock.t = 2.4
+    clock.t = 200.0
+    assert _play(cache) == first  # a later play of an old entry
+    clock.t = 204.9
     assert _play(cache) == first
 
 
@@ -524,10 +529,10 @@ def test_serve_stream_youtube_rapid_retries_count_from_burst_start() -> None:
     first = _play(cache)
     clock.t = 200.0
     assert _play(cache) == first  # a later play, outside the window
-    for t in (201.0, 202.0, 202.9):
+    for t in (201.0, 202.0, 204.9):
         clock.t = t
         assert _play(cache) == first
-    clock.t = 204.0
+    clock.t = 205.0
     assert _play(cache) != first
 
 
@@ -544,9 +549,30 @@ def test_serve_stream_youtube_retry_burst_resolves_at_most_every_30s() -> None:
     assert _play(cache) == second  # the fresh resolve stands through the burst
 
 
+def test_serve_stream_youtube_repeated_retries_back_off() -> None:
+    # Retries that keep coming (a leashed client, yt-dlp failing) double the wait
+    # between fresh resolves; a quiet spell resets it.
+    clock = _Clock()
+    resolver = _YtResolver()
+    cache = _youtube_cache(clock, resolver)
+    _play(cache)
+    for t, resolves in (
+        (40.0, 2),  # 1st retry: entry >=30s old
+        (80.0, 2),  # 2nd needs 60s
+        (100.0, 3),
+        (200.0, 3),  # 3rd needs 120s
+        (220.0, 4),
+        (341.0, 4),  # quiet for over the window: a new play, backoff reset
+        (380.0, 5),  # first retry of the new run needs only 30s again
+    ):
+        clock.t = t
+        _play(cache)
+        assert resolver.calls == resolves, t
+
+
 @pytest.mark.parametrize(
     "second_open_at",
-    [41.0, 44.0],  # the retry's own start-up double-open; a second retry
+    [41.0, 46.0],  # the retry's own start-up double-open; a second retry
 )
 def test_serve_stream_youtube_open_during_fresh_resolve_gets_its_result(
     second_open_at: float,

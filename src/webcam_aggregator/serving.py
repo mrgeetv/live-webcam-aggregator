@@ -341,6 +341,7 @@ def serve_stream(
     ):
         # googlevideo can stop serving a cached URL's segments hours before its
         # token expires, while a fresh resolve of the same broadcast plays.
+        log.info("player retry, re-resolving: %s", entry_id)
         resolved = cache.get(entry_id, entry.target_url, fresh=True)
     if resolved is None:
         log.warning("resolve failed: %s -> %s", entry_id, loggable(entry.target_url))
