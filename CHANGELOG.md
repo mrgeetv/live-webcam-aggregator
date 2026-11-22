@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.0...v2.14.1) (2026-11-22)
+
+### Bug Fixes
+
+* **scraper:** take the feratel cam id from the detail-page url ([#167](https://github.com/mrgeetv/live-webcam-aggregator/issues/167)) ([f91de2c](https://github.com/mrgeetv/live-webcam-aggregator/commit/f91de2c2a62f766e6e257a7a121a66136d2c047f)), closes [#121](https://github.com/mrgeetv/live-webcam-aggregator/issues/121)
+
 ## [2.14.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.12...v2.14.0) (2026-11-21)
 
 ### Features
