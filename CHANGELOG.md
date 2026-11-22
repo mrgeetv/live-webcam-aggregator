@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.2](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.1...v2.14.2) (2026-11-22)
+
+### Bug Fixes
+
+* **playlist:** rewrite every hls reference attribute on tag lines ([#168](https://github.com/mrgeetv/live-webcam-aggregator/issues/168)) ([ff5e534](https://github.com/mrgeetv/live-webcam-aggregator/commit/ff5e5348a655192cd3c0fb089fef0d97e07fcaf2)), closes [#157](https://github.com/mrgeetv/live-webcam-aggregator/issues/157)
+
 ## [2.14.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.0...v2.14.1) (2026-11-22)
 
 ### Bug Fixes
