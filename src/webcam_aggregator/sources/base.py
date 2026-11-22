@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Generic, Protocol, TypeVar
 from urllib.parse import unquote, urljoin, urlsplit
 
-from ..fetch import FetcherProtocol, thread_map
+from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
 
 # `embed/videoseries?list=` (a playlist) and `embed/live_stream?channel=` (a channel's
@@ -208,7 +208,7 @@ Ctx = TypeVar("Ctx")
 class HtmlScraperSource(ABC, Generic[Ctx]):
     """Shared crawl loop for HTML scraper sources. Subclasses supply three hooks —
     how to find the cam detail-page URLs, the per-page (category, context), and the
-    per-candidate title. The concurrent fetch (`thread_map`), empty-page skipping, and
+    per-candidate title. The concurrent fetch (`thread_imap`), empty-page skipping, and
     `extract_candidates` wiring live here, so each source stays a handful of regexes.
     `Ctx` is whatever per-page state a source precomputes once (e.g. a stream-id ->
     name map) and reuses across that page's candidates in `_title_for`."""
@@ -242,7 +242,7 @@ class HtmlScraperSource(ABC, Generic[Ctx]):
 
     def discover(self) -> Iterator[Candidate]:
         urls = self._page_urls()
-        for url, html in zip(urls, thread_map(self._fetch.get, urls)):
+        for url, html in zip(urls, thread_imap(self._fetch.get, urls)):
             if not html:
                 continue
             category, ctx = self._page_meta(html, url)

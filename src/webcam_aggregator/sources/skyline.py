@@ -7,7 +7,7 @@ from html import unescape
 from typing import override
 
 from ..extractors.skyline import stream_token
-from ..fetch import thread_map
+from ..fetch import thread_imap
 from ..models import Candidate
 from .base import HtmlScraperSource, with_location_parts
 
@@ -114,7 +114,7 @@ class SkylineSource(HtmlScraperSource[_Ctx]):
         # passes through as the raw slug, which maps to "Unmapped Category"). A cam on
         # several category pages takes the first in the index's order; one on none
         # stays uncategorised.
-        for slug, html in zip(slugs, thread_map(self._fetch.get, cat_urls)):
+        for slug, html in zip(slugs, thread_imap(self._fetch.get, cat_urls)):
             cat = _CATEGORY.get(slug, slug)
             for rel in _CAM_LINK.findall(html or ""):
                 u = f"{_BASE}{rel}"

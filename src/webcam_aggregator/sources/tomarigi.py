@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterator
 from html import unescape
 
-from ..fetch import FetcherProtocol, thread_map
+from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
 from .base import predisc_key
 
@@ -91,12 +91,12 @@ class TomarigiSource:
         spots: set[str] = set()
         while todo := sorted(listings - read):
             read.update(todo)
-            for html in thread_map(self._fetch.get, [_SITE + p for p in todo]):
+            for html in thread_imap(self._fetch.get, [_SITE + p for p in todo]):
                 spots.update(_SPOT_HREF.findall(html or ""))
                 listings.update(_LISTING_HREF.findall(html or ""))
         pages = sorted(_SITE + path for path in spots)
         seen: set[str] = set()
-        for page, html in zip(pages, thread_map(self._fetch.get, pages)):
+        for page, html in zip(pages, thread_imap(self._fetch.get, pages)):
             item = _video_object(html or "")
             if item is None:
                 continue

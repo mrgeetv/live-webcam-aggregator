@@ -80,6 +80,11 @@ The app is two phases, decoupled by a catalogue snapshot:
   url, category, ctx)` — the base owns the concurrent fetch + the extraction ladder.
   Override `_candidates(html, url)` too when a site's embeds aren't in the standard
   ladder (e.g. Skyline's Clappr token / a `videoId` JS var → a page or watch URL).
+  A source with its own `discover()` maps any fetch whose results are page bodies
+  through `fetch.thread_imap` (an ordered stream with a bounded buffer), not
+  `thread_map`, which holds every result until the last call finishes — a whole
+  sitemap's pages at once, stacked across the sources building together. Maps with
+  small results stay on `thread_map` (the docstrings say why).
   Add the instance to `active_sources` in `build_app`, built with
   `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
   `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so

@@ -219,12 +219,13 @@ All via environment variables (see `.env.example`):
 | `SEARCH_QUERY` | built-in webcam query | YouTube search terms (`\|`=OR, space=AND, `-`=exclude) |
 | `YOUTUBE_API_KEY` | (required) | YouTube Data API v3 key |
 
-> **Resource usage:** budget **~4 GB** for the container. A catalogue of this size sits at
-> **~1.5 GB** between builds and **peaks near 3 GB** for the first minute or two of each
-> build, while every source is fetching and parsing pages concurrently — that discovery
-> spike is the high-water mark, not a leak, and the rest of the build is close to flat.
-> RSS does **not** fall back to a small baseline afterwards; ~1.5 GB is the steady state.
-> Lower `SCRAPE_WORKERS` to cap the peak. Live memory is on `/health` (`rss_mb`).
+> **Resource usage:** budget **~4 GB** for the container. A catalogue of this size sits
+> under **~1 GB** between builds, and each build runs a little below that with a brief
+> spike **near 3 GB** part-way through — that spike is the high-water mark, not a leak.
+> Sources parse each page as it arrives rather than holding a whole site's pages, so a
+> source's memory doesn't grow with its page count. RSS does **not** fall back to a small
+> baseline afterwards. Lower `SCRAPE_WORKERS` to cap the peak. Live memory is on
+> `/health` (`rss_mb`).
 
 ## Tuning the search query
 

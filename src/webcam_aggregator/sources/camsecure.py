@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterator
 from urllib.parse import unquote, urljoin, urlsplit
 
-from ..fetch import FetcherProtocol, thread_map
+from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
 from .base import predisc_key
 
@@ -102,13 +102,13 @@ class CamSecureSource:
         )
         # hop 1: cam pages -> (page, title, player url) for those embedding a player
         found: list[tuple[str, str, str]] = []
-        for page, html in zip(pages, thread_map(self._fetch.get, pages)):
+        for page, html in zip(pages, thread_imap(self._fetch.get, pages)):
             player = player_iframe(html or "")
             if player:
                 found.append((page, _title_of(html or "", page), player))
         # hop 2: player pages -> direct HLS (concurrent)
         seen: set[str] = set()
-        players = thread_map(self._fetch.get, [f[2] for f in found])
+        players = thread_imap(self._fetch.get, [f[2] for f in found])
         for (page, title, player), pg in zip(found, players):
             m3u8 = hls_from_player(pg or "", player)
             if not m3u8:

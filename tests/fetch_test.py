@@ -29,6 +29,7 @@ from webcam_aggregator.fetch import (
     _resolve_validated_ip,  # pyright: ignore[reportPrivateUsage]
     _validate_ip,  # pyright: ignore[reportPrivateUsage]
     resolve_scrape_workers,
+    thread_imap,
 )
 
 # ---------------------------------------------------------------------------
@@ -1420,3 +1421,22 @@ def test_impersonating_errors_classify_like_requests_ones(
     mapped = _as_requests_error(exc, "GET", "https://cam.example/x")
     assert _classify(mapped) == expected
     assert getattr(mapped.request, "url", None) == "https://cam.example/x"
+
+
+def test_thread_imap_streams_in_order_without_running_ahead() -> None:
+    """Results arrive in input order, and a consumer that hasn't taken the next one
+    yet holds back the work: a scrape must not buffer every page body of a
+    large sitemap before the first is parsed."""
+    started: list[int] = []
+    lock = threading.Lock()
+
+    def work(i: int) -> int:
+        with lock:
+            started.append(i)
+        return i * 10
+
+    results = thread_imap(work, list(range(200)), workers=2)
+    assert next(results) == 0
+    time.sleep(0.2)  # ample time for an unbounded pool to finish all 200
+    assert len(started) < 50
+    assert list(results) == [i * 10 for i in range(1, 200)]
