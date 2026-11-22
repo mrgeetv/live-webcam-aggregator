@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.4](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.3...v2.14.4) (2026-11-22)
+
+### Bug Fixes
+
+* **scraper:** read the first iframe that could be a player, not the first iframe ([#173](https://github.com/mrgeetv/live-webcam-aggregator/issues/173)) ([6e3bdd4](https://github.com/mrgeetv/live-webcam-aggregator/commit/6e3bdd4b70d82225a192a6631cfab36ed9660588)), closes [#160](https://github.com/mrgeetv/live-webcam-aggregator/issues/160)
+
 ## [2.14.3](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.2...v2.14.3) (2026-11-22)
 
 ### Bug Fixes
