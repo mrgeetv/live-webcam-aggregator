@@ -392,25 +392,9 @@ def serve_stream(
         # the ~6h googlevideo token expires (re-select to resume). PROXY_YOUTUBE=true
         # proxies instead — survives expiry via re-resolve, DVR trimmed to live edge.
         return (302, resolved.url, b"")
-    manifest = fetch(resolved.url)
-    if manifest is None:
-        log.warning("manifest fetch failed: %s -> %s", entry_id, loggable(resolved.url))
-        return (502, "text/plain", b"upstream manifest fetch failed")
-    if not is_playable_manifest(manifest):
-        # Not HLS (a DASH .mpd, an error page), or HLS with nothing in it — the
-        # empty playlist a CDN returns for an expired token. Refusing beats
-        # handing the player a manifest it cannot start.
-        log.warning("unplayable manifest: %s -> %s", entry_id, loggable(resolved.url))
-        return (502, "text/plain", b"not a playable HLS stream")
-    manifest = truncate_to_live_edge(manifest)
-    body = rewrite_manifest(
-        manifest,
-        upstream_url=resolved.url,
-        entry_id=entry_id,
-        base_url=base_url,
-        proxy_segments=_proxy_segments_for(resolved.url),
+    return _proxy_manifest(
+        entry_id, resolved.url, fetch=fetch, base_url=base_url, kind="manifest"
     )
-    return (200, _HLS_CT, body.encode())
 
 
 def serve_child_manifest(
@@ -423,18 +407,31 @@ def serve_child_manifest(
 ) -> Response:
     if not verify(upstream_url, sig):
         return (403, "text/plain", b"bad signature")
+    return _proxy_manifest(
+        entry_id, upstream_url, fetch=fetch, base_url=base_url, kind="child manifest"
+    )
+
+
+def _proxy_manifest(
+    entry_id: str,
+    upstream_url: str,
+    *,
+    fetch: Callable[[str], str | None],
+    base_url: str,
+    kind: str,
+) -> Response:
+    """Fetch an upstream playlist and relay it trimmed and rewritten through us, or
+    refuse it with a 502. `kind` names the playlist in the log."""
     manifest = fetch(upstream_url)
     if manifest is None:
-        log.warning(
-            "child manifest fetch failed: %s -> %s", entry_id, loggable(upstream_url)
-        )
+        log.warning("%s fetch failed: %s -> %s", kind, entry_id, loggable(upstream_url))
         return (502, "text/plain", b"upstream manifest fetch failed")
     if not is_playable_manifest(manifest):
-        # A variant can die behind a master that still answers 200: an empty body,
-        # a header-only stub. Relaying it would hand the player nothing to start.
-        log.warning(
-            "unplayable child manifest: %s -> %s", entry_id, loggable(upstream_url)
-        )
+        # Not HLS (a DASH .mpd, an error page), or HLS with nothing in it: the empty
+        # playlist a CDN returns for an expired token, or a variant dead behind a
+        # master that still answers 200. Refusing beats handing the player a
+        # playlist it cannot start.
+        log.warning("unplayable %s: %s -> %s", kind, entry_id, loggable(upstream_url))
         return (502, "text/plain", b"not a playable HLS stream")
     manifest = truncate_to_live_edge(manifest)
     body = rewrite_manifest(
