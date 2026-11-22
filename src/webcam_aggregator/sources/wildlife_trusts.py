@@ -51,9 +51,9 @@ _NOT_CAM_PATH = re.compile(
 _MAX_SITEMAPS = 40  # per trust: bounds a runaway sitemap index
 _MAX_PAGES = 100  # per trust: bounds a runaway sitemap
 
-# Player embeds, read from every tag rather than the ladder's first iframe (often the
-# tag manager's): later iframes, script embeds, and consent placeholders that hold the
-# real URL in data-src-cmplz. `\bsrc` also matches inside `data-src` and
+# Player embeds, read from every tag rather than the ladder's one fallback iframe:
+# every iframe on a multi-cam page, script embeds, and consent placeholders that hold
+# the real URL in data-src-cmplz. `\bsrc` also matches inside `data-src` and
 # `data-litespeed-src`. `[^<>]` keeps a tag match from running past the next tag.
 _TAG = re.compile(r"<(?:iframe|script)\b[^<>]*>", re.I)
 _PLAYER_ATTR = re.compile(
@@ -216,11 +216,9 @@ class WildlifeTrustsSource:
         linked = [
             c.target_url
             for c in extract_candidates(html, page_url=url, source=self.name)
-            # The ladder's first-iframe fallback re-reads an embed resolved above (or
-            # a consent placeholder's about:blank); those are not further cams.
-            if c.target_url not in titled
-            and c.target_url not in raw_embeds
-            and urlsplit(c.target_url).scheme in ("http", "https")
+            # The ladder's iframe fallback re-reads an embed resolved above; that is
+            # not a further cam.
+            if c.target_url not in titled and c.target_url not in raw_embeds
         ]
         # Every trust page's chrome links the trust's YouTube channel. A linked channel
         # live is the cam only on an index card's page with nothing else; elsewhere it

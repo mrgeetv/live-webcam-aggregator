@@ -69,10 +69,15 @@ The app is two phases, decoupled by a catalogue snapshot:
   absolute iframes with paths), and a still-image target is dropped outright — a JPEG
   "cam" can never be a stream, and counting it as `no-extractor` buries the hosts that
   genuinely need one. `_NEVER_A_STREAM_HOSTS` drops the same class of noise for
-  analytics/consent iframes (googletagmanager) that sit beside a page's real player.
-  That denylist is ONLY for hosts serving no video at all — an embed we simply can't
-  play yet (ivideon, rtsp.me, angelcam) stays a `no-extractor` drop on purpose, so the
-  report keeps listing real gaps rather than hiding them.
+  analytics/consent iframes (googletagmanager) and the Waze traffic map that sit beside
+  a page's real player, and a non-http(s) target (a consent placeholder's `about:blank`)
+  goes the same way. That denylist is ONLY for hosts serving no video at all — an embed
+  we simply can't play yet (ivideon, rtsp.me, angelcam) stays a `no-extractor` drop on
+  purpose, so the report keeps listing real gaps rather than hiding them. The ladder's
+  last-resort iframe fallback takes the page's first iframe that survives these checks
+  (its `src` entity-decoded, as an HTML attribute), never simply its first iframe: CMS
+  pages open `<body>` with GTM's `<noscript>` frame, and reading that one hides the
+  player below it.
 - **Add a source** — implement the `Source` protocol (`sources/base.py`): a `name`
   and `discover() -> Iterable[Candidate]`. HTML scrapers subclass `HtmlScraperSource`
   (`sources/base.py`) and implement three hooks — `_page_urls()` (the cam detail-page
@@ -381,9 +386,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   sitemaps reach cam pages the index never links (Rutland's osprey cams, Essex's,
   Gloucestershire's). Most cams are seasonal, so off-season most candidates are
   `yt-offline` drops — normal. Besides the standard ladder, every `iframe`/`script` tag is
-  scanned for a player URL, because the ladder reads only a page's first iframe (here
-  usually the tag manager's): **camstreamer** (a wrapped YouTube, resolved at discovery
-  so it dedups on `yt:`), **camsecure** (→ its HLS via
+  scanned for a player URL, because the ladder reads at most one iframe, and only when
+  it found no YouTube or HLS URL on the page first: **camstreamer** (a wrapped YouTube,
+  resolved at discovery so it dedups on `yt:`), **camsecure** (→ its HLS via
   `sources.camsecure.hls_from_player`, the camscape approach), a channel's
   `embed/live_stream?channel=` (→ `/channel/<id>/live`), consent placeholders
   (`data-src-cmplz`), and each embed's `title`. Every trust page's chrome links the

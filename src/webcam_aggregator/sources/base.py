@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as htmllib
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
@@ -36,16 +37,18 @@ _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.I)
 _FERATEL_CAM = re.compile(r"webtv(?:fc)?\.feratel\.com/webtv/\?[^\"'\s]*?\bcam=(\d+)")
 
 # Iframes that can never carry a stream: the tag-manager/consent frames pages embed
-# alongside their real player (GTM's <noscript> ns.html is the common one). The
-# extraction ladder treats any iframe as a possible embed, so without this they
-# become candidates and then `no-extractor` drops — noise in the very list that is
-# supposed to say which extractor to write next.
+# alongside their real player (GTM's <noscript> ns.html is the common one), and the
+# Waze live traffic map that traffic-cam pages embed beside or instead of one. The
+# extraction ladder falls back to a page's first iframe that could be a player, so
+# without this list one of these would be taken for the player, or become a
+# candidate and then a `no-extractor` drop — noise in the very list that is supposed
+# to say which extractor to write next.
 #
 # Add a host here ONLY if it serves no video at all. A video embed we merely can't
 # play (ivideon, rtsp.me, angelcam) must NOT go here: it is a real coverage gap, and
 # its place is the `no-extractor` report where it stays visible as work someone
 # could pick up.
-_NEVER_A_STREAM_HOSTS = ("googletagmanager.com",)
+_NEVER_A_STREAM_HOSTS = ("googletagmanager.com", "waze.com")
 
 # Strips entire "Source: <a ...>...</a>" attribution block (including the URL inside)
 _ATTRIBUTION_BLOCK = re.compile(
@@ -63,11 +66,21 @@ def _strip_attribution(html: str) -> str:
     return _ATTRIBUTION_BLOCK.sub("", html)
 
 
-def _is_never_a_stream(url: str) -> bool:
-    """True for hosts that cannot serve video at all (tag managers, consent frames).
-    Subdomain-aware, so `www.`/`ns.` variants match without listing each one."""
-    host = (urlsplit(url).hostname or "").lower()
-    return any(host == h or host.endswith("." + h) for h in _NEVER_A_STREAM_HOSTS)
+def _not_a_stream(target: str) -> bool:
+    """True for an embed target that can never be a stream, so must not become a
+    candidate: a non-http(s) placeholder (a consent manager parks embeds on
+    about:blank), a still image (worldcams and the EarthCam long tail list JPEG cams
+    beside real ones), or a host serving no video at all (_NEVER_A_STREAM_HOSTS,
+    subdomain-aware so `www.`/`ns.` variants match without listing each one). Left
+    in, each is a doomed `no-extractor` drop inflating the counts that say which
+    extractor to write next."""
+    parts = urlsplit(target)
+    host = (parts.hostname or "").lower()
+    return (
+        parts.scheme not in ("http", "https")
+        or bool(_IMAGE_EXT.search(parts.path))
+        or any(host == h or host.endswith("." + h) for h in _NEVER_A_STREAM_HOSTS)
+    )
 
 
 def _angle_targets(html: str) -> list[tuple[str | None, str]]:
@@ -167,9 +180,14 @@ def extract_candidates(html: str, *, page_url: str, source: str) -> Iterator[Can
         if cm:
             plain.append("https://www.youtube.com/" + cm.group(1) + "/live")
         if not plain:
-            ifr = _IFRAME_TAG.search(clean)
-            if ifr:
-                plain.append(ifr.group(1))
+            # The page's FIRST iframe that could carry a stream, not its first iframe:
+            # CMS pages open <body> with GTM's <noscript> frame, ahead of the player.
+            # The src is an HTML attribute, so its entities (`&amp;`) are decoded.
+            for ifr in _IFRAME_TAG.finditer(clean):
+                target = urljoin(page_url, htmllib.unescape(ifr.group(1)))
+                if not _not_a_stream(target):
+                    plain.append(target)
+                    break
         multi = len(plain) > 1
         pairs = [(str(i) if multi else None, t) for i, t in enumerate(plain)]
     seen: set[str] = set()
@@ -179,16 +197,7 @@ def extract_candidates(html: str, *, page_url: str, source: str) -> Iterator[Can
         # relative player path is perfectly usable once absolute, and a target with no
         # host is useless to every extractor and unattributable in the diagnostics.
         target = urljoin(page_url, raw_target)
-        # A still image is not a stream and never will be — worldcams and the EarthCam
-        # long tail both list JPEG cams alongside real ones. Drop them here so they
-        # don't inflate the "no extractor" counts that say which extractor to write next.
-        if _IMAGE_EXT.search(urlsplit(target).path):
-            continue
-        # Same reasoning for the analytics/consent iframes a page carries beside its
-        # player (see _NEVER_A_STREAM_HOSTS).
-        if _is_never_a_stream(target):
-            continue
-        if target in seen:
+        if _not_a_stream(target) or target in seen:
             continue
         seen.add(target)
         yield Candidate(

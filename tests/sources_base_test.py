@@ -274,25 +274,6 @@ def test_image_check_uses_the_path_not_the_query() -> None:
     assert len(cands) == 1
 
 
-def test_tag_manager_iframes_are_not_candidates() -> None:
-    """A page's GTM <noscript> frame sits beside the real player and the ladder
-    treats any iframe as a possible embed. It can never be a stream, so dropping it
-    keeps the 'no extractor' hosts an honest list of extractors worth writing."""
-    html = (
-        '<iframe src="https://www.googletagmanager.com/ns.html?id=GTM-ABC123"'
-        ' height="0" width="0"></iframe>'
-        '<iframe src="https://www.youtube.com/embed/3nyPER2kzqk"></iframe>'
-    )
-    cands = list(
-        extract_candidates(
-            html, page_url="https://www.example-trust.org/webcam", source="wt"
-        )
-    )
-    assert [c.target_url for c in cands] == [
-        "https://www.youtube.com/watch?v=3nyPER2kzqk"
-    ]
-
-
 def test_only_the_gtm_iframe_leaves_no_candidates() -> None:
     """A page whose only iframe is the tag manager yields nothing at all, rather
     than one doomed candidate."""
@@ -315,3 +296,63 @@ def test_unservable_video_embeds_are_still_reported() -> None:
             extract_candidates(html, page_url="https://cams.example/x", source="s")
         )
         assert [c.target_url for c in cands] == [f"https://{host}/embed/abc"], host
+
+
+def test_a_leading_tag_manager_iframe_does_not_hide_the_player() -> None:
+    """CMS pages open <body> with GTM's <noscript> iframe, ahead of the real
+    player. The player further down is the page's cam and must be read."""
+    html = (
+        '<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"'
+        ' height="0" width="0"></iframe></noscript>'
+        '<iframe src="https://camsecure.co.uk/httpswebcam/trust.html"></iframe>'
+    )
+    cands = list(
+        extract_candidates(
+            html, page_url="https://www.example-trust.org/x", source="wt"
+        )
+    )
+    assert [c.target_url for c in cands] == [
+        "https://camsecure.co.uk/httpswebcam/trust.html"
+    ]
+
+
+def test_a_placeholder_iframe_is_skipped_for_the_player_after_it() -> None:
+    """A consent manager parks embeds on about:blank until consent is given. The
+    placeholder can never be a stream; the player after it is the cam."""
+    html = (
+        '<iframe src="about:blank" data-src-cmplz="https://x.example/p"></iframe>'
+        '<iframe src="https://g1.ipcamlive.com/player/player.php?alias=a"></iframe>'
+    )
+    cands = list(
+        extract_candidates(
+            html, page_url="https://www.example-trust.org/x", source="wt"
+        )
+    )
+    assert [c.target_url for c in cands] == [
+        "https://g1.ipcamlive.com/player/player.php?alias=a"
+    ]
+
+
+def test_a_traffic_map_iframe_is_not_a_candidate() -> None:
+    """Traffic-cam pages embed a Waze live map beside (or instead of) the player.
+    A map serves no video, so it must not surface as a no-extractor gap."""
+    html = '<iframe src="https://embed.waze.com/iframe?zoom=14&lat=-23.5&lon=-46.6">'
+    cands = list(
+        extract_candidates(html, page_url="https://www.cxtvlive.com/x", source="c")
+    )
+    assert cands == []
+
+
+def test_the_fallback_iframe_is_read_as_an_html_attribute() -> None:
+    """The walk skips a leading still image, resolves a relative player path, and
+    decodes entities: `&amp;` in a src is `&` in the URL."""
+    html = (
+        '<iframe src="/img/cam.jpg"></iframe>'
+        '<iframe src="/player/embed.php?cam=7&amp;autoplay=1"></iframe>'
+    )
+    cands = list(
+        extract_candidates(html, page_url="https://cams.example/live/7", source="s")
+    )
+    assert [c.target_url for c in cands] == [
+        "https://cams.example/player/embed.php?cam=7&autoplay=1"
+    ]
