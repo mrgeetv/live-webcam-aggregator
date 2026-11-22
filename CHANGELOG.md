@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file. See [Conven
 
 ### Bug Fixes
 
+* **scraper:** restore cxtvlive via the live index and curl_cffi path ([8e05684](https://github.com/mrgeetv/live-webcam-aggregator/commit/8e05684afb1faf57f35784f64f24e9acc451e6d7)), closes [#149](https://github.com/mrgeetv/live-webcam-aggregator/issues/149) [#148](https://github.com/mrgeetv/live-webcam-aggregator/issues/148)
+* **scraper:** take the feratel cam id from the detail-page url ([#167](https://github.com/mrgeetv/live-webcam-aggregator/issues/167)) ([f91de2c](https://github.com/mrgeetv/live-webcam-aggregator/commit/f91de2c2a62f766e6e257a7a121a66136d2c047f)), closes [#121](https://github.com/mrgeetv/live-webcam-aggregator/issues/121)
+
+### Maintenance
+
+* **release:** 2.14.1 [skip ci] ([31d0c84](https://github.com/mrgeetv/live-webcam-aggregator/commit/31d0c8408cb043a3bc12d5db3f100926e389ab98))
+
+## [2.14.1](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.0...v2.14.1) (2026-11-22)
+
+### Bug Fixes
+
 * **scraper:** take the feratel cam id from the detail-page url ([#167](https://github.com/mrgeetv/live-webcam-aggregator/issues/167)) ([f91de2c](https://github.com/mrgeetv/live-webcam-aggregator/commit/f91de2c2a62f766e6e257a7a121a66136d2c047f)), closes [#121](https://github.com/mrgeetv/live-webcam-aggregator/issues/121)
 
 ## [2.14.0](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.13.12...v2.14.0) (2026-11-21)
