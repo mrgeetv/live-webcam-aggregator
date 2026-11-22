@@ -307,6 +307,11 @@ segment `403`s, so the build-time liveness, the resolve and the manifest gate al
 pass and the cams ship looking healthy. The 403 is a player-to-CDN exchange the
 server is never part of, with `PROXY_YOUTUBE` on or off.
 
+A **single** cam whose segments 403 while a fresh resolve of it plays is a different
+fault: a cached resolve gone dud. The server re-resolves it when the player retries
+(see `ResolveCache.record_redirect`), so re-selecting the cam fixes it; re-selecting
+does nothing for a leash.
+
 To confirm: resolve one cam by hand, then fetch a segment straight away and again a
 minute later.
 

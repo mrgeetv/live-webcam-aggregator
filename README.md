@@ -213,7 +213,7 @@ All via environment variables (see `.env.example`):
 | `EXCLUDE_CATEGORIES` | (none) | Comma-separated categories to drop, across all sources, case-insensitive. See *Filtering by category* |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `MAX_PARALLEL_SOURCES` | `4` | How many sources discover + liveness-check at once (min 1). Total build concurrency ≈ this × `SCRAPE_WORKERS`; extra sources queue |
-| `PROXY_YOUTUBE` | `false` | `false` redirects players straight to YouTube (lower latency, but playback stops when YouTube's ~6h stream token expires — reselect to resume). `true` proxies YouTube through the server so it keeps playing past that, at a small latency cost |
+| `PROXY_YOUTUBE` | `false` | `false` redirects players straight to YouTube (lower latency, but playback stops when YouTube's ~6h stream token expires — reselect to resume; a player retrying a stream that failed gets a freshly resolved one). `true` proxies YouTube through the server so it keeps playing past that, at a small latency cost |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Externally-reachable base for the emitted URLs |
 | `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness during the catalogue build (sources also run concurrently). Lower it to reduce peak build-time memory (at the cost of a slower build). A host that starts rate-limiting (429/503) is backed off adaptively per host, so the effective rate to that host can drop below what this implies |
 | `SEARCH_QUERY` | built-in webcam query | YouTube search terms (`\|`=OR, space=AND, `-`=exclude) |

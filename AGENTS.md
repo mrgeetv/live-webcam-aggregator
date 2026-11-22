@@ -61,6 +61,19 @@ The app is two phases, decoupled by a catalogue snapshot:
    Keep that trim even though the pinned player clients (below) usually answer with a
    short live-edge window rather than the full rewind buffer — the window size is the
    client's choice and the url still says `playlist_type/DVR`, so it is not a guarantee.
+   A redirected cam's cached resolve can also go dud well before its token expires:
+   its segments 403 while a fresh resolve of the same broadcast (same `id/<vid>.N`,
+   so not a reconnect) plays, and the server never sees it, because the player
+   fetches googlevideo itself. So `ResolveCache.record_redirect` reads a player back
+   for the same `/stream/<id>` between `RETRY_MIN_GAP` and `RETRY_WINDOW` after the
+   last redirect as a retry, and serves it a fresh resolve. The gap floor skips the
+   start-up double-open every player in the access logs does (TiviMate, IPTV
+   Player); requests inside it don't restart it, so a fast retry loop still counts.
+   An entry refreshed within `RETRY_MIN_AGE` stands, and anyone arriving during the
+   fresh resolve waits for it, so a retry burst costs one yt-dlp call; a failed fresh
+   resolve keeps the old URL, since the "retry" may be a second viewer of a working
+   cam. Redirect path only: proxied, the player polls `/stream/<id>` as its live
+   playlist.
 
 **`build_app()` in `app.py` is the wiring seam.** To extend:
 
@@ -275,7 +288,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   not catch it either: the segments are fine at t=0. Staying current with yt-dlp is
   the only defence, since upstream drops a leashed client from its defaults. "Plays
   for under a minute, then stops" across MANY YouTube cams at once is this, and the
-  fix is a version bump, not a code change.
+  fix is a version bump, not a code change. ONE cam whose fresh resolve plays fine
+  is the dud-cached-resolve case instead (serve phase above), which a player retry
+  heals; a leash kills fresh resolves too, so no re-resolve helps.
 - YouTube's `eventType=live` search is capped at ~100 results via `pageToken` (it
   reports a huge `totalResults` but returns an empty page 3). `discover()` paginates
   by `publishedBefore` time-windows instead (walking back from the last item's

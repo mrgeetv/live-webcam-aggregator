@@ -117,6 +117,10 @@ def _is_youtube(url: str) -> bool:
     return host == "googlevideo.com" or host.endswith(".googlevideo.com")
 
 
+def _redirects_youtube(url: str, proxy_youtube: bool) -> bool:
+    return _is_youtube(url) and not proxy_youtube
+
+
 def _registrable_domain(host: str) -> str:
     parts = host.lower().split(".")
     return ".".join(parts[-2:]) if len(parts) >= 2 else host.lower()
@@ -330,6 +334,14 @@ def serve_stream(
     if entry is None:
         return (404, "text/plain", b"unknown stream")
     resolved = cache.get(entry_id, entry.target_url)
+    if (
+        resolved is not None
+        and _redirects_youtube(resolved.url, proxy_youtube)
+        and cache.record_redirect(entry_id)
+    ):
+        # googlevideo can stop serving a cached URL's segments hours before its
+        # token expires, while a fresh resolve of the same broadcast plays.
+        resolved = cache.get(entry_id, entry.target_url, fresh=True)
     if resolved is None:
         log.warning("resolve failed: %s -> %s", entry_id, loggable(entry.target_url))
         return (502, "text/plain", b"resolve failed")
@@ -343,7 +355,7 @@ def serve_stream(
     if _is_direct_playback(resolved.url):
         # IP-bound session: let the player fetch the whole chain itself (no proxy)
         return (302, resolved.url, b"")
-    if _is_youtube(resolved.url) and not proxy_youtube:
+    if _redirects_youtube(resolved.url, proxy_youtube):
         # Default: hand the player the googlevideo manifest directly — lower latency
         # and less buffering on shallow live windows. Trade-off: playback stops when
         # the ~6h googlevideo token expires (re-select to resume). PROXY_YOUTUBE=true
