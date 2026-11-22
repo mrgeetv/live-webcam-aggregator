@@ -11,8 +11,8 @@ from .base import HtmlScraperSource
 # /webcams/ index has nothing after the slash and never matches.
 _SITEMAP = "https://www.resortcams.com/webcams-sitemap1.xml"
 _LOC = re.compile(r"<loc>(https://www\.resortcams\.com/webcams/[^<]+)</loc>")
-_TITLE = re.compile(r"<title>(.*?)</title>", re.S)
-_SITE_TAIL = re.compile(r"\s*[–-]\s*Resort Cams\s*$", re.I)
+_TITLE = re.compile(r"<title>([^<]*)</title>")
+_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Resort Cams\s*$", re.I)
 
 
 class ResortCamsSource(HtmlScraperSource[str]):

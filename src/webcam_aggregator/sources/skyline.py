@@ -47,10 +47,10 @@ _CAT_INDEX = re.compile(r"/en/live-cams-category/([a-z0-9-]+)-cams\.html")
 # A category page's cam links are root-relative.
 _CAM_LINK = re.compile(rf'href="({_CAM_PATH})"')
 
-_H1 = re.compile(r"<h1[^>]*>([^<]{1,120})</h1>")
-_LIVECAM_SUFFIX = re.compile(r"\s*live cam\s*$", re.I)
+_H1 = re.compile(r"<h1[^<>]*>([^<]{1,120})</h1>")
+_LIVECAM_SUFFIX = re.compile(r"(?<!\s)\s*live cam\s*$", re.I)
 _LD_JSON = re.compile(
-    r'<script type="application/ld\+json">(.*?)</script>', re.S | re.I
+    r'<script type="application/ld\+json">((?:[^<]|<(?!/?script))*+)</script>', re.I
 )
 
 # Skyline's own Clappr HLS (its token lapses unless the page is re-fetched, so it is

@@ -24,8 +24,8 @@ _CHANNEL = re.compile(r"youtube\.com/(channel/[A-Za-z0-9_-]+|@[A-Za-z0-9_.-]+)")
 # them when a page lists no 24/7 channel at all (Zurich's are all in this section).
 _OCCASIONAL = "Live streamers with regular broadcasts"
 # WordPress permalink heading: <h2><a href=… rel="bookmark" …>Zurich Airport Webcam</a>
-_TITLE = re.compile(r'rel="bookmark"[^>]*>([^<]+)')
-_TITLE_TAIL = re.compile(r"\s*Webcams?\s*$", re.I)
+_TITLE = re.compile(r'<[^<>]*rel="bookmark"[^<>]*>([^<]+)')
+_TITLE_TAIL = re.compile(r"(?<!\s)\s*Webcams?\s*$", re.I)
 
 
 class AirportWebcamsSource(HtmlScraperSource[str]):

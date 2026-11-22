@@ -22,11 +22,14 @@ _YT_PLAYLIST = re.compile(r"youtube(?:-nocookie)?\.com/embed\?list=([A-Za-z0-9_-
 _YT_CHANNEL = re.compile(
     r"youtube\.com/(channel/[A-Za-z0-9_-]+|@[A-Za-z0-9_.-]+)(?:/live)?"
 )
-_M3U8 = re.compile(r"https?:[\\/]+[^\"'\s\\]+\.m3u8[^\"'\s\\]*")
-_WC_STREAMS = re.compile(r"""streams\[(\d+)\]\s*=\s*(["'])((?:\\.|(?!\2).)*)\2""")
+# A playlist is a whole URL-like run that holds `.m3u8`, tested after matching: a
+# greedy body before a required `.m3u8` re-scans the rest of the run from every `http`
+# in it, and `re` holds the GIL while it does (see the AGENTS.md regex lesson).
+_URL_RUN = re.compile(r"https?:[\\/]+[^\"'\s\\]+")
+_WC_STREAMS = re.compile(r"""streams\[(\d+)\]\s*=\s*(["'])((?:\\.|(?!\2)[^\\\n])*)\2""")
 _WC_PLAYER = re.compile(r"worldcams\.tv\\?/player\?url=([^\"'\s\\]+)")
 _IFRAME_SRC = re.compile(r'src=\\?"([^"\\]+)')
-_IFRAME_TAG = re.compile(r'<iframe[^>]+src=["\']([^"\']+)["\']', re.I)
+_IFRAME_TAG = re.compile(r'<iframe[^<>]+src=["\']([^"\']+)["\']', re.I)
 # Still-image "cams" listed alongside real streams (worldcams' streams[] array, the
 # EarthCam long tail). Matched on the URL PATH so a query string can't false-trigger.
 _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.I)
@@ -34,7 +37,8 @@ _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.I)
 # as webtv.feratel.com/webtv/?cam=<id> (our canonical form) and as webtvfc.… with
 # extra design/pg params in third-party embeds, so keying on the id is what lets the
 # feratel source's copy merge with the ones cxtvlive/camscape pick up.
-_FERATEL_CAM = re.compile(r"webtv(?:fc)?\.feratel\.com/webtv/\?[^\"'\s]*?\bcam=(\d+)")
+_FERATEL_QUERY = re.compile(r"webtv(?:fc)?\.feratel\.com/webtv/\?([^\"'\s]*)")
+_CAM_PARAM = re.compile(r"\bcam=(\d+)")
 
 # Iframes that can never carry a stream: the tag-manager/consent frames pages embed
 # alongside their real player (GTM's <noscript> ns.html is the common one), and the
@@ -50,9 +54,11 @@ _FERATEL_CAM = re.compile(r"webtv(?:fc)?\.feratel\.com/webtv/\?[^\"'\s]*?\bcam=(
 # could pick up.
 _NEVER_A_STREAM_HOSTS = ("googletagmanager.com", "waze.com")
 
-# Strips entire "Source: <a ...>...</a>" attribution block (including the URL inside)
+# Strips entire "Source: <a ...>...</a>" attribution block (including the URL inside).
+# The link text stops at the next <a or </a, so an unclosed link costs one span, not
+# a scan to the end of the page.
 _ATTRIBUTION_BLOCK = re.compile(
-    r"Source:\s*(?:&nbsp;\s*)?<a\b[^>]*>.*?</a>", re.I | re.S
+    r"Source:\s*(?:&nbsp;\s*)?<a\b[^<>]*>(?:[^<]|<(?!/?a\b))*+</a>", re.I
 )
 
 
@@ -104,9 +110,10 @@ def predisc_key(target: str) -> str | None:
     m = _YT_VIDEO.search(t)
     if m:
         return f"yt:{m.group(1)}"
-    fm = _FERATEL_CAM.search(t)
-    if fm:
-        return f"feratel:{fm.group(1)}"
+    for fq in _FERATEL_QUERY.finditer(t):
+        cam = _CAM_PARAM.search(fq.group(1))
+        if cam:
+            return f"feratel:{cam.group(1)}"
     if ".m3u8" in t:
         # Strip only unambiguous token params. NOT generic single-letter names like
         # `st`/`e` — those can be legitimate stream selectors, and stripping them
@@ -174,8 +181,9 @@ def extract_candidates(html: str, *, page_url: str, source: str) -> Iterator[Can
             plain.append(f"https://www.youtube.com/embed?list={m.group(1)}")
         for pm in _WC_PLAYER.finditer(clean):
             plain.append("https://worldcams.tv/player?url=" + pm.group(1))
-        for mm in _M3U8.finditer(clean):
-            plain.append(mm.group(0))
+        for mm in _URL_RUN.finditer(clean):
+            if ".m3u8" in mm.group(0):
+                plain.append(mm.group(0))
         cm = _YT_CHANNEL.search(clean)
         if cm:
             plain.append("https://www.youtube.com/" + cm.group(1) + "/live")

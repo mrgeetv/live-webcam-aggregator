@@ -25,7 +25,7 @@ _CATEGORY = "Animals"
 # across the whole body.
 _CARD_MARK = "paragraph--type--featured-cards-custom"
 _CARD_HREF = re.compile(r'<a href="([^"<>]+)"')
-_CARD_TITLE = re.compile(r"card__title[^<>]*>([^<]+)<", re.I)
+_CARD_TITLE = re.compile(r"<[^<>]*card__title[^<>]*>([^<]+)<", re.I)
 # The trusts page: each trust's own site is its card's schema.org `url` link.
 _TRUST_SITE = re.compile(r'<a href="(https?://[^"<>]+)"[^<>]*itemprop="url"', re.I)
 
@@ -66,10 +66,13 @@ _TAG_TITLE = re.compile(r"""\btitle=["']([^"'<>]+)""", re.I)
 _GENERIC_TITLE = re.compile(r"^(?:youtube( video player)?|video|webcam|iframe)$", re.I)
 _QUOTED_TITLE = re.compile(r'^youtube video\s*["“](.+)["”]$', re.I)  # one embed plugin
 # A channel's "current live" embed (Scottish Wildlife Trust's ospreys).
-_YT_LIVE_EMBED = re.compile(
-    r"youtube(?:-nocookie)?\.com/embed/live_stream\?(?:[^\"'\s<>]*&)?channel=([\w-]+)",
+# The query is matched whole and then searched for `channel=`: an optional `…&` span
+# before a required `channel=` re-scans the rest of the URL from every start in it.
+_YT_LIVE_QUERY = re.compile(
+    r"youtube(?:-nocookie)?\.com/embed/live_stream\?([^\"'\s<>]*)",
     re.I,
 )
+_CHANNEL_PARAM = re.compile(r"(?:^|[?&])channel=([\w-]+)", re.I)
 # The index links some cams straight at a channel's /streams or /videos tab.
 _YT_CHANNEL_TAB = re.compile(
     r"^(https://www\.youtube\.com/(?:@[\w.-]+|channel/[\w-]+))/(?:streams|videos)/?$"
@@ -80,7 +83,9 @@ _OEMBED = "https://www.youtube.com/oembed?format=json&url="
 _PAGE_TITLE = re.compile(
     r'<meta property="og:title" content="([^"<>]+)"|<title>([^<]+)</title>', re.I
 )
-_TITLE_SUFFIX = re.compile(r"\s*[|–-]\s*[^|–-]*(?:Wildlife|Trust)[^|–-]*$", re.I)
+_TITLE_SUFFIX = re.compile(
+    r"(?<!\s)\s*[|–-](?=[^|–-]*(?:Wildlife|Trust))[^|–-]*$", re.I
+)
 
 # Where a target was found, best first. A cam reached from several places takes its
 # name from the best one: the page that embeds it, then an index card, then a page
@@ -89,7 +94,7 @@ _EMBEDDED, _CARD, _LINKED = 0, 1, 2
 
 
 def _text(raw: str) -> str:
-    return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", " ", raw))).strip()
+    return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^<>]+>", " ", raw))).strip()
 
 
 def _site(url: str) -> str:
@@ -267,9 +272,10 @@ class WildlifeTrustsSource:
 
     def _resolve_embed(self, embed: str) -> list[str]:
         """An embed URL -> the target(s) the extractors serve."""
-        live = _YT_LIVE_EMBED.search(embed)
-        if live:
-            return [f"https://www.youtube.com/channel/{live.group(1)}/live"]
+        for query in _YT_LIVE_QUERY.finditer(embed):
+            live = _CHANNEL_PARAM.search(query.group(1))
+            if live:
+                return [f"https://www.youtube.com/channel/{live.group(1)}/live"]
         key = predisc_key(embed) or ""
         if key.startswith("yt:"):
             return [f"https://www.youtube.com/watch?v={key[3:]}"]

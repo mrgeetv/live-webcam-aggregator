@@ -6,7 +6,7 @@ from collections.abc import Callable
 from .base import Resolved
 
 _OG = re.compile(
-    r'<meta[^>]+(?:property|name)=["\'](?:og:video|twitter:player)["\'][^>]+content=["\']([^"\']+)["\']',
+    r'<meta[^<>]+(?:property|name)=["\'](?:og:video|twitter:player)["\'][^<>]+content=["\']([^"\']+)["\']',
     re.I,
 )
 

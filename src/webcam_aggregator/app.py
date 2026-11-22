@@ -235,7 +235,7 @@ _DETAIL_CHARS = 80
 # string can carry a session token. The details are aggregated at INFO, where the rule
 # is hostnames/paths only (full URLs live at DEBUG), so trim every embedded URL to
 # scheme://host/path before the detail is counted.
-_URL_QUERY = re.compile(r"(https?://[^\s?\"']+)\?\S*")
+_URL_QUERY = re.compile(r"(https?://[^\s?\"']+)(?:\?\S*)?")
 
 
 def make_liveness_check(

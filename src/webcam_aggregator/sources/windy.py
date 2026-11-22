@@ -25,7 +25,7 @@ _LIST = (
     "?nearby={lat},{lon}&radius=250&limit=25&offset={off}"
 )
 _STREAM = "https://webcams.windy.com/webcams/stream/{id}"
-_IFRAME = re.compile(r'<iframe[^>]+src="([^"]+)"', re.I)
+_IFRAME = re.compile(r'<iframe[^<>]+src="([^"]+)"', re.I)
 
 # The corpus is ~65k cams worldwide and only ~5-10% have live video, so one build
 # can neither enumerate nor probe everything politely. Instead the instance keeps

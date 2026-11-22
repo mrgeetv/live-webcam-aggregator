@@ -13,7 +13,11 @@ from .base import Resolved
 # clipped at the JSON-escaped `&` gets a 403 from the edge — so the blob is
 # json.loads-ed (which decodes the escape) rather than regexed out of the raw HTML.
 # An offline cam renders its page with no blob at all.
-_BLOB = re.compile(r'<script[^>]+id="player-data"[^>]*>(.*?)</script>', re.I | re.S)
+# The body may hold any `<` except another script tag, so an unclosed tag ends at the
+# next one instead of scanning to the end of the page.
+_BLOB = re.compile(
+    r'<script[^<>]+id="player-data"[^<>]*>((?:[^<]|<(?!/?script))*+)</script>', re.I
+)
 
 
 def stream_src(html: str) -> str | None:

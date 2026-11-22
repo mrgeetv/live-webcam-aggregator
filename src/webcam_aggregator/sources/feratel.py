@@ -17,7 +17,10 @@ _SITEMAP = "https://www.feratel.com/sitemap-0.xml"
 _LOC = re.compile(
     r"<loc>(https://www\.feratel\.com/en/webcams/[^/<]+/[^/<]+/[^/<]+-\d+)</loc>"
 )
-_TITLE = re.compile(r"<title>Webcams in ([^<]*?)\s*-\s*Livecams[^<]*</title>")
+_TITLE = re.compile(r"<title>([^<]*)</title>")
+# Read from the title text, apart from the tag: inside one pattern, an unclosed
+# <title> makes every dash in it rescan to the end of the page.
+_NAME = re.compile(r"^Webcams in ([^<]*?)-\s*Livecams")
 
 
 class FeratelSource(HtmlScraperSource[str]):
@@ -39,7 +42,8 @@ class FeratelSource(HtmlScraperSource[str]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
         m = _TITLE.search(html)
-        title = unescape(m.group(1)).strip() if m else ""
+        n = _NAME.match(m.group(1)) if m else None
+        title = unescape(n.group(1)).strip() if n else ""
         if not title:
             # last resort: the URL slug minus its cam id ("gschnitz-zentrum-5751")
             slug = url.rsplit("/", 1)[-1].rsplit("-", 1)[0]

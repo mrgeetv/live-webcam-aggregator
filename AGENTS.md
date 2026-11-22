@@ -243,6 +243,30 @@ The app is two phases, decoupled by a catalogue snapshot:
   reject every master playlist, which is what most CDN top-level URLs return. This is
   the same failure shape as the rtsp.me stub that is dodged by skipping that host by
   URL; content-based detection catches the class rather than one domain at a time.
+- **A regex over a fetched body must stay linear.** `re` holds the GIL for the whole
+  match, so one page that sends a pattern into quadratic backtracking stalls the entire
+  process, `/stream` playback included. The shapes that bite, and their fixes:
+  - a span that can run past the next start before a required suffix
+    (`https?://[^"\s]+\.m3u8`): match the whole run, then test it for the suffix
+    (`base._URL_RUN`);
+  - a tag's attribute class: exclude `<` as well as `>`, and start a match anchored on
+    an attribute (`card__title`) at its tag's `<`;
+  - an element body (`<title>(.*?)</title>`): stop it at the next opening or closing
+    tag of that element, possessively (`(?:[^<]|<(?!/?script))*+`), since a plain
+    `*` keeps a backtrack point per character and a big page runs out of memory;
+  - `.*$` without `re.M`: a trailing newline fails `$` from every start, so each
+    rescans its line (`re.M`, or `re.S` on a URL);
+  - a leading `\s*` before a suffix: `(?<!\s)`, so only a run's first space starts a
+    match;
+  - two adjacent quantifiers over the same characters (`\s*\.?\s*`, a lazy capture
+    before `\s*`, a span either side of a keyword): keep one, test the keyword in a
+    lookahead, `.strip()` the capture;
+  - an alternation where one character fits two branches (`\\.|.`): exponential, so
+    make the branches disjoint.
+
+  `tests/regex_linearity_test.py` collects every regex in the package and times it on
+  generated hostile inputs, so a new pattern is checked without anyone writing a test
+  for it. It is a heuristic, not a proof: a shape its inputs don't produce gets through.
 - **A wedged googleapiclient connection survives retries.** httplib2's `Http.request`
   evicts a pooled connection **only** on `socket.timeout` — a `BrokenPipeError` leaves
   the dead socket in `self.connections`, so every later call reuses it and fails
