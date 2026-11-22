@@ -203,17 +203,23 @@ def rewrite_manifest(
     return _TAG_LINE.sub(rewrite_tag, text)
 
 
-# DVR YouTube live streams hand us the entire rewind buffer (thousands of segments,
-# >8 MB). We don't support rewind on a live wall, so trim long media playlists to the
+# DVR live streams (YouTube, hdontap's Wowza edges) can hand us the entire rewind
+# buffer (thousands of segments, up to several MB, re-fetched every few seconds per
+# viewer). We don't support rewind on a live wall, so trim long media playlists to the
 # live edge: keep ~the last _LIVE_WINDOW_SECONDS, fixing up the sequence tags. Master
 # playlists and normal-length live playlists pass through untouched.
 _LIVE_WINDOW_SECONDS = 120.0
 _TRUNCATE_ABOVE = 200  # only DVR-sized playlists are trimmed
 _MIN_KEEP = 6
+# Tags that describe the whole playlist (RFC 8216bis), wherever they sit. Every other
+# tag belongs to the segment after it — #EXT-X-KEY and #EXT-X-MAP included, since
+# either can change mid-playlist.
 _PLAYLIST_TAGS = frozenset(
     {
         "#EXTM3U",
         "#EXT-X-VERSION",
+        "#EXT-X-INDEPENDENT-SEGMENTS",
+        "#EXT-X-DEFINE",
         "#EXT-X-TARGETDURATION",
         "#EXT-X-MEDIA-SEQUENCE",
         "#EXT-X-DISCONTINUITY-SEQUENCE",
@@ -222,10 +228,10 @@ _PLAYLIST_TAGS = frozenset(
         "#EXT-X-START",
         "#EXT-X-SERVER-CONTROL",
         "#EXT-X-PART-INF",
-        "#EXT-X-MAP",
         "#EXT-X-I-FRAMES-ONLY",
     }
 )
+_SEGMENT_STATE_TAGS = frozenset({"#EXT-X-KEY", "#EXT-X-MAP"})
 
 
 def _header_int(header: list[str], tag: str, default: int) -> int:
@@ -250,27 +256,25 @@ def _extinf_dur(tags: list[str]) -> float:
 
 def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> str:
     """Trim a long DVR media playlist to ~`window` seconds at the live edge, adjusting
-    MEDIA-SEQUENCE / DISCONTINUITY-SEQUENCE. Master playlists and normal-length media
-    playlists are returned unchanged (verbatim)."""
+    MEDIA-SEQUENCE / DISCONTINUITY-SEQUENCE and carrying the key and init section in
+    force at the cut. Master playlists and normal-length media playlists are returned
+    unchanged (verbatim)."""
     if "#EXT-X-STREAM-INF" in text:  # master playlist — no media segments here
         return text
     header: list[str] = []
     segments: list[tuple[list[str], str]] = []  # (preceding tag lines, url line)
     pending: list[str] = []
-    started = False
     for ln in text.splitlines():
         if not ln.strip():
             continue
         if ln.startswith("#"):
-            if not started and ln.split(":", 1)[0] in _PLAYLIST_TAGS:
+            if ln.split(":", 1)[0] in _PLAYLIST_TAGS:
                 header.append(ln)
             else:
                 pending.append(ln)
-                started = True
         else:
             segments.append((pending, ln))
             pending = []
-            started = True
     if len(segments) <= _TRUNCATE_ABOVE:
         return text  # not a DVR back-catalogue — leave it alone
     kept: list[tuple[list[str], str]] = []
@@ -304,9 +308,20 @@ def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> st
         out.append(f"#EXT-X-MEDIA-SEQUENCE:{media_seq}")
     if not saw_disc and disc_seq:
         out.append(f"#EXT-X-DISCONTINUITY-SEQUENCE:{disc_seq}")
+    # A key or init section governs every segment after it until replaced, so the
+    # dropped ones are replayed in order: with no segments between them, each lands in
+    # the state upstream had at the cut — every KEYFORMAT's key, and the key in force
+    # at each MAP (which is the one that encrypted its init section).
+    out.extend(
+        t
+        for tags, _ in dropped
+        for t in tags
+        if t.split(":", 1)[0] in _SEGMENT_STATE_TAGS
+    )
     for tags, url in kept:
         out.extend(tags)
         out.append(url)
+    out.extend(pending)  # tags after the last segment (ENDLIST, LL-HLS hints)
     return "\n".join(out) + "\n"
 
 
