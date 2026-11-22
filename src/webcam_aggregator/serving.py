@@ -34,6 +34,21 @@ def is_playable_manifest(text: str | None) -> bool:
     return "#EXTINF" in text or "#EXT-X-STREAM-INF" in text
 
 
+def first_variant(master: str, url: str) -> str | None:
+    """The absolute URL of a master playlist's first variant (the URI line after its
+    first `#EXT-X-STREAM-INF`), or None if it names none. The first listed variant is
+    where a player starts."""
+    lines = iter(master.splitlines())
+    for ln in lines:
+        if ln.startswith("#EXT-X-STREAM-INF"):
+            for ref in lines:
+                ref = ref.strip()
+                if ref and not ref.startswith("#"):
+                    return urljoin(url, ref)
+            return None
+    return None
+
+
 def loggable(url: str) -> str:
     """An upstream URL trimmed to scheme://host/path for logging.
 
@@ -410,7 +425,17 @@ def serve_child_manifest(
         return (403, "text/plain", b"bad signature")
     manifest = fetch(upstream_url)
     if manifest is None:
+        log.warning(
+            "child manifest fetch failed: %s -> %s", entry_id, loggable(upstream_url)
+        )
         return (502, "text/plain", b"upstream manifest fetch failed")
+    if not is_playable_manifest(manifest):
+        # A variant can die behind a master that still answers 200: an empty body,
+        # a header-only stub. Relaying it would hand the player nothing to start.
+        log.warning(
+            "unplayable child manifest: %s -> %s", entry_id, loggable(upstream_url)
+        )
+        return (502, "text/plain", b"not a playable HLS stream")
     manifest = truncate_to_live_edge(manifest)
     body = rewrite_manifest(
         manifest,

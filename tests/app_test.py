@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
 from webcam_aggregator.app import origin_of
+from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,19 @@ def _probe_candidate(target: str = "https://x/p.m3u8") -> Candidate:
     )
 
 
+def _upstream(
+    pages: dict[str, str | tuple[None, str]],
+) -> Callable[[str], tuple[str | None, str]]:
+    """A fake probe fetch: a str is a 200 body, a tuple a failed fetch and its
+    outcome, and an unlisted URL a 404."""
+
+    def fetch(url: str) -> tuple[str | None, str]:
+        page = pages.get(url, (None, "http-404"))
+        return (page, "ok") if isinstance(page, str) else page
+
+    return fetch
+
+
 def test_liveness_check_fetch_verifies_hls() -> None:
     from webcam_aggregator.app import make_liveness_check
     from webcam_aggregator.extractors.base import Resolved
@@ -91,11 +106,11 @@ def test_liveness_check_fetch_verifies_hls() -> None:
 
     cand = _probe_candidate()
     live = "#EXTM3U\n#EXTINF:3.000,\nseg.ts\n"
-    assert make_liveness_check(resolve, lambda u: live)(cand) is None
-    assert make_liveness_check(resolve, lambda u: None)(cand) == "dead-manifest"
-    assert (
-        make_liveness_check(resolve, lambda u: "<?xml?><MPD/>")(cand) == "dead-manifest"
-    )  # DASH
+    check = make_liveness_check(resolve, _upstream({"https://cdn.x/p.m3u8": live}))
+    assert check(cand) is None
+    assert make_liveness_check(resolve, _upstream({}))(cand) == "dead-manifest"
+    dash = _upstream({"https://cdn.x/p.m3u8": "<?xml?><MPD/>"})
+    assert make_liveness_check(resolve, dash)(cand) == "dead-manifest"
 
 
 def test_liveness_rejects_an_empty_playlist() -> None:
@@ -105,52 +120,93 @@ def test_liveness_rejects_an_empty_playlist() -> None:
     from webcam_aggregator.app import make_liveness_check
     from webcam_aggregator.extractors.base import Resolved
 
+    url = "https://hd-auth.x/live.m3u8?a=x"
+
     def resolve(_id: str, _url: str) -> Resolved:
-        return Resolved(
-            url="https://hd-auth.x/live.m3u8?a=x", stream_type="hls", ttl_seconds=60
-        )
+        return Resolved(url=url, stream_type="hls", ttl_seconds=60)
 
     stub = "#EXTM3U\n#EXT-X-TARGETDURATION:0\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-ENDLIST\n"
-    check = make_liveness_check(resolve, lambda _u: stub)
+    check = make_liveness_check(resolve, _upstream({url: stub}))
     assert check(_probe_candidate()) == "dead-manifest"
+
+
+_MASTER_URL = "https://cdn.x/cam/master.m3u8"
+_VARIANT_URL = "https://cdn.x/cam/media_0.m3u8"
+_MASTER = (
+    "#EXTM3U\n#EXT-X-VERSION:7\n"
+    '#EXT-X-STREAM-INF:BANDWIDTH=446743,CODECS="avc1.4d4028"\nmedia_0.m3u8\n'
+)
+
+
+def _master_resolve(_id: str, _url: str) -> Resolved:
+    return Resolved(url=_MASTER_URL, stream_type="hls", ttl_seconds=60)
 
 
 def test_liveness_accepts_a_master_playlist() -> None:
     """Requiring segments alone would drop every master playlist — variants, not
     #EXTINF — which is what most CDN top-level URLs return."""
     from webcam_aggregator.app import make_liveness_check
-    from webcam_aggregator.extractors.base import Resolved
 
-    def resolve(_id: str, _url: str) -> Resolved:
-        return Resolved(
-            url="https://cdn.x/master.m3u8", stream_type="hls", ttl_seconds=60
-        )
+    variant = "#EXTM3U\n#EXTINF:2.0,\nseg.ts\n"
+    fetch = _upstream({_MASTER_URL: _MASTER, _VARIANT_URL: variant})
+    assert make_liveness_check(_master_resolve, fetch)(_probe_candidate()) is None
 
-    master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nlow.m3u8\n"
-    assert make_liveness_check(resolve, lambda _u: master)(_probe_candidate()) is None
+
+def test_liveness_rejects_a_master_whose_variant_is_dead() -> None:
+    """A master playlist can answer 200 while the variant behind it is gone — a
+    15-byte `#EXT-X-ENDLIST` body, a header-only stub, a 404 chunklist, an origin
+    500 — so the master alone says nothing about whether a player can start it."""
+    from webcam_aggregator.app import make_liveness_check
+
+    dead: list[str | tuple[None, str]] = [
+        "#EXT-X-ENDLIST\n",
+        "#EXTM3U\n#EXT-X-VERSION:3\n",
+        (None, "http-404"),
+        (None, "http-410"),
+        (None, "http-500"),
+    ]
+    for variant in dead:
+        fetch = _upstream({_MASTER_URL: _MASTER, _VARIANT_URL: variant})
+        check = make_liveness_check(_master_resolve, fetch)
+        assert check(_probe_candidate()) == "dead-manifest", variant
+    # a variant tag with no URI after it: nothing for a player to start on
+    nameless = _upstream({_MASTER_URL: "#EXTM3U\n#EXT-X-STREAM-INF:BW=1\n"})
+    check = make_liveness_check(_master_resolve, nameless)
+    assert check(_probe_candidate()) == "dead-manifest"
+
+
+def test_liveness_keeps_a_master_whose_variant_was_refused() -> None:
+    """A refused or failed variant fetch is not a dead cam. MediaMTX behaves as if
+    it keeps one HLS session per client IP, 401ing the earlier one when a build's
+    concurrent probes open another; a shedding or flaky host fails for reasons of
+    its own."""
+    from webcam_aggregator.app import make_liveness_check
+
+    for outcome in ("http-401", "http-403", "http-503", "timeout", "conn-error"):
+        fetch = _upstream({_MASTER_URL: _MASTER, _VARIANT_URL: (None, outcome)})
+        check = make_liveness_check(_master_resolve, fetch)
+        assert check(_probe_candidate()) is None, outcome
 
 
 def test_liveness_check_distinguishes_missing_extractor() -> None:
     """A gap in our coverage must not read the same as a cam being off air."""
     from webcam_aggregator.app import NoExtractorError, make_liveness_check
-    from webcam_aggregator.extractors.base import Resolved
 
     def resolve(_id: str, url: str) -> Resolved:
         raise NoExtractorError(f"no extractor for {url}")
 
-    check = make_liveness_check(resolve, lambda u: None)
+    check = make_liveness_check(resolve, _upstream({}))
     assert check(_probe_candidate("https://rtsp.me/abc")) == "no-extractor"
 
 
 def test_liveness_check_reports_resolver_detail() -> None:
     """The detail is what separates "yt-dlp is broken" from "this cam is off air"."""
     from webcam_aggregator.app import make_liveness_check
-    from webcam_aggregator.extractors.base import Resolved
 
     def resolve(_id: str, _url: str) -> Resolved:
         raise ValueError("yt-dlp failed: Sign in to confirm you are not a bot")
 
-    reason = make_liveness_check(resolve, lambda u: None)(_probe_candidate())
+    reason = make_liveness_check(resolve, _upstream({}))(_probe_candidate())
     assert reason is not None
     assert reason.startswith("resolve-failed:")
     assert "Sign in to confirm" in reason
@@ -160,14 +216,13 @@ def test_liveness_check_detail_strips_url_query_strings() -> None:
     """An extractor error can embed its target URL, token-carrying query and all; the
     detail is aggregated at INFO, where the rule is hostnames/paths only."""
     from webcam_aggregator.app import make_liveness_check
-    from webcam_aggregator.extractors.base import Resolved
 
     def resolve(_id: str, _url: str) -> Resolved:
         raise ValueError(
             "no address/streamid in https://g0.ipcamlive.com/player/player.php?alias=TOKEN"
         )
 
-    reason = make_liveness_check(resolve, lambda u: None)(_probe_candidate())
+    reason = make_liveness_check(resolve, _upstream({}))(_probe_candidate())
     assert reason is not None
     assert "TOKEN" not in reason
     assert "g0.ipcamlive.com/player/player.php" in reason
@@ -180,7 +235,7 @@ def test_liveness_check_trusts_non_hls_resolve() -> None:
     def resolve(_id: str, _url: str) -> Resolved:
         return Resolved(url="https://cdn.x/v.mp4", stream_type="mp4", ttl_seconds=None)
 
-    assert make_liveness_check(resolve, lambda u: None)(_probe_candidate()) is None
+    assert make_liveness_check(resolve, _upstream({}))(_probe_candidate()) is None
 
 
 def test_build_app_starts_without_youtube_when_client_init_fails(
