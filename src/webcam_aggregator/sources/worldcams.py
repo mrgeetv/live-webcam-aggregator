@@ -7,11 +7,12 @@ from ..models import Candidate
 from .base import HtmlScraperSource, with_location
 
 _MAX_LIST_PAGES = 80
-_LINKS = re.compile(r'<[^<>]*class="cam-promo__title"[^<>]*>\s*<a href="([^"]+)"')
+# Tag keyword in a lookahead, tag skipped possessively (why: airportwebcams._TITLE).
+_LINKS = re.compile(r'<(?=[^<>]*?class="cam-promo__title")[^<>]*+>\s*<a href="([^"]+)"')
 _TITLE = re.compile(r"<h1[^<>]*>([^<]{1,120})</h1>")
 _CATEGORY = re.compile(r'Category:\s*(?:&nbsp;)?<a href="/([^/]+)/">([^<]+)</a>')
 # Per-cam names on multi-stream pages: <a … id="streams__item_<stream-id>" …>Name</a>
-_STREAM_NAMES = re.compile(r'<[^<>]*id="streams__item_(\d+)"[^<>]*>([^<]+)</a>')
+_STREAM_NAMES = re.compile(r'<(?=[^<>]*?id="streams__item_(\d+)")[^<>]*+>([^<]+)</a>')
 
 # ctx = (page <h1> title, {stream-id: specific cam name})
 _Ctx = tuple[str, dict[str, str]]

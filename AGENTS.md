@@ -249,11 +249,15 @@ The app is two phases, decoupled by a catalogue snapshot:
   - a span that can run past the next start before a required suffix
     (`https?://[^"\s]+\.m3u8`): match the whole run, then test it for the suffix
     (`base._URL_RUN`);
-  - a tag's attribute class: exclude `<` as well as `>`, and start a match anchored on
-    an attribute (`card__title`) at its tag's `<`;
+  - a tag's attribute class: exclude `<` as well as `>`; and a match keyed on an
+    attribute (`rel="bookmark"`) finds it with a lazy lookahead inside the tag, then
+    skips the tag possessively (`<(?=[^<>]*?rel="bookmark")[^<>]*+>`), since with
+    `[^<>]*KEY[^<>]*` every repeat of the key in one unclosed tag rescans the rest;
   - an element body (`<title>(.*?)</title>`): stop it at the next opening or closing
-    tag of that element, possessively (`(?:[^<]|<(?!/?script))*+`), since a plain
-    `*` keeps a backtrack point per character and a big page runs out of memory;
+    tag of that element (`(?:[^<]|<(?!/?script))*+`);
+  - any repeat of more than one character at a time (a group, an alternation): make
+    it possessive (`*+`), since a plain one keeps backtracking state per iteration
+    and a big page runs out of memory, however fast the scan;
   - `.*$` without `re.M`: a trailing newline fails `$` from every start, so each
     rescans its line (`re.M`, or `re.S` on a URL);
   - a leading `\s*` before a suffix: `(?<!\s)`, so only a run's first space starts a
@@ -265,8 +269,10 @@ The app is two phases, decoupled by a catalogue snapshot:
     make the branches disjoint.
 
   `tests/regex_linearity_test.py` collects every regex in the package and times it on
-  generated hostile inputs, so a new pattern is checked without anyone writing a test
-  for it. It is a heuristic, not a proof: a shape its inputs don't produce gets through.
+  generated hostile inputs (and measures memory for a repeat that keeps state per
+  iteration), so a new pattern is checked without anyone writing a test for it. It
+  also fails if a regex is built inside a function, where the collector can't see it.
+  It is a heuristic, not a proof: a shape its inputs don't produce gets through.
 - **A wedged googleapiclient connection survives retries.** httplib2's `Http.request`
   evicts a pooled connection **only** on `socket.timeout` — a `BrokenPipeError` leaves
   the dead socket in `self.connections`, so every later call reuses it and fails

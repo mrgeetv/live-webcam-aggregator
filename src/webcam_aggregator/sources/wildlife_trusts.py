@@ -25,7 +25,8 @@ _CATEGORY = "Animals"
 # across the whole body.
 _CARD_MARK = "paragraph--type--featured-cards-custom"
 _CARD_HREF = re.compile(r'<a href="([^"<>]+)"')
-_CARD_TITLE = re.compile(r"<[^<>]*card__title[^<>]*>([^<]+)<", re.I)
+# Tag keyword in a lookahead, tag skipped possessively (why: airportwebcams._TITLE).
+_CARD_TITLE = re.compile(r"<(?=[^<>]*?card__title)[^<>]*+>([^<]+)<", re.I)
 # The trusts page: each trust's own site is its card's schema.org `url` link.
 _TRUST_SITE = re.compile(r'<a href="(https?://[^"<>]+)"[^<>]*itemprop="url"', re.I)
 

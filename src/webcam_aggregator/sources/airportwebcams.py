@@ -24,7 +24,10 @@ _CHANNEL = re.compile(r"youtube\.com/(channel/[A-Za-z0-9_-]+|@[A-Za-z0-9_.-]+)")
 # them when a page lists no 24/7 channel at all (Zurich's are all in this section).
 _OCCASIONAL = "Live streamers with regular broadcasts"
 # WordPress permalink heading: <h2><a href=… rel="bookmark" …>Zurich Airport Webcam</a>
-_TITLE = re.compile(r'<[^<>]*rel="bookmark"[^<>]*>([^<]+)')
+# The keyword is found by a lazy lookahead inside the tag and the tag then skipped
+# possessively: with `[^<>]*KEY[^<>]*`, every repeat of KEY in one unclosed tag
+# rescans the rest of it.
+_TITLE = re.compile(r'<(?=[^<>]*?rel="bookmark")[^<>]*+>([^<]+)')
 _TITLE_TAIL = re.compile(r"(?<!\s)\s*Webcams?\s*$", re.I)
 
 

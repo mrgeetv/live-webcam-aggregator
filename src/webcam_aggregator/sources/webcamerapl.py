@@ -39,7 +39,7 @@ _HREF = re.compile(r'href="(https://[a-z0-9.-]+\.webcamera\.pl/[^"]*)"')
 
 # The player config is inline JSON; `video_src` is the HLS URL, ROT13-obfuscated
 # (the page JS decodes it with the same letter shift before handing it to hls.js).
-_VIDEO_SRC = re.compile(r'"video_src":"((?:[^"\\]|\\.)*)"')
+_VIDEO_SRC = re.compile(r'"video_src":"((?:[^"\\]|\\.)*+)"')
 _A, _L = string.ascii_uppercase, string.ascii_lowercase
 _ROT13 = str.maketrans(_A + _L, _A[13:] + _A[:13] + _L[13:] + _L[:13])
 

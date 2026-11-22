@@ -24,7 +24,11 @@ _LD_JSON = re.compile(
 _NAME_PREFIX = re.compile(r"^【[^】]*】")
 _NAME_SUFFIX = re.compile(r"【Share-Ju】.*$", re.M)
 # The cam's tags sit in the description as このカメラに付されているタグ（tag tag …）.
-_TAG_BLOCK = re.compile(r"このカメラに付されているタグ（([^（）]*)）")
+# The tags run to the first ）; the span also stops at the next tag block, so an
+# unclosed one isn't rescanned from every block after it.
+_TAG_BLOCK = re.compile(
+    r"このカメラに付されているタグ（((?:(?!このカメラに付されているタグ（)[^）])*+)）"
+)
 
 # tag -> a categories._MAP key (mapped to the unified taxonomy at build). The site
 # orders each cam's tags specific -> generic, so the FIRST tag that maps wins.

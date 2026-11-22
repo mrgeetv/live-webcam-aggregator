@@ -11,9 +11,9 @@ from .base import Resolved
 # action=auth_token&id=<N>&embed=1 to admin-ajax.php (with an XHR Referer header) returns an
 # HTML player fragment containing the tokenised m3u8 (edge*.balticlivecam.com/...?token=h:<epoch_ms>).
 _AJAX = "https://balticlivecam.com/wp-admin/admin-ajax.php"
-# The span to `id:` stops at the next auth_token, so each attempt ends where the
-# next one starts.
-_ID = re.compile(r"auth_token['\"](?:(?!auth_token)[^}])*?\bid:\s*(\d+)")
+# The span to `id:` stops at the next auth_token, so each attempt ends where the next
+# one starts, and is possessive, so it keeps no backtracking state per character.
+_ID = re.compile(r"auth_token['\"](?:(?!auth_token|\bid:)[^}])*+\bid:\s*(\d+)")
 # A whole URL run, kept if it holds `.m3u8` (why: sources.base._URL_RUN).
 _URL_RUN = re.compile(r"https?://[^\"'\s\\]+")
 _EPOCH_MS = re.compile(r":(\d{13})")

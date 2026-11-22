@@ -26,7 +26,9 @@ _YT_CHANNEL = re.compile(
 # greedy body before a required `.m3u8` re-scans the rest of the run from every `http`
 # in it, and `re` holds the GIL while it does (see the AGENTS.md regex lesson).
 _URL_RUN = re.compile(r"https?:[\\/]+[^\"'\s\\]+")
-_WC_STREAMS = re.compile(r"""streams\[(\d+)\]\s*=\s*(["'])((?:\\.|(?!\2)[^\\\n])*)\2""")
+_WC_STREAMS = re.compile(
+    r"""streams\[(\d+)\]\s*=\s*(["'])((?:\\.|(?!\2)[^\\\n])*+)\2"""
+)
 _WC_PLAYER = re.compile(r"worldcams\.tv\\?/player\?url=([^\"'\s\\]+)")
 _IFRAME_SRC = re.compile(r'src=\\?"([^"\\]+)')
 _IFRAME_TAG = re.compile(r'<iframe[^<>]+src=["\']([^"\']+)["\']', re.I)

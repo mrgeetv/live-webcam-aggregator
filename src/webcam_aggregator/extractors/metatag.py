@@ -5,8 +5,11 @@ from collections.abc import Callable
 
 from .base import Resolved
 
+# The property is checked by a lookahead, so attribute order doesn't matter and one
+# unclosed tag repeating it isn't rescanned from every repeat.
 _OG = re.compile(
-    r'<meta[^<>]+(?:property|name)=["\'](?:og:video|twitter:player)["\'][^<>]+content=["\']([^"\']+)["\']',
+    r'<meta(?=[^<>]+?(?:property|name)=["\'](?:og:video|twitter:player)["\'])'
+    r'[^<>]+?content=["\']([^"\']+)["\']',
     re.I,
 )
 

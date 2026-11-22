@@ -28,6 +28,7 @@ import re
 import re._parser as P  # pyright: ignore[reportMissingTypeStubs]
 import signal
 import time
+import tracemalloc
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -51,11 +52,40 @@ _LIMIT_SECONDS = 0.25
 # this much at the smallest size: plenty of linear ones do, which only costs a little
 # time at the middle size.
 _GROW_FROM_SECONDS = 0.00002
+# The slowest few inputs at the smallest size go on to the middle one whatever they
+# cost, so a quadratic that is cheap per step still gets looked at.
+_ALWAYS_GROW = 20
 # From the middle size, one whose cost grew by this factor, ten times the length
 # giving about ten times the cost when linear and a hundred when quadratic; or one
-# already this slow, which the largest size would take past the limit anyway.
+# already this slow, which the largest size would take past the limit anyway. At the
+# largest, that growth fails the pattern once the scan takes long enough to time well.
 _GROWTH_FACTOR = 30
 _GROW_PAST_SECONDS = _LIMIT_SECONDS / 10
+_QUADRATIC_FLOOR_SECONDS = 0.01
+# A linear scan allocates a byte or so per character; one keeping backtracking state
+# for every iteration of a repeat, over a hundred.
+_BYTES_PER_CHAR = 16
+# How many of the characters a pattern's negated classes refuse to end inputs with.
+_MAX_STOPPERS = 6
+
+
+def _re_function(node: ast.AST) -> str | None:
+    """The `re` function a call node calls with a pattern (`search`, `sub`, …), or None."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "re"
+        and node.func.attr in _FLAGS_POSITION
+    ):
+        return node.func.attr
+    return None
+
+
+def _pattern_argument(node: ast.Call) -> ast.expr | None:
+    if node.args:
+        return node.args[0]
+    return next((kw.value for kw in node.keywords if kw.arg == "pattern"), None)
 
 
 def _literal_patterns() -> dict[tuple[str, int], str]:
@@ -63,24 +93,23 @@ def _literal_patterns() -> dict[tuple[str, int], str]:
     found: dict[tuple[str, int], str] = {}
     for path in sorted(_SRC.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "re"
-                and node.func.attr in _FLAGS_POSITION
-                and node.args
-            ):
+            function = _re_function(node)
+            if not isinstance(node, ast.Call) or function is None:
+                continue
+            argument = _pattern_argument(node)
+            if argument is None:
                 continue
             try:
-                pattern = ast.literal_eval(node.args[0])
+                pattern = ast.literal_eval(argument)
             except ValueError:
-                continue  # built at runtime: caught by _compiled_patterns instead
+                # Built at runtime, which the collector test only allows at module
+                # level, where _compiled_patterns finds the compiled result.
+                continue
             flags = 0
             for kw in node.keywords:
                 if kw.arg == "flags":
                     flags = _flags(kw.value)
-            position = _FLAGS_POSITION[node.func.attr]
+            position = _FLAGS_POSITION[function]
             if len(node.args) > position:
                 flags = _flags(node.args[position])
             rel = path.relative_to(_SRC.parent)
@@ -141,17 +170,27 @@ def _all_patterns() -> list[tuple[str, int, str]]:
 
 
 def _sample(
-    seq: Any, variant: int, pieces: set[str], cuts: list[int], out: list[str]
+    seq: Any,
+    variant: int,
+    pieces: set[str],
+    cuts: list[int],
+    out: list[str],
+    runs_at: list[tuple[int, int]],
 ) -> None:
     """Append to `out` one string the parsed pattern `seq` matches (as near as a
     lookaround-blind walk gets), taking alternative and class member `variant` (mod
-    their counts). Every group, alternative and repeated item's own sample goes into
-    `pieces`, the material for long runs, and the length of `out` after each node
-    (bar the inside of a literal run) into `cuts`, where a prefix can usefully end."""
+    their counts). Every literal run, group, alternative and repeated item goes into
+    `pieces`, the material for long runs; the length of `out` after each node (bar the
+    inside of a literal run) into `cuts`, where a prefix can usefully end; and where
+    each repeat starts and ends into `runs_at`, since a long run is absorbed at one
+    and the text between any two (the key in `<[^<>]*KEY[^<>]*>`, even with a small
+    repeat inside it) is worth repeating."""
+    run_start = None
     for index, (op, av) in enumerate(seq):
         kind = str(op)
         size = len("".join(out))
         if kind == "LITERAL":
+            run_start = size if run_start is None else run_start
             out.append(chr(av))
         elif kind == "NOT_LITERAL":
             out.append("y" if chr(av) == "x" else "x")
@@ -166,27 +205,81 @@ def _sample(
         elif kind.endswith("_REPEAT"):
             low, _high, item = av
             inner: list[str] = []
-            _sample(item, variant, pieces, [], inner)
+            _sample(item, variant, pieces, [], inner, [])
             one = "".join(inner)
             out.append(one * max(low, 1))
             pieces.add(one)
+            runs_at.append((size, size + len(one) * max(low, 1)))
         elif kind == "BRANCH":
-            alternatives = av[1]
-            _sample(
-                alternatives[variant % len(alternatives)], variant, pieces, cuts, out
-            )
+            for alternative in av[1]:
+                spare: list[str] = []
+                _sample(alternative, variant, pieces, [], spare, [])
+                pieces.add("".join(spare))
+            chosen = av[1][variant % len(av[1])]
+            _sample(chosen, variant, pieces, cuts, out, runs_at)
         elif kind == "SUBPATTERN":
-            _sample(av[3], variant, pieces, cuts, out)
+            _sample(av[3], variant, pieces, cuts, out, runs_at)
         elif kind == "ATOMIC_GROUP":
-            _sample(av, variant, pieces, cuts, out)
-        grown = "".join(out)[size:]
+            _sample(av, variant, pieces, cuts, out, runs_at)
+        text = "".join(out)
         if kind in ("BRANCH", "SUBPATTERN", "ATOMIC_GROUP"):
-            pieces.add(grown)
+            pieces.add(text[size:])
         followed_by_literal = (
             index + 1 < len(seq) and str(seq[index + 1][0]) == "LITERAL"
         )
-        if not (kind == "LITERAL" and followed_by_literal):
-            cuts.append(len("".join(out)))
+        if kind == "LITERAL" and followed_by_literal:
+            continue
+        if run_start is not None:
+            pieces.add(text[run_start:])
+            run_start = None
+        cuts.append(len(text))
+
+
+def _widest_choice(seq: Any) -> int:
+    """The most alternatives (or class members) any one choice in the pattern offers,
+    so the samples between them visit every one."""
+    widest = 1
+    for op, av in seq:
+        kind = str(op)
+        if kind == "IN":
+            widest = max(widest, len(av))
+        elif kind == "BRANCH":
+            widest = max(widest, len(av[1]), *(_widest_choice(a) for a in av[1]))
+        elif kind.endswith("_REPEAT"):
+            widest = max(widest, _widest_choice(av[2]))
+        elif kind == "SUBPATTERN":
+            widest = max(widest, _widest_choice(av[3]))
+        elif kind == "ATOMIC_GROUP":
+            widest = max(widest, _widest_choice(av))
+    return widest
+
+
+def _keeps_state_per_iteration(seq: Any) -> bool:
+    """True if the pattern has a non-possessive repeat of more than one character at a
+    time: the engine keeps backtracking state for every iteration of one, so a long
+    run through it costs memory in proportion, however fast it is."""
+    for op, av in seq:
+        kind = str(op)
+        if kind in ("MAX_REPEAT", "MIN_REPEAT") and av[1] > 1:
+            item = av[2]
+            single = len(item) == 1 and str(item[0][0]) in (
+                "LITERAL",
+                "NOT_LITERAL",
+                "ANY",
+                "IN",
+                "CATEGORY",
+            )
+            if not single or _keeps_state_per_iteration(item):
+                return True
+        elif kind == "POSSESSIVE_REPEAT" and _keeps_state_per_iteration(av[2]):
+            return True
+        elif kind == "BRANCH" and any(_keeps_state_per_iteration(a) for a in av[1]):
+            return True
+        elif kind == "SUBPATTERN" and _keeps_state_per_iteration(av[3]):
+            return True
+        elif kind == "ATOMIC_GROUP" and _keeps_state_per_iteration(av):
+            return True
+    return False
 
 
 def _category_member(category: Any) -> str:
@@ -239,6 +332,8 @@ def _stoppers(seq: Any) -> list[str]:
         kind = str(op)
         if kind == "IN" and any(str(o) == "NEGATE" for o, _ in av):
             found.extend(_banned(av))
+        elif kind == "NOT_LITERAL":
+            found.append(chr(av))
         elif kind.endswith("_REPEAT"):
             found.extend(_stoppers(av[2]))
         elif kind == "BRANCH":
@@ -249,32 +344,56 @@ def _stoppers(seq: Any) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def _hostile_inputs(pattern: str, flags: int, size: int) -> dict[str, str]:
-    """About `size` characters each: every useful prefix of every sample, repeated or
-    followed by a long run of one piece, then ended by a character `.` eats, by a
-    newline (which `.` and `$` stop at), or by one a class in the pattern refuses."""
+# An input: a prefix of a sample match, repeated (no piece) or followed by a long run of
+# one piece, then an ending.
+_Shape = tuple[str, str, str]
+
+
+def _hostile_shapes(pattern: str, flags: int) -> dict[str, _Shape]:
+    """Every useful prefix of every sample, repeated or followed by a long run of one
+    piece, then ended by a character `.` eats, by a newline (which `.` and `$` stop at),
+    or by one a class in the pattern refuses. Keyed by a readable label, in a stable
+    order so a failure names the same input every run."""
     tree = P.parse(pattern, flags)
     prefixes: set[str] = set()
+    before_runs: set[str] = set()
     pieces: set[str] = set()
-    for variant in range(6):
+    for variant in range(max(6, _widest_choice(tree))):
         cuts: list[int] = []
+        runs_at: list[tuple[int, int]] = []
         out: list[str] = []
-        _sample(tree, variant, pieces, cuts, out)
+        _sample(tree, variant, pieces, cuts, out, runs_at)
         sample = "".join(out)
         prefixes.update(sample[:cut] for cut in cuts if cut)
+        before_runs.update(sample[:start] for start, _end in runs_at)
+        runs_at.sort()
+        pieces.update(
+            sample[end:start]
+            for i, (_s, end) in enumerate(runs_at)
+            for start, _e in runs_at[i + 1 :]
+            if start > end
+        )
     pieces.discard("")
-    endings = ["\x00", "\nx"] + [c + "x" for c in _stoppers(tree)[:3]]
-    inputs: dict[str, str] = {}
-    for prefix in prefixes:
-        for ending in endings:
-            body = prefix * (size // len(prefix))
-            inputs[f"{prefix!r} repeated, then {ending!r}"] = body + ending
-            for piece in pieces:
-                run = piece * (size // len(piece))
-                inputs[f"{prefix!r} + run of {piece!r}, then {ending!r}"] = (
-                    prefix + run + ending
-                )
-    return inputs
+    # Symbols before letters and digits: a negated class's own delimiters are the
+    # characters that stop it, and a range like [^a-z0-9] would crowd them out.
+    stoppers = sorted(_stoppers(tree), key=str.isalnum)[:_MAX_STOPPERS]
+    endings = ["\x00", "\nx"] + [c + "x" for c in stoppers]
+    shapes: dict[str, _Shape] = {}
+    for ending in endings:
+        for prefix in sorted(prefixes):
+            shapes[f"{prefix!r} repeated, then {ending!r}"] = (prefix, "", ending)
+        for prefix in sorted(before_runs):
+            for piece in sorted(pieces):
+                label = f"{prefix!r} + run of {piece!r}, then {ending!r}"
+                shapes[label] = (prefix, piece, ending)
+    return shapes
+
+
+def _build(shape: _Shape, size: int) -> str:
+    prefix, piece, ending = shape
+    if not piece:
+        return prefix * (size // len(prefix)) + ending
+    return prefix + piece * (size // len(piece)) + ending
 
 
 class _Runaway(Exception):
@@ -302,8 +421,8 @@ def _cut_off_after(seconds: float) -> Generator[None]:
 def _timed(rx: re.Pattern[str], text: str) -> tuple[float, float]:
     """(CPU, wall) seconds for one full scan; a runaway scan reads as twice the limit.
     The limit is checked on CPU, so a worker the scheduler parks doesn't read as a slow
-    pattern. Whether to grow an input is judged on wall time, because CPU time can be
-    counted in whole kernel ticks, far coarser than the gate."""
+    pattern. Growth is judged on wall time, because CPU time can be counted in whole
+    kernel ticks, far coarser than the smaller sizes take."""
     try:
         with _cut_off_after(_LIMIT_SECONDS * 2):
             cpu, wall = time.process_time(), time.perf_counter()
@@ -313,30 +432,66 @@ def _timed(rx: re.Pattern[str], text: str) -> tuple[float, float]:
         return _LIMIT_SECONDS * 2, _LIMIT_SECONDS * 2
 
 
+def _best_wall(rx: re.Pattern[str], text: str) -> float:
+    """The quickest of a few wall-clock runs, so one scheduler hiccup can't pass for
+    growth."""
+    return min(_timed(rx, text)[1] for _ in range(3))
+
+
+def _bytes_per_char(rx: re.Pattern[str], text: str) -> float:
+    """Peak memory for one scan that keeps none of its matches, per character, so
+    only what the engine itself holds counts."""
+    tracemalloc.start()
+    try:
+        for _match in rx.finditer(text):
+            pass
+        return tracemalloc.get_traced_memory()[1] / len(text)
+    finally:
+        tracemalloc.stop()
+
+
 def _first_slow_input(pattern: str, flags: int) -> str | None:
-    """A description of the first hostile input the pattern is too slow on, or None.
-    Every input runs at the smallest size; only one that already costs a measurable
-    amount at a size is worth the next, which is what keeps this cheap."""
+    """A description of the first hostile input the pattern is too slow (or, for a
+    repeat that keeps state per iteration, too memory-hungry) on, or None.
+
+    Every input runs at the smallest size. The slowest few there, and any over a floor,
+    are tried at the middle size, and those that grew like a quadratic at the largest,
+    where the verdict is the CPU limit or that same growth measured again on the
+    quickest of three runs at each size."""
     rx = re.compile(pattern, flags)
     small, medium, large = _SIZES
+    shapes = _hostile_shapes(pattern, flags)
     first: dict[str, float] = {}
-    for label, text in _hostile_inputs(pattern, flags, small).items():
-        cpu, first[label] = _timed(rx, text)
+    for label, shape in shapes.items():
+        cpu, first[label] = _timed(rx, _build(shape, small))
         if cpu >= _LIMIT_SECONDS:
             return f"{cpu:.2f}s on {label} at {small} chars"
-    middle = _hostile_inputs(pattern, flags, medium)
-    worth_growing: list[str] = []
-    for label in (label for label, wall in first.items() if wall >= _GROW_FROM_SECONDS):
-        cpu, wall = _timed(rx, middle[label])
+    slowest = sorted(first, key=first.__getitem__)[-_ALWAYS_GROW:]
+    worth = [k for k in first if first[k] >= _GROW_FROM_SECONDS or k in slowest]
+    grew: list[str] = []
+    for label in worth:
+        cpu, wall = _timed(rx, _build(shapes[label], medium))
         if cpu >= _LIMIT_SECONDS:
             return f"{cpu:.2f}s on {label} at {medium} chars"
         if wall >= _GROW_PAST_SECONDS or wall >= first[label] * _GROWTH_FACTOR:
-            worth_growing.append(label)
-    biggest = _hostile_inputs(pattern, flags, large)
-    for label in worth_growing:
-        cpu, _wall = _timed(rx, biggest[label])
+            grew.append(label)
+    for label in grew:
+        text = _build(shapes[label], large)
+        cpu, _wall = _timed(rx, text)
         if cpu >= _LIMIT_SECONDS:
             return f"{cpu:.2f}s on {label} at {large} chars"
+        wall = _best_wall(rx, text)
+        before = _best_wall(rx, _build(shapes[label], medium))
+        if wall >= _QUADRATIC_FLOOR_SECONDS and wall >= before * _GROWTH_FACTOR:
+            return f"{wall / before:.0f}x the time for 10x the length on {label}"
+    if _keeps_state_per_iteration(P.parse(pattern, flags)):
+        for label, shape in shapes.items():
+            if (
+                shape[1]
+                and (per := _bytes_per_char(rx, _build(shape, medium)))
+                > _BYTES_PER_CHAR
+            ):
+                return f"{per:.0f} bytes per character on {label} at {medium} chars"
     return None
 
 
@@ -348,9 +503,64 @@ def test_every_regex_stays_linear_on_hostile_input(pattern: str, flags: int) -> 
     assert _first_slow_input(pattern, flags) is None
 
 
+# One of each shape the guard exists to catch. If it stops flagging these (say a change
+# in the private parser it walks leaves it sampling nothing) it would pass every real
+# pattern vacuously.
+_KNOWN_BAD = {
+    "span past the next start": r"<h1[^>]*>([^<]{1,120})</h1>",
+    "body before a required suffix": r"https?://[^\"'\s]+\.m3u8",
+    "attribute keyword repeated in one tag": r'<[^<>]*rel="bookmark"[^<>]*>([^<]+)',
+    "leading whitespace before a suffix": r"\s*live cam\s*$",
+    "adjacent quantifiers over one run": r" - [A-Z][a-z]+\s*\.?\s*$",
+    "spans either side of a keyword": r"\|[^|]*(?:Wildlife|Trust)[^|]*$",
+    ".*$ before a trailing newline": r"【Share-Ju】.*$",
+    "one character fitting two branches": r"""(["'])((?:\\.|(?!\1).)*)\1""",
+    "backtracking state per iteration": r'"src":"((?:[^"\\]|\\.)*)"',
+}
+
+
+@pytest.mark.parametrize("pattern", list(_KNOWN_BAD.values()), ids=list(_KNOWN_BAD))
+def test_the_guard_still_catches_each_known_bad_shape(pattern: str) -> None:
+    assert _first_slow_input(pattern, 0) is not None
+
+
+def test_every_regex_in_the_package_is_where_the_collector_looks() -> None:
+    """The collector reads literal patterns from the source and compiled ones from
+    module and class attributes; a pattern built inside a function, or imported from
+    `re` by name, would escape both and go untested. So every `re` call with a
+    non-literal pattern must sit at module level, and nothing imports from `re`."""
+    stray: list[str] = []
+    for path in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        rel = path.relative_to(_SRC.parent)
+        stray += [
+            f"{rel}:{node.lineno} imports from re"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module == "re"
+        ]
+        for scope in ast.walk(tree):
+            if not isinstance(
+                scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+            ):
+                continue
+            for node in ast.walk(scope):
+                if not isinstance(node, ast.Call) or _re_function(node) is None:
+                    continue
+                argument = _pattern_argument(node)
+                if argument is None:
+                    continue
+                try:
+                    ast.literal_eval(argument)
+                except ValueError:
+                    stray.append(f"{rel}:{node.lineno} builds its pattern at runtime")
+    assert stray == []
+
+
 def test_the_collector_sees_inline_and_runtime_built_patterns() -> None:
-    """The guard is only as good as its reach: a literal inside a function body and
-    a pattern assembled from an f-string must both be collected."""
+    """The guard is only as good as its reach: a literal inside a function body, a
+    pattern assembled from an f-string and one held in a rule table must all be
+    collected."""
     wheres = {where for _p, _f, where in _all_patterns()}
     assert any(w.startswith("webcam_aggregator/sources/base.py:") for w in wheres)
     assert "webcam_aggregator.sources.skyline._SITEMAP_CAM" in wheres
+    assert "webcam_aggregator.categories._TITLE_COMPILED" in wheres

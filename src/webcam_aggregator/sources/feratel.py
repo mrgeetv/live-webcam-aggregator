@@ -41,8 +41,7 @@ class FeratelSource(HtmlScraperSource[str]):
 
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
-        m = _TITLE.search(html)
-        n = _NAME.match(m.group(1)) if m else None
+        n = next((n for t in _TITLE.findall(html) if (n := _NAME.match(t))), None)
         title = unescape(n.group(1)).strip() if n else ""
         if not title:
             # last resort: the URL slug minus its cam id ("gschnitz-zentrum-5751")
