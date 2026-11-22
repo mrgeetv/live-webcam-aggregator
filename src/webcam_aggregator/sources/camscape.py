@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from typing import override
+from urllib.parse import urlsplit
 
 from ..fetch import thread_map
 from ..models import Candidate
@@ -68,8 +69,16 @@ _CAM = re.compile(r'href="(https://www\.camscape\.com/webcam/[a-z0-9-]+/)"')
 _TAG = re.compile(r'/showing/([a-z0-9-]+)/"')  # only the cam's own tags on a cam page
 _LOC = re.compile(r'/location/([a-z0-9-]+)/"')
 _CHANNEL = re.compile(r"[?&]channel=([A-Za-z0-9_]+)")
-# camsecure embeds (camsecure.co / .uk / .co.uk) — resolved to their HLS below.
-_CAMSECURE = re.compile(r"^https?://(?:[a-z0-9-]+\.)*camsecure\.[a-z.]+/", re.I)
+
+
+def _is_camsecure(url: str) -> bool:
+    """A camsecure embed (camsecure.co / .uk / .co.uk, any subdomain), resolved to its
+    HLS below. Read from the hostname's labels: as a regex, a run of label repeats and
+    the `camsecure.` literal compete for the same characters."""
+    parts = urlsplit(url)
+    labels = (parts.hostname or "").split(".")
+    return "camsecure" in labels[:-1] and parts.path.startswith("/")
+
 
 # ctx = (location parts general->specific, {stream index: name})
 _Ctx = tuple[list[str], dict[str, str]]
@@ -183,7 +192,7 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
             # Twitch player embeds need normalising to twitch.tv/<channel> for yt-dlp.
             m = _CHANNEL.search(embed) if "player.twitch.tv" in embed else None
             target = f"https://www.twitch.tv/{m.group(1)}" if m else embed
-            if _CAMSECURE.search(target) and ".m3u8" not in target:
+            if _is_camsecure(target) and ".m3u8" not in target:
                 target = self._camsecure_hls(target) or target
             out.append(
                 Candidate(

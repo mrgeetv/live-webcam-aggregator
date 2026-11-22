@@ -21,8 +21,8 @@ _CAM_PREFIX = "https://livefromiceland.is/webcam/"
 _PLAYER = re.compile(
     r"https://g0\.ipcamlive\.com/player/player\.php\?alias=[A-Za-z0-9_-]+"
 )
-_TITLE = re.compile(r"<title>(.*?)</title>", re.S)
-_SITE_TAIL = re.compile(r"\s*[–-]\s*Live From Iceland\s*$", re.I)
+_TITLE = re.compile(r"<title>([^<]*)</title>")
+_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Live From Iceland\s*$", re.I)
 
 
 class LiveFromIcelandSource(HtmlScraperSource[str]):

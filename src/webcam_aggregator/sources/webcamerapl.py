@@ -39,13 +39,17 @@ _HREF = re.compile(r'href="(https://[a-z0-9.-]+\.webcamera\.pl/[^"]*)"')
 
 # The player config is inline JSON; `video_src` is the HLS URL, ROT13-obfuscated
 # (the page JS decodes it with the same letter shift before handing it to hls.js).
-_VIDEO_SRC = re.compile(r'"video_src":"((?:[^"\\]|\\.)*)"')
+_VIDEO_SRC = re.compile(r'"video_src":"((?:[^"\\]|\\.)*+)"')
 _A, _L = string.ascii_uppercase, string.ascii_lowercase
 _ROT13 = str.maketrans(_A + _L, _A[13:] + _A[:13] + _L[13:] + _L[:13])
 
 _H1 = re.compile(r'<h1 id="cam-description-toggler">([^<]*)', re.I)
-# Trailing listing badges, not part of the cam's name.
-_BADGE = re.compile(r"(?:\s*[-–]?\s*(?:nowość|nowosc|kup dostęp))+\s*$", re.I)
+# Trailing listing badges, not part of the cam's name. There are three badge words,
+# so a chain is at most three long; the cap also keeps each match attempt short,
+# since every gap in a chain is a place one can start.
+_BADGE = re.compile(
+    r"(?<!\s)(?:\s*(?:[-–]\s*)?(?:nowość|nowosc|kup dostęp)){1,3}\s*$", re.I
+)
 # Compilation feeds that rotate through other cams' streams (one shared tv_cam
 # feed per playlist) — dups of cams we already carry, and the PREMIUM ones are
 # paywalled besides.

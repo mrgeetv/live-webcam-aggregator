@@ -10,9 +10,8 @@ from .base import Resolved
 # Prefer the LIVE feed (videos-N host, carries the ?t= token) over the *archives VOD
 # hosts. The token is time-bound, so resolve fresh at serve-time. yt-dlp has no working
 # EarthCam extractor, hence this. No live m3u8 = offline -> raise (liveness drops it).
-_HLS = re.compile(
-    r"https:(?:\\?/){2}videos-\d+\.earthcam\.com[^\"'\s]+?\.m3u8[^\"'\s]*"
-)
+# A whole URL run, kept if it holds `.m3u8` (why: sources.base._URL_RUN).
+_LIVE_RUN = re.compile(r"https:(?:\\?/){2}videos-\d+\.earthcam\.com[^\"'\s]+")
 
 
 class EarthcamResolver:
@@ -22,7 +21,8 @@ class EarthcamResolver:
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
-        m = _HLS.search(self._fetch(target_url))
+        body = self._fetch(target_url)
+        m = next((r for r in _LIVE_RUN.finditer(body) if ".m3u8" in r.group(0)), None)
         if not m:
             # no URL in the message: it feeds the aggregated resolve-failed detail
             # at INFO, where a URL would shatter one failure mode into per-cam

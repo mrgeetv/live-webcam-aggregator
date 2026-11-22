@@ -23,7 +23,9 @@ _LISTING_HREF = re.compile(rf'href="({_LISTING_PATH})"')
 # The listing's own links, not its ItemList JSON-LD: the ItemList is truncated short
 # of the cams the page links.
 _SPOT_HREF = re.compile(r'href="(/spot/[0-9a-f-]{36})"')
-_LD_JSON = re.compile(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
+_LD_JSON = re.compile(
+    r'<script type="application/ld\+json"[^<>]*>((?:[^<]|<(?!/?script))*+)</script>'
+)
 
 # Every cam page's VideoObject description ends with a sentence naming the cam's
 # category: "…(提供: <channel>)。<category>のライブカメラを地図から探せる…". That is the

@@ -17,7 +17,7 @@ _SITEMAP = "https://www.cxtvlive.com/sitemap.php"
 _MAP = "https://www.cxtvlive.com/data/cxl_mapa.php"
 
 _SLUG = re.compile(r"live-camera/([^<\s?#]+)")
-_TITLE = re.compile(r"<h1[^>]*>([^<]{1,120})</h1>")
+_TITLE = re.compile(r"<h1[^<>]*>([^<]{1,120})</h1>")
 # The site's own YouTube channel link sits in every YouTube cam page's chrome; the
 # shared ladder emits it as `…/live` beside the real video embed. Drop it when the page
 # has a real candidate too (same reasoning as beachcam) — keep it only if it's the lone

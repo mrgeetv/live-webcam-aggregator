@@ -356,3 +356,21 @@ def test_the_fallback_iframe_is_read_as_an_html_attribute() -> None:
     assert [c.target_url for c in cands] == [
         "https://cams.example/player/embed.php?cam=7&autoplay=1"
     ]
+
+
+def test_an_m3u8_url_is_taken_whole_from_the_page() -> None:
+    """A playlist URL keeps its query, a page link without `.m3u8` is not one, and a
+    wrapper URL carrying the playlist in its query is taken whole, wrapper and all."""
+    html = (
+        '<a href="https://cams.example/about">about</a>'
+        '<video src="https://cdn.example/live/cam.m3u8?token=abc"></video>'
+        "<script>var p='https://relay.example/play?u=https://cdn.example/b.m3u8';"
+        "</script>"
+    )
+    cands = list(
+        extract_candidates(html, page_url="https://cams.example/live/7", source="s")
+    )
+    assert [c.target_url for c in cands] == [
+        "https://cdn.example/live/cam.m3u8?token=abc",
+        "https://relay.example/play?u=https://cdn.example/b.m3u8",
+    ]

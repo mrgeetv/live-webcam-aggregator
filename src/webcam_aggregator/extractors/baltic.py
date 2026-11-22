@@ -11,8 +11,11 @@ from .base import Resolved
 # action=auth_token&id=<N>&embed=1 to admin-ajax.php (with an XHR Referer header) returns an
 # HTML player fragment containing the tokenised m3u8 (edge*.balticlivecam.com/...?token=h:<epoch_ms>).
 _AJAX = "https://balticlivecam.com/wp-admin/admin-ajax.php"
-_ID = re.compile(r"auth_token['\"][^}]*?\bid:\s*(\d+)", re.S)
-_M3U8 = re.compile(r"https?://[^\"'\s\\]+\.m3u8[^\"'\s\\]*")
+# The span to `id:` stops at the next auth_token, so each attempt ends where the next
+# one starts, and is possessive, so it keeps no backtracking state per character.
+_ID = re.compile(r"auth_token['\"](?:(?!auth_token|\bid:)[^}])*+\bid:\s*(\d+)")
+# A whole URL run, kept if it holds `.m3u8` (why: sources.base._URL_RUN).
+_URL_RUN = re.compile(r"https?://[^\"'\s\\]+")
 _EPOCH_MS = re.compile(r":(\d{13})")
 
 
@@ -43,7 +46,9 @@ class BalticResolver:
                 "main_referer": "",
             },
         )
-        found = _M3U8.search(fragment)
+        found = next(
+            (m for m in _URL_RUN.finditer(fragment) if ".m3u8" in m.group(0)), None
+        )
         if not found:
             raise ValueError(
                 f"baltic: no m3u8 in auth_token response for id {cam.group(1)}"

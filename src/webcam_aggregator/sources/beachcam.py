@@ -29,9 +29,9 @@ _VIDEO = re.compile(r'data-video-url="(https?://[^"]+\.m3u8)"')
 _TOKEN_API = "https://services.iol.pt/matrix?userId="
 # a real token is a base64 blob; anything else (an error page) is not a token
 _TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
-_TITLE = re.compile(r'liveCamsHeader__title">([^<]*)<')
+_TITLE = re.compile(r'<[^<>]*liveCamsHeader__title">([^<]*)<')
 # the header label names the cam's municipality/region: "LIVECAMS / Cascais"
-_REGION = re.compile(r'liveCamsHeader__label">LIVECAMS\s*/\s*([^<]*)<')
+_REGION = re.compile(r'<[^<>]*liveCamsHeader__label">LIVECAMS\s*/([^<]*)<')
 
 # ctx = (page title, region from the header label)
 _Ctx = tuple[str, str | None]

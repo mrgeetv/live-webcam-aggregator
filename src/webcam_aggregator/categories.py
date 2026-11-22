@@ -237,7 +237,7 @@ _TITLE_COMPILED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
 )
 # A name carrying a "City, Region, Country"-style location is a place view: the " — geo"
 # suffix with_location appends, a trailing ", State"/", Country", or " - Country" at the end.
-_GEO_HINT = re.compile(r" — |,\s+[A-Z]| - [A-Z][a-z]+\s*\.?\s*$")
+_GEO_HINT = re.compile(r" — |,\s+[A-Z]| - [A-Z][a-z]+(?:\s*\.)?\s*$")
 
 
 def category_from_title(title: str) -> str | None:

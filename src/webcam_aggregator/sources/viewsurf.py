@@ -35,8 +35,8 @@ _UNIVERS = re.compile(r"/univers/([a-z0-9-]+)/vue/")
 # the id (single-word for every cam listed), while region/city/name are multi-word
 # and have no delimiter between them.
 _COUNTRY = re.compile(r"/vue/\d+-([a-z0-9]+)")
-_H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S)
-_TAGS = re.compile(r"<[^>]+>")
+_H1 = re.compile(r"<h1[^<>]*>((?:[^<]|<(?!/?h1))*+)</h1>")
+_TAGS = re.compile(r"<[^<>]+>")
 # The cam page's player iframe is a Quanteec/joada embed. The uuid is the cam's
 # stable identity (it encodes an internal cam id) and `type` says continuous live vs
 # a refreshed short clip; everything else in the query is presentation (title text,

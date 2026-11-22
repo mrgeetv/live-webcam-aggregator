@@ -36,16 +36,20 @@ _LOC = re.compile(r"<loc>([^<]+)</loc>")
 # token/Referer; the player PAGE serves a decoy without `Referer: camsecure.co.uk`, so the
 # hosts are in `_REFERER_HOSTS`).
 _PLAYER_IFRAME = re.compile(
-    r'<iframe[^>]+src="(https?://camsecure\.[a-z.]+/httpswebcam/[^"]+)"', re.I
+    r'<iframe[^<>]+src="(https?://camsecure\.[a-z.]+/httpswebcam/[^"]+)"', re.I
 )
-_HLS_SRC = re.compile(r'<source[^>]+src="([^"]+\.m3u8[^"]*)"', re.I)
+# Each src is read whole and then tested for `.m3u8`: a body before a required
+# `.m3u8` retries every `.m3u8` in an unclosed value (see sources.base._URL_RUN).
+_SOURCE_SRC = re.compile(r'<source[^<>]+src="([^"]+)"', re.I)
 _TITLE = re.compile(r"<title>([^<]+)</title>", re.I)
 # "Brixham Harbour Live Streaming Webcam" -> "Brixham Harbour"; titles that LEAD with
 # boilerplate ("Live Coastal Shipping Webcam from Coastwatch Redcar") fall back to the
 # "from <place>" tail, then to the URL filename.
-_BOILER = re.compile(r"\s*\b(?:live\s+)?(?:streaming\s+)?web\s?cam\b.*$", re.I)
+_BOILER = re.compile(
+    r"(?<!\s)\s*\b(?:live\s+)?(?:streaming\s+)?web\s?cam\b.*$", re.I | re.M
+)
 _LEADING_BOILER = re.compile(r"^(?:live|streaming|coastal)\b", re.I)
-_FROM = re.compile(r"\bfrom\s+(.+?)\s*$", re.I)
+_FROM = re.compile(r"\bfrom\s+(.+)", re.I)
 
 
 def player_iframe(html: str) -> str | None:
@@ -56,14 +60,14 @@ def player_iframe(html: str) -> str | None:
 
 def hls_from_player(html: str, player_url: str) -> str | None:
     """The direct HLS in a camsecure player page's video.js `<source>`, absolute."""
-    m = _HLS_SRC.search(html)
-    return urljoin(player_url, m.group(1)) if m else None
+    src = next((s for s in _SOURCE_SRC.findall(html) if ".m3u8" in s), None)
+    return urljoin(player_url, src) if src else None
 
 
 def _name_from_url(url: str) -> str:
     slug = unquote(url.rstrip("/").rsplit("/", 1)[-1])
     slug = re.sub(r"\.html?$", "", slug, flags=re.I)
-    slug = re.sub(r"(?i)[_\- ]*(?:large|webcam|cam)\d*$", "", slug)
+    slug = re.sub(r"(?i)(?<![_\- ])[_\- ]*(?:large|webcam|cam)\d*$", "", slug)
     slug = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", slug)  # camelCase -> spaces
     return re.sub(r"[_\-\s]+", " ", slug).strip().title()
 
@@ -73,7 +77,9 @@ def _title_of(html: str, url: str) -> str:
     raw = m.group(1).strip() if m else ""
     t = _BOILER.sub("", raw).strip()
     if not t or _LEADING_BOILER.match(t):
-        fm = _FROM.search(raw)
+        # The "from <place>" tail is on the title's last line, so only that line is
+        # searched, and one greedy match there reaches its end.
+        fm = _FROM.search(raw.rsplit("\n", 1)[-1])
         t = fm.group(1).strip() if fm else ""
     return t or _name_from_url(url)
 

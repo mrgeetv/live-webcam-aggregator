@@ -13,7 +13,8 @@ from .base import Resolved
 # whoever fetched the manifest, and both propagate down to the segment URLs — a segment
 # stripped of its query 404s. The session therefore belongs to the fetcher, not the
 # player, which is why wetmet.net is in serving._PROXY_SEGMENT_HOSTS.
-_M3U8 = re.compile(r"""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""")
+# A whole URL run, kept if it holds `.m3u8` (why: sources.base._URL_RUN).
+_URL_RUN = re.compile(r"""https?://[^"'\s<>]+""")
 
 
 class WetmetResolver:
@@ -24,7 +25,7 @@ class WetmetResolver:
 
     def resolve(self, target_url: str) -> Resolved:
         body = self._fetch(target_url)
-        m = _M3U8.search(body)
+        m = next((r for r in _URL_RUN.finditer(body) if ".m3u8" in r.group(0)), None)
         if not m:
             # no URL in the message — see the aggregated-detail rule in AGENTS.md
             raise ValueError("wetmet: no m3u8 in widget frame")
