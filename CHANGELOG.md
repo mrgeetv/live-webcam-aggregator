@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.7](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.6...v2.14.7) (2026-11-22)
+
+### Bug Fixes
+
+* **playlist:** carry key and init section across the live-edge trim ([#179](https://github.com/mrgeetv/live-webcam-aggregator/issues/179)) ([b4258a5](https://github.com/mrgeetv/live-webcam-aggregator/commit/b4258a51c200a22ed2bcd2a0cfb9fe1b1602833f)), closes [#EXT-X-KEY](https://github.com/mrgeetv/live-webcam-aggregator/issues/EXT-X-KEY) [#EXT-X-MAP](https://github.com/mrgeetv/live-webcam-aggregator/issues/EXT-X-MAP) [#EXT-X-INDEPENDENT-SEGMENTS](https://github.com/mrgeetv/live-webcam-aggregator/issues/EXT-X-INDEPENDENT-SEGMENTS) [#EXT-X-DEFINE](https://github.com/mrgeetv/live-webcam-aggregator/issues/EXT-X-DEFINE) [#164](https://github.com/mrgeetv/live-webcam-aggregator/issues/164)
+
 ## [2.14.6](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.5...v2.14.6) (2026-11-22)
 
 ### Bug Fixes
