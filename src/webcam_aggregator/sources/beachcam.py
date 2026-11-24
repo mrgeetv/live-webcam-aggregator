@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from html import unescape
 from typing import override
 from urllib.parse import quote
 
 from ..models import Candidate
-from .base import HtmlScraperSource, predisc_key, with_location_parts
+from .base import (
+    HtmlScraperSource,
+    decode_entities,
+    predisc_key,
+    with_location_parts,
+)
 
 _INDEX = "https://beachcam.meo.pt/livecams/"
 # Index links are absolute; the bare /livecams/ index itself has an empty slug and
@@ -59,12 +63,12 @@ class BeachcamSource(HtmlScraperSource[_Ctx]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, _Ctx]:
         tm = _TITLE.search(html)
-        title = unescape(tm.group(1)).strip() if tm else ""
+        title = decode_entities(tm.group(1)).strip() if tm else ""
         if not title:
             # last resort: the URL slug ("costa-da-caparica")
             title = url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
         rm = _REGION.search(html)
-        region = unescape(rm.group(1)).strip() if rm else None
+        region = decode_entities(rm.group(1)).strip() if rm else None
         return "Beaches", (title, region)
 
     @override

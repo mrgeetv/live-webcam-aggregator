@@ -6,7 +6,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
-from .base import predisc_key
+from .base import decode_entities, predisc_key
 
 _BASE = "https://www.camsecure.co.uk"
 _SITEMAP = f"{_BASE}/sitemap.xml"
@@ -74,7 +74,7 @@ def _name_from_url(url: str) -> str:
 
 def _title_of(html: str, url: str) -> str:
     m = _TITLE.search(html)
-    raw = m.group(1).strip() if m else ""
+    raw = decode_entities(m.group(1)).strip() if m else ""
     t = _BOILER.sub("", raw).strip()
     if not t or _LEADING_BOILER.match(t):
         # The "from <place>" tail is on the title's last line, so only that line is

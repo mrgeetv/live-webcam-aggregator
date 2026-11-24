@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from html import unescape
 from typing import override
 
 from ..models import Candidate
-from .base import HtmlScraperSource, extract_candidates, predisc_key
+from .base import (
+    HtmlScraperSource,
+    decode_entities,
+    extract_candidates,
+    predisc_key,
+)
 
 # The "by webcam speed" index is the enumeration seam: its <strong>Streaming</strong>
 # section lists exactly the ~700 pages with a live stream, so we never fetch the
@@ -53,7 +57,7 @@ class AirportWebcamsSource(HtmlScraperSource[str]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
         m = _TITLE.search(html)
-        title = unescape(m.group(1)).strip() if m else ""
+        title = decode_entities(m.group(1)).strip() if m else ""
         if not title:
             # last resort: the URL slug ("zurich-airport-webcam")
             title = url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()

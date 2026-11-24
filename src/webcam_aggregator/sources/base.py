@@ -5,6 +5,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from dataclasses import replace
+from html.entities import html5
 from typing import Generic, Protocol, TypeVar
 from urllib.parse import unquote, urljoin, urlsplit
 
@@ -123,6 +124,31 @@ def predisc_key(target: str) -> str | None:
         norm = re.sub(r"[?&](token|expire|hdnts)=[^&]*", "", t).rstrip("?&")
         return f"hls:{norm}"
     return None
+
+
+# Every title, and any other text read out of a page, goes through decode_entities:
+# a source calls it as it reads the text, before stripping a site-name suffix or
+# checking the title against its geo (both compare text, and `&#8211;` is not `–`),
+# and the build calls it again on every title as candidates leave their source, for
+# text a source passed straight through (Data API snippets, JSON feeds). So it must
+# be safe on text that is already decoded: only a numeric reference or an exact
+# `name;` entity is decoded, because html.unescape alone reads the legacy names HTML
+# accepts without a `;` (`&not`, `&copy`) as a prefix, turning "Hot&notcold" into
+# "Hot¬cold". The cost of decoding twice: a name whose real text is entity syntax
+# (`&amp;`) shows its decoded form, which a cam name all but never is.
+_CHAR_REF = re.compile(r"&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);")
+
+
+def _decode_ref(m: re.Match[str]) -> str:
+    ref = m[0]
+    if ref[1] != "#" and ref[1:] not in html5:
+        return ref
+    return htmllib.unescape(ref)
+
+
+def decode_entities(text: str) -> str:
+    """`text` with its HTML character references decoded; see _CHAR_REF."""
+    return _CHAR_REF.sub(_decode_ref, text)
 
 
 def _norm(s: str) -> str:

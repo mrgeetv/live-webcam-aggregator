@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from html import unescape
 from typing import override
 
 from ..extractors.hdontap import stream_src
 from ..models import Candidate
-from .base import HtmlScraperSource, extract_candidates
+from .base import HtmlScraperSource, decode_entities, extract_candidates
 
 _SITEMAP = "https://hdontap.com/sitemap.xml"
 # Cam pages are /stream/<id>/<slug>/. Their /embed/ twins sit in the sitemap's
@@ -28,7 +27,7 @@ _BOILER = re.compile(
 
 def _title_of(html: str, url: str) -> str:
     m = _TITLE.search(html)
-    raw = _SUFFIX.sub("", unescape(m.group(1)).strip()) if m else ""
+    raw = _SUFFIX.sub("", decode_entities(m.group(1)).strip()) if m else ""
     if not raw:  # no <title> -> prettified slug
         raw = url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
     t = _BOILER.sub("", raw).strip()

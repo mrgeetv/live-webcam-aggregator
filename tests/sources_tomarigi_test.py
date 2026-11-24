@@ -196,6 +196,20 @@ def test_pages_without_a_video_object_are_dropped() -> None:
     assert list(src.discover()) == []
 
 
+def test_name_holding_an_escaped_quote_is_still_read() -> None:
+    # the site stores YouTube's HTML-escaped titles inside the JSON; decoding the
+    # block before parsing it turns `&quot;` into a bare quote that ends the string
+    src = _source(
+        {
+            _SITEMAP_URL: _sitemap(_ASIA),
+            _ASIA: _listing(_SPOT),
+            _SPOT: _page("Seoul &quot;Gyeongbokgung&quot; Live", "Cbp3Wg44fPo"),
+        }
+    )
+    (c,) = list(src.discover())
+    assert c.predisc_key == "yt:Cbp3Wg44fPo"
+
+
 def test_non_youtube_embed_url_is_dropped() -> None:
     # every cam on the site is a YouTube live; anything else is a page we misread
     page = _page("cam", "Cbp3Wg44fPo").replace(

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from html import unescape
 from typing import override
 
 from ..models import Candidate
-from .base import HtmlScraperSource, predisc_key, with_location_parts
+from .base import (
+    HtmlScraperSource,
+    decode_entities,
+    predisc_key,
+    with_location_parts,
+)
 
 # feratel.com's own portal lists every public cam: the sitemap carries the
 # /en/webcams/<country>/<region>/<slug>-<cam id> detail pages (the one- and
@@ -42,7 +46,7 @@ class FeratelSource(HtmlScraperSource[str]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
         n = next((n for t in _TITLE.findall(html) if (n := _NAME.match(t))), None)
-        title = unescape(n.group(1)).strip() if n else ""
+        title = decode_entities(n.group(1)).strip() if n else ""
         if not title:
             # last resort: the URL slug minus its cam id ("gschnitz-zentrum-5751")
             slug = url.rsplit("/", 1)[-1].rsplit("-", 1)[0]

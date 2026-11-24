@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import logging
 import re
-from html import unescape
 from typing import override
 
 from ..models import Candidate
-from .base import HtmlScraperSource, predisc_key, with_location_parts
+from .base import (
+    HtmlScraperSource,
+    decode_entities,
+    predisc_key,
+    with_location_parts,
+)
 
 log = logging.getLogger("webcam-aggregator.viewsurf")
 
@@ -91,7 +95,7 @@ class ViewsurfSource(HtmlScraperSource[str]):
         category = _CATEGORY.get(slug, slug or None)
         h1 = _H1.search(html)
         # h1 is "City <small>Cam name</small>" — flatten the markup to one title.
-        title = unescape(_TAGS.sub(" ", h1.group(1))) if h1 else ""
+        title = decode_entities(_TAGS.sub(" ", h1.group(1))) if h1 else ""
         title = re.sub(r"\s+", " ", title).strip()
         cm = _COUNTRY.search(url)
         country = cm.group(1).title() if cm else ""

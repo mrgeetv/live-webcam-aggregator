@@ -9,7 +9,7 @@ from urllib.parse import quote, urljoin, urlsplit
 
 from ..fetch import FetcherProtocol, thread_imap, thread_map
 from ..models import Candidate
-from .base import extract_candidates, predisc_key
+from .base import decode_entities, extract_candidates, predisc_key
 from .camsecure import hls_from_player
 
 log = logging.getLogger("webcam-aggregator.wildlife-trusts")
@@ -95,7 +95,7 @@ _EMBEDDED, _CARD, _LINKED = 0, 1, 2
 
 
 def _text(raw: str) -> str:
-    return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^<>]+>", " ", raw))).strip()
+    return re.sub(r"\s+", " ", decode_entities(re.sub(r"<[^<>]+>", " ", raw))).strip()
 
 
 def _site(url: str) -> str:
