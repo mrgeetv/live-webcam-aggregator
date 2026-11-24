@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.9](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.8...v2.14.9) (2026-11-24)
+
+### Bug Fixes
+
+* **playlist:** decode html entities in cam titles through one shared helper ([#182](https://github.com/mrgeetv/live-webcam-aggregator/issues/182)) ([71cbaf4](https://github.com/mrgeetv/live-webcam-aggregator/commit/71cbaf4133971b617ae011b3299507738a8fbac4)), closes [#39](https://github.com/mrgeetv/live-webcam-aggregator/issues/39) [#174](https://github.com/mrgeetv/live-webcam-aggregator/issues/174)
+
 ## [2.14.8](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.7...v2.14.8) (2026-11-22)
 
 ### Bug Fixes
