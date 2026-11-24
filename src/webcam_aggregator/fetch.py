@@ -533,7 +533,7 @@ def _read_capped(
 class FetchStats:
     """Thread-safe (host, outcome) -> count.
 
-    One instance PER SOURCE (see app.build_app). A single shared counter could not say
+    One instance PER SOURCE (see app._build_sources). A single shared counter could not say
     WHICH source's fetches failed, and a process-global one would also be polluted by
     serve-time player traffic between rebuilds — so the one line that is supposed to
     explain an empty source would be reporting hosts the build never touched.

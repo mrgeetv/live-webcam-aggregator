@@ -9,10 +9,12 @@ import sys
 import threading
 import time
 import urllib.parse
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, ClassVar, override
 
+import googleapiclient.discovery
 import psutil
 
 from webcam_aggregator import config
@@ -89,6 +91,7 @@ if TYPE_CHECKING:
     from googleapiclient._apis.youtube.v3.resources import YouTubeResource
 
     from webcam_aggregator.extractors.base import Extractor, Resolved
+    from webcam_aggregator.sources.base import Source
 
 log = logging.getLogger("webcam-aggregator")
 _HLS_CT = "application/vnd.apple.mpegurl"
@@ -338,6 +341,145 @@ def make_liveness_check(
     return check
 
 
+@dataclass(frozen=True)
+class _HandlerDeps:
+    """What the HTTP handler serves from."""
+
+    store: CatalogueStore
+    cache: ResolveCache
+    base_url: str
+    manifest_fetch: Callable[[str], tuple[str | None, str]]
+    source_status: Callable[[], dict[str, Any]]
+    segment_fetch: Callable[[str, str | None], tuple[SegmentResponse | None, str]]
+    proxy_youtube: bool
+
+
+class _Handler(BaseHTTPRequestHandler):
+    """Serve the playlist, `/health` and `/stream/<id>` from `deps`."""
+
+    deps: ClassVar[_HandlerDeps]
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        path = parsed.path
+        qs = urllib.parse.parse_qs(parsed.query)
+        if path == "/playlist.m3u8":
+            self._playlist()
+        elif path == "/health":
+            self._health()
+        elif path.startswith("/stream/") and path.endswith("/m"):
+            # /stream/<id>/m?u=<url>&sig=<hmac>
+            self._child_manifest(path[len("/stream/") : -len("/m")], qs)
+        elif path.startswith("/stream/") and path.endswith("/s"):
+            # /stream/<id>/s?u=<url>&sig=<hmac>
+            self._segment(path[len("/stream/") : -len("/s")], qs)
+        elif path.startswith("/stream/"):
+            self._stream(path[len("/stream/") :])
+        else:
+            self._respond(404, "text/plain", b"not found")
+
+    def _playlist(self) -> None:
+        if not self.deps.store.ready:
+            self._respond(503, "text/plain", b"not ready yet")
+            return
+        body = render_playlist(
+            list(self.deps.store.snapshot().values()), base_url=self.deps.base_url
+        )
+        self._respond(200, _HLS_CT, body.encode())
+
+    def _child_manifest(self, entry_id: str, qs: dict[str, list[str]]) -> None:
+        u_list = qs.get("u", [])
+        if not u_list:
+            self._respond(400, "text/plain", b"missing u= param")
+            return
+        status, ct, body = serve_child_manifest(
+            entry_id,
+            u_list[0],
+            qs.get("sig", [""])[0],  # a missing sig fails verify, logged
+            fetch=self.deps.manifest_fetch,
+            base_url=self.deps.base_url,
+        )
+        self._respond(status, ct, body)
+
+    def _segment(self, entry_id: str, qs: dict[str, list[str]]) -> None:
+        u_list = qs.get("u", [])
+        if not u_list:
+            self._respond(400, "text/plain", b"missing u= param")
+            return
+        seg_status, seg_ct, seg_cr, seg_body = serve_segment(
+            entry_id,
+            u_list[0],
+            qs.get("sig", [""])[0],  # a missing sig fails verify, logged
+            fetch_segment=self.deps.segment_fetch,
+            range_header=self.headers.get("Range"),
+        )
+        self.send_response(seg_status)
+        self.send_header("Content-Type", seg_ct)
+        self.send_header("Accept-Ranges", "bytes")
+        if seg_cr is not None:
+            self.send_header("Content-Range", seg_cr)
+        self.send_header("Content-Length", str(len(seg_body)))
+        self.end_headers()
+        self.wfile.write(seg_body)
+
+    def _stream(self, entry_id: str) -> None:
+        status, ct_or_loc, body = serve_stream(
+            entry_id,
+            catalogue=self.deps.store.snapshot(),
+            cache=self.deps.cache,
+            fetch=self.deps.manifest_fetch,
+            base_url=self.deps.base_url,
+            proxy_youtube=self.deps.proxy_youtube,
+        )
+        if status == HTTPStatus.FOUND:
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", ct_or_loc)
+            self.end_headers()
+            return
+        self._respond(status, ct_or_loc, body)
+
+    def _health(self) -> None:
+        snapshot = self.deps.store.snapshot()
+        st = self.deps.source_status()
+        unhealthy = st["unhealthy"]
+        # Single rollup for a JSON-query uptime monitor ($.healthy == true).
+        # False during the cold-start build (not ready yet) and whenever any source
+        # crashed or returned 0 cams this cycle — even while the empty-guard is
+        # still masking that failure in the served playlist.
+        healthy = self.deps.store.ready and not unhealthy
+        payload = {
+            "ready": self.deps.store.ready,
+            "healthy": healthy,
+            "streams": len(snapshot),
+            "unhealthy_sources": unhealthy,
+            "sources": st["sources"],
+            "last_build_seconds": st["last_build_seconds"],
+            "rss_mb": round(_total_rss() / 1048576, 1),
+        }
+        self._respond(200, "application/json", json.dumps(payload).encode())
+
+    def _respond(self, status: int, content_type: str, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    @override
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        # The uptime check polls /health every 60s — 4k lines/day of pure noise
+        # that buries everything else whenever DEBUG is on to investigate.
+        # Match the PARSED path: testing a substring of the raw request line would
+        # let /stream/x?y=/health suppress its own access-log entry.
+        if urllib.parse.urlsplit(self.path).path == "/health":
+            return
+        super().log_request(code, size)
+
+    @override
+    def log_message(self, format: str, *args: Any) -> None:
+        log.debug(format, *args)
+
+
 def make_handler(
     store: CatalogueStore,
     cache: ResolveCache,
@@ -349,127 +491,20 @@ def make_handler(
     proxy_youtube: bool = False,
 ) -> type[BaseHTTPRequestHandler]:
     """Build the handler class serving the playlist, `/health` and `/stream/<id>`."""
+    deps = _HandlerDeps(
+        store=store,
+        cache=cache,
+        base_url=base_url,
+        manifest_fetch=manifest_fetch,
+        source_status=source_status,
+        segment_fetch=segment_fetch,
+        proxy_youtube=proxy_youtube,
+    )
 
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            parsed = urllib.parse.urlsplit(self.path)
-            path = parsed.path
-            qs = urllib.parse.parse_qs(parsed.query)
+    class Handler(_Handler):
+        pass
 
-            if path == "/playlist.m3u8":
-                if not store.ready:
-                    self._respond(503, "text/plain", b"not ready yet")
-                    return
-                body = render_playlist(
-                    list(store.snapshot().values()), base_url=base_url
-                )
-                self._respond(200, _HLS_CT, body.encode())
-                return
-
-            if path.endswith("/m") and path.startswith("/stream/"):
-                # /stream/<id>/m?u=<url>&sig=<hmac>
-                entry_id = path[len("/stream/") : -len("/m")]
-                u_list = qs.get("u", [])
-                if not u_list:
-                    self._respond(400, "text/plain", b"missing u= param")
-                    return
-                status, ct, body = serve_child_manifest(
-                    entry_id,
-                    u_list[0],
-                    qs.get("sig", [""])[0],  # a missing sig fails verify, logged
-                    fetch=manifest_fetch,
-                    base_url=base_url,
-                )
-                self._respond(status, ct, body)
-                return
-
-            if path.endswith("/s") and path.startswith("/stream/"):
-                # /stream/<id>/s?u=<url>&sig=<hmac>
-                entry_id = path[len("/stream/") : -len("/s")]
-                u_list = qs.get("u", [])
-                if not u_list:
-                    self._respond(400, "text/plain", b"missing u= param")
-                    return
-                range_header = self.headers.get("Range")
-                seg_status, seg_ct, seg_cr, seg_body = serve_segment(
-                    entry_id,
-                    u_list[0],
-                    qs.get("sig", [""])[0],  # a missing sig fails verify, logged
-                    fetch_segment=segment_fetch,
-                    range_header=range_header,
-                )
-                self.send_response(seg_status)
-                self.send_header("Content-Type", seg_ct)
-                self.send_header("Accept-Ranges", "bytes")
-                if seg_cr is not None:
-                    self.send_header("Content-Range", seg_cr)
-                self.send_header("Content-Length", str(len(seg_body)))
-                self.end_headers()
-                self.wfile.write(seg_body)
-                return
-
-            if path.startswith("/stream/"):
-                entry_id = path[len("/stream/") :]
-                status, ct_or_loc, body = serve_stream(
-                    entry_id,
-                    catalogue=store.snapshot(),
-                    cache=cache,
-                    fetch=manifest_fetch,
-                    base_url=base_url,
-                    proxy_youtube=proxy_youtube,
-                )
-                if status == HTTPStatus.FOUND:
-                    self.send_response(HTTPStatus.FOUND)
-                    self.send_header("Location", ct_or_loc)
-                    self.end_headers()
-                    return
-                self._respond(status, ct_or_loc, body)
-                return
-
-            if path == "/health":
-                snapshot = store.snapshot()
-                st = source_status()
-                unhealthy = st["unhealthy"]
-                # Single rollup for a JSON-query uptime monitor ($.healthy == true).
-                # False during the cold-start build (not ready yet) and whenever any source
-                # crashed or returned 0 cams this cycle — even while the empty-guard is
-                # still masking that failure in the served playlist.
-                healthy = store.ready and not unhealthy
-                payload = {
-                    "ready": store.ready,
-                    "healthy": healthy,
-                    "streams": len(snapshot),
-                    "unhealthy_sources": unhealthy,
-                    "sources": st["sources"],
-                    "last_build_seconds": st["last_build_seconds"],
-                    "rss_mb": round(_total_rss() / 1048576, 1),
-                }
-                self._respond(200, "application/json", json.dumps(payload).encode())
-                return
-
-            self._respond(404, "text/plain", b"not found")
-
-        def _respond(self, status: int, content_type: str, body: bytes) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        @override
-        def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
-            # The uptime check polls /health every 60s — 4k lines/day of pure noise
-            # that buries everything else whenever DEBUG is on to investigate.
-            # Match the PARSED path: testing a substring of the raw request line would
-            # let /stream/x?y=/health suppress its own access-log entry.
-            if urllib.parse.urlsplit(self.path).path == "/health":
-                return
-            super().log_request(code, size)
-
-        @override
-        def log_message(self, format: str, *args: Any) -> None:
-            log.debug(format, *args)
-
+    Handler.deps = deps
     return Handler
 
 
@@ -531,34 +566,21 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
     return {"sources": sources, "unhealthy": unhealthy}
 
 
-def build_app(
-    cfg: config.Config,
-) -> tuple[
-    CatalogueStore,
-    ResolveCache,
-    Callable[[], None],
-    Callable[[], dict[str, Any]],
-]:
-    """Wire sources, extractors, resolve cache and store from `cfg`.
+def _build_resolvers(
+    pacer: HostPacer,
+) -> tuple[ResolveCache, Callable[[str, str], Resolved], FetchStats]:
+    """Build the serve-time resolve cache and the build-time resolve, from one factory.
 
-    Return the catalogue store, the resolve cache, a function that runs one catalogue
-    rebuild, and a function reporting per-source status for `/health`.
+    Return the cache, the build-time resolve and the build-time fetcher's stats.
     """
-    # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
-    # probe). Reactive: it is a no-op until a host answers 429/503, then that host
-    # is spaced and its retries are gated past the shedding window so they succeed
-    # instead of re-entering the burst. Serve-side fetchers stay unpaced.
-    pacer = HostPacer()
-
     # The resolve path exists TWICE, from one factory: the build-time set (paced,
     # stats-wired — liveness hammers a source's own site a second time, so it must
     # be measured and paced) and the serve-time set (unpaced, stats deliberately
-    # unwired as before — a build-inflicted cooldown must never stall a player's
-    # /stream request, which holds a ResolveCache per-entry lock while resolving).
+    # unwired — a build-inflicted cooldown must never stall a player's /stream
+    # request, which holds a ResolveCache per-entry lock while resolving).
     serve_fetcher = Fetcher(delay=0.0, retries=2)
     resolver_stats = FetchStats()
     build_fetcher = Fetcher(delay=0.0, retries=2, stats=resolver_stats, pacer=pacer)
-
     ytdlp = YtDlpExtractor()  # stateless, shared across both sets
     direct = DirectHls()
 
@@ -584,13 +606,14 @@ def build_app(
     serve_extractors = _extractor_set(serve_fetcher)
     build_extractors = _extractor_set(build_fetcher)
     registry = build_registry(serve_extractors)  # same keys in both (one factory)
-    resolve_serve = make_resolve(registry, serve_extractors)
-    resolve_build = make_resolve(registry, build_extractors)
-    cache: ResolveCache = ResolveCache(resolve_serve, clock=time.monotonic)
+    cache = ResolveCache(make_resolve(registry, serve_extractors), clock=time.monotonic)
+    return cache, make_resolve(registry, build_extractors), resolver_stats
 
-    def _new_yt_client() -> YouTubeResource:
-        import googleapiclient.discovery
 
+def _youtube_source(cfg: config.Config) -> YoutubeApiSource | None:
+    """Return the YouTube Data API source, or None when its client can't be built."""
+
+    def new_client() -> YouTubeResource:
         # static_discovery=True uses the bundled discovery document, so rebuilding the
         # client after a wedged connection costs ~5 ms and no network call.
         return googleapiclient.discovery.build(
@@ -602,8 +625,7 @@ def build_app(
         )
 
     try:
-        _new_yt_client()  # fail fast at startup on a bad key/deps, as before
-        yt_available = True
+        new_client()  # fail fast at startup on a bad key or a broken install
     # Startup must survive whatever a bad key or broken client raises: the source is
     # disabled and the scrapers still run.
     except Exception as exc:  # noqa: BLE001
@@ -614,11 +636,14 @@ def build_app(
             type(exc).__name__,
             scrub(str(exc)),
         )
-        yt_available = False
+        return None
+    return YoutubeApiSource(new_client, cfg.search_query)
 
-    yt_source = (
-        YoutubeApiSource(_new_yt_client, cfg.search_query) if yt_available else None
-    )
+
+def _build_sources(
+    yt_source: YoutubeApiSource | None, pacer: HostPacer
+) -> tuple[list[Source], dict[str, FetchStats]]:
+    """Build every active source, each with its own fetcher, and their fetch stats."""
     # One Fetcher — and one FetchStats — PER SOURCE. A single shared fetcher made it
     # impossible to say which source's fetches failed, and a process-global counter
     # would also collect serve-time player traffic between rebuilds, so the line meant
@@ -632,7 +657,7 @@ def build_app(
         source_stats[name] = stats
         return Fetcher(stats=stats, pacer=pacer, impersonate=impersonate)
 
-    active_sources: list[Any] = [
+    active_sources: list[Source] = [
         s
         for s in (
             yt_source,  # googleapiclient, not Fetcher — no fetch stats to collect
@@ -668,22 +693,13 @@ def build_app(
         msg = f"source_stats key mismatch: {sorted(unmapped)}"
         raise ValueError(msg)
 
-    store = CatalogueStore()
-    history: dict[str, Hist] = {}
-    # delay=0: liveness verify-fetches hit CDNs (not the scraped sites) and run
-    # concurrently, so politeness spacing isn't needed here. retries=2 so a paced
-    # 503 gets its post-cooldown retry (range(retries) means retries=1 is ZERO
-    # retries), but retry_only_shedding keeps the dead-cam long tail (404s,
-    # 20s timeouts) at one attempt each, exactly as before.
-    probe_stats = FetchStats()
-    probe_fetcher = Fetcher(
-        delay=0.0,
-        retries=2,
-        stats=probe_stats,
-        pacer=pacer,
-        retry_only_shedding=True,
-    )
-    drop_reason_for = make_liveness_check(resolve_build, probe_fetcher.get_with_outcome)
+    return active_sources, source_stats
+
+
+def _youtube_live_for(
+    yt_source: YoutubeApiSource | None,
+) -> Callable[[Iterable[str]], dict[str, str]]:
+    """Build the rebuild's YouTube live check: live video id -> category name."""
 
     def youtube_live(ids: Iterable[str]) -> dict[str, str]:
         if yt_source is None:
@@ -702,6 +718,81 @@ def build_app(
             )
             return {}
 
+    return youtube_live
+
+
+def _report_build_diag(liveness: dict[str, FetchStats], pacer: HostPacer) -> None:
+    """Log the cross-source liveness fetch failures and pacing of the last rebuild.
+
+    The liveness fetchers and pacer are cross-source, so they report here rather than
+    on a source's own line. One aggregate INFO line each, only when something failed:
+    a healthy cycle adds no noise.
+    """
+    for label, stats in liveness.items():
+        fetches = stats.drain()
+        failures = failure_counts(fetches)
+        if failures:
+            total = sum(sum(o.values()) for o in fetches.values())
+            log.info(
+                "liveness %s: %d fetched, %d failed: %s",
+                label,
+                total,
+                sum(failures.values()),
+                top_counts(failures, 3),
+            )
+    pacing = pacer.drain()
+    if pacing:
+        top_pace = sorted(pacing.items(), key=lambda kv: (-kv[1]["penalties"], kv[0]))[
+            :3
+        ]
+        log.info(
+            "pacing: %s",
+            ", ".join(
+                f"{int(v['penalties'])}x {h} ({v['backoff_seconds']:.0f}s backoff)"
+                for h, v in top_pace
+            ),
+        )
+
+
+def build_app(
+    cfg: config.Config,
+) -> tuple[
+    CatalogueStore,
+    ResolveCache,
+    Callable[[], None],
+    Callable[[], dict[str, Any]],
+]:
+    """Wire sources, extractors, resolve cache and store from `cfg`.
+
+    Return the catalogue store, the resolve cache, a function that runs one catalogue
+    rebuild, and a function reporting per-source status for `/health`.
+    """
+    # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
+    # probe). Reactive: it is a no-op until a host answers 429/503, then that host
+    # is spaced and its retries are gated past the shedding window so they succeed
+    # instead of re-entering the burst. Serve-side fetchers stay unpaced.
+    pacer = HostPacer()
+    cache, resolve_build, resolver_stats = _build_resolvers(pacer)
+    yt_source = _youtube_source(cfg)
+    active_sources, source_stats = _build_sources(yt_source, pacer)
+    store = CatalogueStore()
+    history: dict[str, Hist] = {}
+    # delay=0: liveness verify-fetches hit CDNs (not the scraped sites) and run
+    # concurrently, so politeness spacing isn't needed here. retries=2 so a paced
+    # 503 gets its post-cooldown retry (range(retries) means retries=1 is ZERO
+    # retries), but retry_only_shedding keeps the dead-cam long tail (404s,
+    # 20s timeouts) at one attempt each, exactly as before.
+    probe_stats = FetchStats()
+    probe_fetcher = Fetcher(
+        delay=0.0,
+        retries=2,
+        stats=probe_stats,
+        pacer=pacer,
+        retry_only_shedding=True,
+    )
+    drop_reason_for = make_liveness_check(resolve_build, probe_fetcher.get_with_outcome)
+
+    youtube_live = _youtube_live_for(yt_source)
     expected_sources = [s.name for s in active_sources]
 
     # The one cross-source number /health carries; everything else the build-side
@@ -724,35 +815,6 @@ def build_app(
         stats = source_stats.get(name)
         return stats.drain() if stats is not None else {}
 
-    def _report_build_diag() -> None:
-        # The liveness fetchers and pacer are cross-source, so they report here
-        # rather than on a source's own line. One aggregate INFO line each, only
-        # when something failed — a healthy cycle adds no noise.
-        liveness = {"resolver": resolver_stats.drain(), "probe": probe_stats.drain()}
-        pacing = pacer.drain()
-        for label, fetches in liveness.items():
-            failures = failure_counts(fetches)
-            if failures:
-                total = sum(sum(o.values()) for o in fetches.values())
-                log.info(
-                    "liveness %s: %d fetched, %d failed: %s",
-                    label,
-                    total,
-                    sum(failures.values()),
-                    top_counts(failures, 3),
-                )
-        if pacing:
-            top_pace = sorted(
-                pacing.items(), key=lambda kv: (-kv[1]["penalties"], kv[0])
-            )[:3]
-            log.info(
-                "pacing: %s",
-                ", ".join(
-                    f"{int(v['penalties'])}x {h} ({v['backoff_seconds']:.0f}s backoff)"
-                    for h, v in top_pace
-                ),
-            )
-
     def rebuild_once() -> None:
         log.info("starting catalogue rebuild")
         t0 = time.monotonic()
@@ -772,7 +834,9 @@ def build_app(
             # precisely when the numbers matter most.
             for name in source_stats:
                 drain_source_stats(name)
-            _report_build_diag()
+            _report_build_diag(
+                {"resolver": resolver_stats, "probe": probe_stats}, pacer
+            )
             diag["last_build_seconds"] = round(time.monotonic() - t0, 1)
         store.swap(entries)
         log.info(

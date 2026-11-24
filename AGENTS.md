@@ -88,7 +88,8 @@ The app is two phases, decoupled by a catalogue snapshot:
    proxied, the player polls `/stream/<id>` as its live playlist, so with
    `PROXY_YOUTUBE=true` a dud cached resolve still holds until its TTL.
 
-**`build_app()` in `app.py` is the wiring seam.** To extend:
+**`build_app()` in `app.py` is the wiring seam**, with its parts in the helpers beside it
+(`_build_resolvers`, `_build_sources`). To extend:
 
 - **Candidates are normalised at the extraction seam** (`extract_candidates`): a
   site-relative embed is resolved against its page (worldcams' `streams[]` array mixes
@@ -116,7 +117,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   `thread_map`, which holds every result until the last call finishes — a whole
   sitemap's pages at once, stacked across the sources building together. Maps with
   small results stay on `thread_map` (the docstrings say why).
-  Add the instance to `active_sources` in `build_app`, built with
+  Add the instance to `active_sources` in `app._build_sources`, built with
   `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
   `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
   dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
@@ -131,7 +132,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   project-structure tree in the same change.
 - **Add an extractor** — implement the `Extractor` protocol (`extractors/base.py`):
   `resolve(target_url) -> Resolved(url, stream_type, ttl_seconds)`. Add it to the
-  `_extractor_set` factory in `build_app` AND a predicate to `build_registry`
+  `_extractor_set` factory in `app._build_resolvers` AND a predicate to `build_registry`
   (startup validation raises if a rule names an extractor not in the dict). The one
   factory builds TWO sets: the build-time one (its fetcher is paced + stats-wired,
   because liveness re-fetches source sites en masse) and the serve-time one (unpaced
@@ -185,7 +186,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   `categories.ALL_CATEGORIES` — a test guards the README list matches.
 - **Diagnostics come free** — failures aggregate at two seams, so a new source or
   extractor is diagnosable without extra work. Each source gets its **own `Fetcher`
-  carrying its own `FetchStats`** (wired in `build_app._source_fetcher`; the keys must
+  carrying its own `FetchStats`** (wired in `app._build_sources`' `_source_fetcher`; the keys must
   match `Source.name` and a startup check raises if they don't), and `catalogue`
   reports that source's fetch outcome on its own `kept / discovered` line. Per-source,
   NOT global: a fully blocked source makes very few requests (skyline: a dozen), so a global
@@ -557,7 +558,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   requests/curl 403, curl_cffi 200; not IP reputation). The index move above is necessary
   but not sufficient — with the plain `Fetcher` discovery is a flat 403 and 0 cams — so the
   source is built with `impersonate=True` (`_source_fetcher("cxtvlive", impersonate=True)`
-  in `build_app`), fetching through the browser-fingerprint curl_cffi path shared with
+  in `app._build_sources`), fetching through the browser-fingerprint curl_cffi path shared with
   wildlife-trusts. The `HostPacer` (429/503 only) does not back off on the
   403, so a gated build just burns every fetch fast — a sudden `Nx http-403
   www.cxtvlive.com` on the source line is this gate, not a code fault.
