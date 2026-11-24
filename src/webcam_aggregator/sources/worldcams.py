@@ -1,4 +1,4 @@
-"""worldcams.net source: list pages -> cam detail pages -> embeds."""
+"""worldcams.tv source: list pages -> cam detail pages -> embeds."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ _Ctx = tuple[str, dict[str, str]]
 
 
 class WorldcamsSource(HtmlScraperSource[_Ctx]):
-    """worldcams.net cams: list pages in sequence, detail pages concurrently."""
+    """worldcams.tv cams: list pages in sequence, detail pages concurrently."""
 
     name: str = "worldcams"
 

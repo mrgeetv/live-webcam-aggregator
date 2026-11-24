@@ -196,7 +196,7 @@ live-webcam-aggregator/
 │       │   └── wetmet.py       # WetMet widget frame -> signed Wowza HLS
 │       └── sources/            # Stream discovery sources
 │           ├── youtube_api.py  # YouTube Data API v3 source
-│           ├── worldcams.py    # Worldcams.net scraper source
+│           ├── worldcams.py    # worldcams.tv scraper source
 │           ├── cxtvlive.py     # CXTV Live scraper source
 │           ├── airportwebcams.py  # airportwebcams.net -> YouTube channel-live cams
 │           ├── beachcam.py     # MEO Beachcam scraper source (tokened direct HLS)

@@ -19,5 +19,5 @@ class Extractor(Protocol):
     """Turns a cam's target URL into a playable stream."""
 
     def resolve(self, target_url: str) -> Resolved:
-        """Resolve `target_url` to a `Resolved`, raising `ValueError` if it can't."""
+        """Resolve `target_url` to a `Resolved`, raising (usually ValueError) if not."""
         ...

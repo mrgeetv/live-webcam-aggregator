@@ -820,7 +820,7 @@ What keeps each pin current once it's in (`.github/dependabot.yml` unless noted)
 
 | Pin | Updated by |
 | --- | --- |
-| `pyproject.toml` dependencies + `uv.lock` | Dependabot uv, daily (yt-dlp skips the cooldown); the `dev` group, which holds every Python tool the hooks run, bumps as `chore(deps)` |
+| `pyproject.toml` dependencies + `uv.lock` | Dependabot uv, daily (yt-dlp skips the cooldown), transitive pins included; the `dev` group, which holds every Python tool the hooks run, bumps as `chore(deps)` |
 | workflow `uses:` | Dependabot github-actions |
 | `.pre-commit-config.yaml` `rev:` | Dependabot pre-commit (it skips `repo: local` hooks, so a non-Python tool goes in its upstream hook repo; a Python one goes in the `dev` group and runs as a local `uv run` hook) |
 | hadolint's `entry:` image tag | by hand, in that Dependabot PR: `check-hadolint-pin` fails it until the tag matches `rev:` |

@@ -6,6 +6,10 @@ updates:
   # Everything else waits out a 7-day cooldown.
   - package-ecosystem: "uv"
     directory: "/"
+    # Transitive pins too: uv.lock pins the whole closure the image installs, so
+    # without this only the direct dependencies would ever move.
+    allow:
+      - dependency-type: "all"
     schedule:
       interval: "daily"
       time: "08:00"
