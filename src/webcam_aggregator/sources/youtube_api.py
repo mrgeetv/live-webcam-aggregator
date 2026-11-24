@@ -44,9 +44,9 @@ class YoutubeApiSource:
     fails. httplib2 evicts a connection from its pool only on `socket.timeout` — a
     `BrokenPipeError` leaves the dead socket in place, so every later call reuses it and
     fails instantly (no round trip) for as long as the client lives, which across a
-    long-lived process means cycle after cycle. `num_retries` does not help: googleapiclient
-    retries through that same pooled connection. Replacing the client replaces the Http
-    object, and with it the pool.
+    long-lived process means cycle after cycle. `num_retries` does not help:
+    googleapiclient retries through that same pooled connection. Replacing the client
+    replaces the Http object, and with it the pool.
     """
 
     name: str = "youtube-api"

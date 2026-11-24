@@ -19,7 +19,8 @@ def _merge(a: Candidate, b: Candidate) -> Candidate:
         reverse=True,
     )
     category = next((c.category for c in ranked if c.category), None)
-    # title: YouTube API's canonical title for a YT cam, else the longest non-empty title
+    # title: YouTube API's canonical title for a YT cam, else the longest non-empty
+    # title
     yt = next((c for c in (a, b) if c.source == "youtube-api" and c.title), None)
     title = yt.title if yt else max((a.title, b.title), key=len)
     return replace(ranked[0], title=title, category=category)

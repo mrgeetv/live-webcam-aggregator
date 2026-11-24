@@ -10,8 +10,9 @@ from webcam_aggregator.extractors.base import Resolved
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# WetMet publishes cams as a widget iframe, api.wetmet.net/widgets/stream/frame.php?uid=…,
-# whose inline player script assigns the HLS master playlist outright:
+# WetMet publishes cams as a widget iframe,
+# api.wetmet.net/widgets/stream/frame.php?uid=…, whose inline player script assigns
+# the HLS master playlist outright:
 #     var vurl = 'https://<edge>.wetmet.net/live/<id>/playlist.m3u8?wmsAuthSign=…'
 #
 # The playlist is Wowza/Nimble-signed: `wmsAuthSign` plus a `nimblesessionid` minted for

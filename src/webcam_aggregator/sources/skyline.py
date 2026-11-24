@@ -117,7 +117,8 @@ class SkylineSource(HtmlScraperSource[_Ctx]):
         unmapped = sorted(s for s in slugs if s not in _CATEGORY)
         if unmapped:
             log.warning(
-                "skyline: %d category page(s) not in _CATEGORY (-> Unmapped Category): %s",
+                "skyline: %d category page(s) not in _CATEGORY "
+                "(-> Unmapped Category): %s",
                 len(unmapped),
                 ", ".join(unmapped),
             )

@@ -61,7 +61,8 @@ def _places(raw: str | None) -> list[dict[str, object]]:
         doc = json.loads(raw)
     except ValueError:
         return []
-    # get_locations_network wraps the list in {"data": [...]}; get_locations is a bare list.
+    # get_locations_network wraps the list in {"data": [...]}; get_locations is a bare
+    # list.
     groups = doc["data"] if isinstance(doc, dict) and "data" in doc else doc
     out: list[dict[str, object]] = []
     if isinstance(groups, list):

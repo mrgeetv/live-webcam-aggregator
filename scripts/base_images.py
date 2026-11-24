@@ -19,8 +19,9 @@ from typing import NamedTuple
 
 LABEL = "io.github.mrgeetv.base-images"
 
-# <python major.minor>-alpine<alpine major.minor>[-variant], e.g. 3.14-alpine3.24-sfw-dev.
-# A patch-level python tag (3.14.1-…) or a prerelease (3.15-rc-…) doesn't match.
+# <python major.minor>-alpine<alpine major.minor>[-variant], e.g.
+# 3.14-alpine3.24-sfw-dev. A patch-level python tag (3.14.1-…) or a prerelease
+# (3.15-rc-…) doesn't match.
 _PYTHON_ALPINE_TAG = re.compile(r"(\d+)\.(\d+)-alpine(\d+)\.(\d+)(-[a-z-]+)?")
 
 
@@ -135,7 +136,8 @@ def _pinned_bases(dockerfile_path: str) -> str:
 
 def _published_labels(image: str) -> dict[str, str]:
     data = _inspect(image, "Image")
-    # A multi-platform image maps platform -> config; a single-platform one is the config.
+    # A multi-platform image maps platform -> config; a single-platform one is the
+    # config.
     config = data.get("linux/amd64", data)
     if not isinstance(config, dict):
         msg = f"unexpected image config for {image}: {type(config).__name__}"
@@ -148,10 +150,15 @@ def stale_reason(dockerfile_path: str, image: str, commit: str) -> str:
     labels = _published_labels(image)
     revision = labels.get("org.opencontainers.image.revision", "")
     if revision != commit:
-        return f"{image} was built from {revision or '<no revision>'}, not the release's {commit}"
+        built_from = revision or "<no revision>"
+        return f"{image} was built from {built_from}, not the release's {commit}"
     published, current = labels.get(LABEL, ""), _pinned_bases(dockerfile_path)
     if published != current:
-        return f"base images changed\n  published: {published or '<no label>'}\n  current:   {current}"
+        return (
+            "base images changed\n"
+            f"  published: {published or '<no label>'}\n"
+            f"  current:   {current}"
+        )
     return ""
 
 

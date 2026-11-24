@@ -84,7 +84,8 @@ _WEBCAM_SITEMAP = re.compile(
 )
 _CAM = re.compile(r"<loc>(https://www\.camscape\.com/webcam/[a-z0-9-]+/)</loc>")
 # The cam's own tags are its `where-link`s. Every page's nav also links a seasonal
-# category (/showing/christmas/), so an unanchored /showing/ match tags every cam with it.
+# category (/showing/christmas/), so an unanchored /showing/ match tags every cam with
+# it.
 _TAG = re.compile(r'class="where-link" href="/showing/([a-z0-9-]+)/"')
 _LOC = re.compile(r'class="where-link" href="/location/([a-z0-9-]+)/"')
 _STREAMS = '<script id="streams-data" type="application/json">'
@@ -134,7 +135,8 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         unmapped = sorted(s for s in slugs if s not in _CATEGORY)
         if unmapped:
             log.warning(
-                "camscape: %d category page(s) not in _CATEGORY (-> Unmapped Category): %s",
+                "camscape: %d category page(s) not in _CATEGORY "
+                "(-> Unmapped Category): %s",
                 len(unmapped),
                 ", ".join(unmapped),
             )
@@ -152,7 +154,8 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         category = next((_CATEGORY[t] for t in tags if _CATEGORY.get(t)), None)
         if category is None:
             # No mapped tag: surface an unknown tag so it lands in "Unmapped Category"
-            # (+ gets logged); else None -> "Other" (untagged, or only None-mapped tags).
+            # (+ gets logged); else None -> "Other" (untagged, or only None-mapped
+            # tags).
             category = next((t for t in tags if t not in _CATEGORY), None)
         locs = dict.fromkeys(_LOC.findall(html))
         location = [loc.replace("-", " ").title() for loc in locs]

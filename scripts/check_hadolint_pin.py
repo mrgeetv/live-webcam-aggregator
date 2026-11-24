@@ -34,7 +34,10 @@ def mismatch(config: str) -> str | None:
     if rev is None or tag is None:
         return f"no {_REPO} hook with a pinned {_IMAGE}<tag> entry found"
     if rev != tag:
-        return f"hadolint rev is {rev} but its entry pins {_IMAGE}{tag}: set the entry tag to {rev}"
+        return (
+            f"hadolint rev is {rev} but its entry pins {_IMAGE}{tag}: "
+            f"set the entry tag to {rev}"
+        )
     return None
 
 

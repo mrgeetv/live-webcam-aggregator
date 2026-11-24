@@ -116,8 +116,8 @@ class SharejuSource:
         seen: set[str] = set()
         for block in _LD_JSON.findall(html):
             try:
-                # strict=False: the blob carries raw control characters inside
-                # strings (a literal newline in one embedUrl), which strict JSON rejects.
+                # strict=False: the blob carries raw control characters inside strings
+                # (a literal newline in one embedUrl), which strict JSON rejects.
                 data = json.loads(block, strict=False)
             except ValueError:
                 continue

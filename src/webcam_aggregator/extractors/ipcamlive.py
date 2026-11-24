@@ -10,9 +10,10 @@ from webcam_aggregator.extractors.base import Resolved
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# ipcamlive embeds: g*.ipcamlive.com/player/player.php?alias=<id>. The player page exposes
-# `var address` + `var streamid`, which build <address>streams/<streamid>/stream.m3u8.
-# streamid is EMPTY for an offline cam -> unresolvable (raise; liveness validation drops it).
+# ipcamlive embeds: g*.ipcamlive.com/player/player.php?alias=<id>. The player page
+# exposes `var address` + `var streamid`, which build
+# <address>streams/<streamid>/stream.m3u8. streamid is EMPTY for an offline cam ->
+# unresolvable (raise; liveness validation drops it).
 #
 # Route ONLY player/player.php URLs and bare alias landing pages here. Direct
 # s*.ipcamlive.com/streams/<id>/stream.m3u8 URLs (the majority) must fall through to

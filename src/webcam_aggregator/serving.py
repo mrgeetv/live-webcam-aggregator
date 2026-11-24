@@ -304,10 +304,13 @@ def rewrite_manifest(
         if not _same_site(urlsplit(absolute).hostname or "", up_host):
             return absolute
         if absolute.split("?", 1)[0].endswith(".m3u8"):
-            return f"{base_url}/stream/{entry_id}/m?u={quote(absolute, safe='')}&sig={sign(absolute)}"
-        if proxy_segments:
-            return f"{base_url}/stream/{entry_id}/s?u={quote(absolute, safe='')}&sig={sign(absolute)}"
-        return absolute
+            route = "m"
+        elif proxy_segments:
+            route = "s"
+        else:
+            return absolute
+        signed = f"u={quote(absolute, safe='')}&sig={sign(absolute)}"
+        return f"{base_url}/stream/{entry_id}/{route}?{signed}"
 
     def rewrite_attribute(m: re.Match[str]) -> str:
         name, value = m.group(1), m.group(2)

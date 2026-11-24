@@ -14,7 +14,8 @@ if TYPE_CHECKING:
 # viewsurf cams play through Quanteec's joada.net player. The embed URL carries the
 # cam's stable uuid; the player asks the platform API for the current sources:
 #   GET https://platforms<N>.joada.net/api/videos/manifest/<uuid>
-#     -> {"m3u8": "https://<delivery>/contents/encodings/<live|vod>/<uuid>/master.m3u8", …}
+#     -> {"m3u8": "https://<delivery>/contents/encodings/<live|vod>/<uuid>/
+#                  master.m3u8", …}
 #
 # The HLS chain is open: no token in any URL, and manifests + fMP4 segments serve
 # without a Referer — so nothing here needs _PROXY_SEGMENT_HOSTS. But the delivery

@@ -29,7 +29,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("webcam-aggregator.fetch")
 
-UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0 Safari/537.36"
+)
 
 MAX_BYTES = 8 * 1024 * 1024  # 8 MB ceiling for any fetched document
 MANIFEST_MAX_BYTES = (
@@ -157,7 +160,7 @@ def _validate_ip(url: str) -> tuple[str | None, str]:
 
 
 def _fetchable_host(url: str) -> str | None:
-    """Return the host of an http(s) URL with a usable port, or None for anything else."""
+    """Return the host of an http(s) URL with a usable port, else None."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         return None
@@ -533,9 +536,9 @@ def _read_capped(
 class FetchStats:
     """Thread-safe (host, outcome) -> count.
 
-    One instance PER SOURCE (see app._build_sources). A single shared counter could not say
-    WHICH source's fetches failed, and a process-global one would also be polluted by
-    serve-time player traffic between rebuilds — so the one line that is supposed to
+    One instance PER SOURCE (see app._build_sources). A single shared counter could not
+    say WHICH source's fetches failed, and a process-global one would also be polluted
+    by serve-time player traffic between rebuilds — so the one line that is supposed to
     explain an empty source would be reporting hosts the build never touched.
     """
 

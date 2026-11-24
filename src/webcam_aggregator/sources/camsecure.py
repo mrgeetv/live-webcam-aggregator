@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 _BASE = "https://www.camsecure.co.uk"
 _SITEMAP = f"{_BASE}/sitemap.xml"
 
-# Whether a sitemap page is a cam is decided by the iframe/HLS check below, NOT its URL —
-# many cam pages have no "webcam" in the name. `_SKIP` only drops pages that DO embed a
-# demo player but aren't a single cam (homepage, the demo index, product/info pages).
+# Whether a sitemap page is a cam is decided by the iframe/HLS check below, NOT its URL
+# — many cam pages have no "webcam" in the name. `_SKIP` only drops pages that DO embed
+# a demo player but aren't a single cam (homepage, the demo index, product/info pages).
 _SKIP = (
     "hosting",
     "features",
@@ -36,10 +36,10 @@ _SKIP = (
     "software",
 )
 _LOC = re.compile(r"<loc>([^<]+)</loc>")
-# Each cam page embeds its player in an iframe on camsecure.co/.uk (`httpswebcam/…`); that
-# player page is a video.js with a direct `/HLS/<name>.m3u8` (open CDN — segments need no
-# token/Referer; the player PAGE serves a decoy without `Referer: camsecure.co.uk`, so the
-# hosts are in `_REFERER_HOSTS`).
+# Each cam page embeds its player in an iframe on camsecure.co/.uk (`httpswebcam/…`);
+# that player page is a video.js with a direct `/HLS/<name>.m3u8` (open CDN — segments
+# need no token/Referer; the player PAGE serves a decoy without `Referer:
+# camsecure.co.uk`, so the hosts are in `_REFERER_HOSTS`).
 _PLAYER_IFRAME = re.compile(
     r'<iframe[^<>]+src="(https?://camsecure\.[a-z.]+/httpswebcam/[^"]+)"', re.IGNORECASE
 )

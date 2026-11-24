@@ -381,15 +381,15 @@ def build_catalogue(
     cross-source dedup and category mapping then run serially. `history` carries each
     source's state between rebuilds.
     """
-    # Sources discover + liveness-check CONCURRENTLY (each hits a different site), so the
-    # build's wall-clock is the slowest source, not the sum. Each source's work is
+    # Sources discover + liveness-check CONCURRENTLY (each hits a different site), so
+    # the build's wall-clock is the slowest source, not the sum. Each source's work is
     # self-contained and returns its kept candidates; the per-source empty guard and the
     # cross-source dedup run serially in the main thread afterwards, so there are no
     # shared-state races. The nested thread_map (inner liveness pool) is safe: the pools
     # are separate objects, and the one thing that DOES span the nesting — the shared
     # HostPacer — holds nothing while a thread waits (pacing is sleep-only), so it can
-    # slow a pool down but can never deadlock it. Keep it that way: nothing a fetch
-    # path acquires may be held while waiting on another thread.
+    # slow a pool down but can never deadlock it. Keep it that way: nothing a fetch path
+    # acquires may be held while waiting on another thread.
     yt_lock = threading.Lock()
     verdicts = _SharedVerdicts(drop_reason_for)
 

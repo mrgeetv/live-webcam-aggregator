@@ -294,7 +294,7 @@ class HtmlScraperSource[Ctx](ABC):
 
     @abstractmethod
     def _page_urls(self) -> list[str]:
-        """All cam detail-page URLs to scrape (e.g. from a sitemap or paginated list)."""
+        """Return the cam detail-page URLs to scrape (from a sitemap, a listing...)."""
 
     @abstractmethod
     def _page_meta(self, html: str, url: str) -> tuple[str | None, Ctx]:
