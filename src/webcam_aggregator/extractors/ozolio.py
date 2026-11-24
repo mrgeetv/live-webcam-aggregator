@@ -48,13 +48,15 @@ class OzolioResolver:
             doc = json.loads(body)
         except ValueError:
             # The relay's failure mode is an HTML error page, not JSON.
-            raise ValueError("ozolio: relay returned non-JSON") from None
+            msg = "ozolio: relay returned non-JSON"
+            raise ValueError(msg) from None
         return doc if isinstance(doc, dict) else {}
 
     def resolve(self, target_url: str) -> Resolved:
         m = _CID.search(target_url)
         if not m:
-            raise ValueError("ozolio: no camera id in target")
+            msg = "ozolio: no camera id in target"
+            raise ValueError(msg)
         cid = m.group(1)
         document = quote(
             f"{_RELAY}/pub.api?cmd=explore&oid=CID_{cid}&channel=0", safe=""
@@ -66,7 +68,8 @@ class OzolioResolver:
         session = init.get("session")
         sid = session.get("id") if isinstance(session, dict) else None
         if not isinstance(sid, str) or not _SID.fullmatch(sid):
-            raise ValueError("ozolio: no relay session (offline?)")
+            msg = "ozolio: no relay session (offline?)"
+            raise ValueError(msg)
         opened = self._api(
             f"{_RELAY}/ses.api?cmd=open&oid={sid}&output=1&format=M3U8&profile=AUTO"
         )
@@ -74,9 +77,11 @@ class OzolioResolver:
         source = output.get("source") if isinstance(output, dict) else None
         media = output.get("media") if isinstance(output, dict) else None
         if not isinstance(source, str) or not source:
-            raise ValueError("ozolio: no stream in open response (offline?)")
+            msg = "ozolio: no stream in open response (offline?)"
+            raise ValueError(msg)
         if media != "LIVE" or "/hls-live/" not in source:
-            raise ValueError("ozolio: canned loop, not a live camera")
+            msg = "ozolio: canned loop, not a live camera"
+            raise ValueError(msg)
         return Resolved(
             url=source,
             stream_type="hls",

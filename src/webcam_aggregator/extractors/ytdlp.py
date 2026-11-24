@@ -34,14 +34,20 @@ _REPORT_PLEA = re.compile(r";? please report this issue on [^\n]*")
 
 def _default_run(argv: list[str]) -> str:
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=_TIMEOUT)
+        # No shell, and the argv ends its options with `--`, so a target URL can
+        # never be read as a flag.
+        r = subprocess.run(  # noqa: S603
+            argv, capture_output=True, text=True, timeout=_TIMEOUT, check=False
+        )
     except subprocess.TimeoutExpired:
         # its own message is the whole argv, which buries the reason in the
         # truncated resolve-failure detail
-        raise ValueError(f"yt-dlp timed out after {_TIMEOUT}s") from None
+        msg = f"yt-dlp timed out after {_TIMEOUT}s"
+        raise ValueError(msg) from None
     if r.returncode != 0 or not r.stdout.strip():
         reason = _REPORT_PLEA.sub("", _ERROR_SUBJECT.sub(r"\1 ", r.stderr)).strip()
-        raise ValueError(f"yt-dlp failed: {reason[:200]}")
+        msg = f"yt-dlp failed: {reason[:200]}"
+        raise ValueError(msg)
     return r.stdout.strip()
 
 
@@ -73,7 +79,8 @@ class YtDlpExtractor:
         # a line would silently serve an audio-only cam that looks healthy.
         lines = out.splitlines()
         if len(lines) != 1:
-            raise ValueError("yt-dlp returned a split format, not a muxed stream")
+            msg = "yt-dlp returned a split format, not a muxed stream"
+            raise ValueError(msg)
         url = lines[0]
         m = re.search(r"expire[/=](\d+)", url)
         ttl = int(m.group(1)) - int(time.time()) if m else None

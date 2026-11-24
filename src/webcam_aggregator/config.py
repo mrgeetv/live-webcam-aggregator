@@ -116,7 +116,8 @@ def load(env: dict[str, str] | None = None) -> Config:
     e = env if env is not None else dict(os.environ)
     key = e.get("YOUTUBE_API_KEY", "").strip()
     if not key:
-        raise ValueError("YOUTUBE_API_KEY is required")
+        msg = "YOUTUBE_API_KEY is required"
+        raise ValueError(msg)
     cfg = Config(
         youtube_api_key=key,
         public_base_url=e.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"),

@@ -150,7 +150,9 @@ class ResolveCache:
                     ttl = raw * TTL_FACTOR
                 else:
                     ttl = 0.0  # already-expired token → don't serve stale, re-resolve
-            except Exception as exc:
+            # Whatever the extractor raised becomes a negative cache entry and the
+            # player's error, never an exception out of a /stream request.
+            except Exception as exc:  # noqa: BLE001
                 resolved, ttl = None, NEGATIVE_TTL
                 error = describe_error(exc)
             with self._guard:

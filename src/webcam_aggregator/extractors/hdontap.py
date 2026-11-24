@@ -51,7 +51,8 @@ class HdontapResolver:
     def resolve(self, target_url: str) -> Resolved:
         src = stream_src(self._fetch(target_url))
         if not src:
-            raise ValueError("hdontap: no player-data stream (offline?)")
+            msg = "hdontap: no player-data stream (offline?)"
+            raise ValueError(msg)
         return Resolved(
             url=src,
             stream_type="hls",

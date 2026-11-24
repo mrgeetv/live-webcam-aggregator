@@ -57,7 +57,8 @@ class IpcamliveResolver:
         sid = _STREAMID.search(body)
         if not (addr and sid):
             # no URL in the message — see the aggregated-detail rule in AGENTS.md
-            raise ValueError("ipcamlive: no address/streamid (offline?)")
+            msg = "ipcamlive: no address/streamid (offline?)"
+            raise ValueError(msg)
         base = addr.group(1).rstrip("/")
         return Resolved(
             url=f"{base}/streams/{sid.group(1)}/stream.m3u8",

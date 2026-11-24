@@ -32,7 +32,7 @@ _VIDEO = re.compile(r'data-video-url="(https?://[^"]+\.m3u8)"')
 # nimblesessionid+wmsAuthSign query is minted for whoever fetched it, so
 # `video-auth1.iol.pt` must be in serving._PROXY_SEGMENT_HOSTS (a segment stripped
 # of its query 404s).
-_TOKEN_API = "https://services.iol.pt/matrix?userId="
+_SIGN_API = "https://services.iol.pt/matrix?userId="
 # a real token is a base64 blob; anything else (an error page) is not a token
 _TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
 _TITLE = re.compile(r'<[^<>]*liveCamsHeader__title">([^<]*)<')
@@ -57,7 +57,7 @@ class BeachcamSource(HtmlScraperSource[_Ctx]):
     @override
     def _page_urls(self) -> list[str]:
         html = self._fetch.get(_INDEX) or ""
-        tok = (self._fetch.get(_TOKEN_API) or "").strip()
+        tok = (self._fetch.get(_SIGN_API) or "").strip()
         self._token = tok if _TOKEN_SHAPE.match(tok) else None
         slugs = sorted(set(_LINK.findall(html)))
         return [f"https://beachcam.meo.pt/livecams/{s}/" for s in slugs]

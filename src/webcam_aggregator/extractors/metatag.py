@@ -28,7 +28,8 @@ class MetaTagExtractor:
         m = _OG.search(html)
         if not m:
             # no URL in the message — see the aggregated-detail rule in AGENTS.md
-            raise ValueError("no og:video")
+            msg = "no og:video"
+            raise ValueError(msg)
         url = m.group(1)
         return Resolved(
             url=url, stream_type="mp4" if ".mp4" in url else "hls", ttl_seconds=None

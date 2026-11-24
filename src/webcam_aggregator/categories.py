@@ -293,10 +293,11 @@ ALL_CATEGORIES: tuple[str, ...] = tuple(
 # Fail fast at import if a title rule names a category outside the taxonomy (a typo guard,
 # mirroring the registry's extractor-name validation at startup).
 if not set(ALL_CATEGORIES) >= TITLE_FALLBACK_CATEGORIES:
-    raise ValueError(
+    msg = (
         f"title rules emit unknown categories: "
         f"{TITLE_FALLBACK_CATEGORIES - set(ALL_CATEGORIES)}"
     )
+    raise ValueError(msg)
 
 _ALL_CASEFOLDED: frozenset[str] = frozenset(c.casefold() for c in ALL_CATEGORIES)
 

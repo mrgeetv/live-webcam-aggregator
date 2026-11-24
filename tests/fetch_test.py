@@ -21,7 +21,7 @@ from webcam_aggregator.fetch import (
     HostPacer,
     _as_requests_error,  # pyright: ignore[reportPrivateUsage]
     _classify,  # pyright: ignore[reportPrivateUsage]
-    _FetchFailure,  # pyright: ignore[reportPrivateUsage]
+    _FetchError,  # pyright: ignore[reportPrivateUsage]
     _ImpersonatingSession,  # pyright: ignore[reportPrivateUsage]
     _pin,  # pyright: ignore[reportPrivateUsage]
     _PinDNS,  # pyright: ignore[reportPrivateUsage]
@@ -955,7 +955,7 @@ def test_politeness_delay_still_runs_on_non_retryable_failure() -> None:
     f = Fetcher(delay=1.0, retries=3, stats=s)
     with (
         patch.object(
-            Fetcher, "_fetch_following", side_effect=_FetchFailure("too-large")
+            Fetcher, "_fetch_following", side_effect=_FetchError("too-large")
         ),
         patch("webcam_aggregator.fetch.time.sleep") as slept,
     ):

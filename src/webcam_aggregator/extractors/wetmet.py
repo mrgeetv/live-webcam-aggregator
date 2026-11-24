@@ -31,7 +31,8 @@ class WetmetResolver:
         m = next((r for r in _URL_RUN.finditer(body) if ".m3u8" in r.group(0)), None)
         if not m:
             # no URL in the message — see the aggregated-detail rule in AGENTS.md
-            raise ValueError("wetmet: no m3u8 in widget frame")
+            msg = "wetmet: no m3u8 in widget frame"
+            raise ValueError(msg)
         return Resolved(
             url=m.group(0),
             stream_type="hls",

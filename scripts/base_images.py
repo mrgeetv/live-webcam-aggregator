@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -46,7 +47,8 @@ def newer_tags(current: str, available: list[str]) -> list[str]:
     """
     now = _python_alpine(current)
     if now is None:
-        raise ValueError(f"not a <python>-alpine<version> tag: {current}")
+        msg = f"not a <python>-alpine<version> tag: {current}"
+        raise ValueError(msg)
     newer: list[tuple[_PythonAlpine, str]] = []
     for tag in available:
         cand = _python_alpine(tag)
@@ -94,9 +96,14 @@ def base_images(dockerfile: str) -> list[str]:
 
 
 def _inspect(ref: str, field: str) -> dict[str, object]:
-    out = subprocess.run(
+    docker = shutil.which("docker")
+    if docker is None:
+        msg = "docker is not on PATH"
+        raise RuntimeError(msg)
+    # No shell: the image reference is one argv entry, read from our own Dockerfile.
+    out = subprocess.run(  # noqa: S603
         [
-            "docker",
+            docker,
             "buildx",
             "imagetools",
             "inspect",
@@ -115,7 +122,8 @@ def _pinned_bases(dockerfile_path: str) -> str:
     """LABEL's value: `<image>@<digest>` per base, space-separated, Dockerfile order."""
     images = base_images(Path(dockerfile_path).read_text(encoding="utf-8"))
     if not images:
-        raise ValueError(f"no base images found in {dockerfile_path}")
+        msg = f"no base images found in {dockerfile_path}"
+        raise ValueError(msg)
     return " ".join(
         f"{image}@{_inspect(image, 'Manifest')['digest']}" for image in images
     )

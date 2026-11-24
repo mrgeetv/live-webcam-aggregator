@@ -118,7 +118,8 @@ def _resolver_get(fetcher: Fetcher) -> Callable[[str], str]:
             # AND split one failure mode into per-URL-prefix buckets (the detail is
             # truncated), making the count unreadable. The URL is already logged at
             # DEBUG by liveness, and serve-time failures log the cam's target.
-            raise ValueError(f"resolver fetch failed: {outcome}")
+            msg = f"resolver fetch failed: {outcome}"
+            raise ValueError(msg)
         return body
 
     return get_text
@@ -136,7 +137,8 @@ def _baltic_post(fetcher: FetcherPostProtocol) -> Callable[[str, dict[str, str]]
         if body is None:
             # No URL for the same reason as _resolver_get: the message becomes an
             # aggregated INFO detail.
-            raise ValueError(f"resolver post failed: {outcome}")
+            msg = f"resolver post failed: {outcome}"
+            raise ValueError(msg)
         return body
 
     return post
@@ -198,7 +200,8 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
     ]
     for _predicate, name in rules:
         if name not in extractors:
-            raise ValueError(f"registry rule references unknown extractor {name!r}")
+            msg = f"registry rule references unknown extractor {name!r}"
+            raise ValueError(msg)
     return Registry(rules)
 
 
@@ -216,7 +219,8 @@ def make_resolve(
         name = registry.match(target_url)
         if name is None:
             log.debug("no extractor matched target %s", target_url)
-            raise NoExtractorError(f"no extractor for {target_url}")
+            msg = f"no extractor for {target_url}"
+            raise NoExtractorError(msg)
         return extractors[name].resolve(target_url)
 
     return resolve
@@ -268,7 +272,9 @@ def make_liveness_check(
             # the URLs tell you what to write an extractor FOR.
             log.debug("no extractor for %s", c.target_url)
             return NO_EXTRACTOR
-        except Exception as exc:
+        # Any extractor can raise anything (yt-dlp, a parse, a fetch); each is a drop
+        # reason for one cam, never a crash of the build.
+        except Exception as exc:  # noqa: BLE001
             log.debug("liveness resolve failed for %s: %s", c.target_url, exc)
             # The detail separates "yt-dlp is broken" from "this cam is off air".
             # It is aggregated at INFO, so any URL it quotes is trimmed, query and
@@ -558,7 +564,9 @@ def build_app(
     try:
         _new_yt_client()  # fail fast at startup on a bad key/deps, as before
         yt_available = True
-    except Exception as exc:
+    # Startup must survive whatever a bad key or broken client raises: the source is
+    # disabled and the scrapers still run.
+    except Exception as exc:  # noqa: BLE001
         # No log.exception: the traceback's last line is str(exc), and googleapiclient
         # puts the developer key in the discovery-doc URL it reports.
         log.warning(
@@ -617,7 +625,8 @@ def build_app(
     # silently reports nothing. Fail loudly at startup instead.
     unmapped = {s.name for s in active_sources} - set(source_stats) - {"youtube-api"}
     if unmapped:
-        raise ValueError(f"source_stats key mismatch: {sorted(unmapped)}")
+        msg = f"source_stats key mismatch: {sorted(unmapped)}"
+        raise ValueError(msg)
 
     store = CatalogueStore()
     history: dict[str, Hist] = {}
@@ -641,7 +650,7 @@ def build_app(
             return {}
         try:
             return yt_source.live_ids(ids)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - see below
             # A YouTube quota/transient error must not abort the whole rebuild —
             # just treat YT cams as offline this cycle (scrapers still build).
             # No log.exception: a traceback ends in str(exc), and HttpError's str

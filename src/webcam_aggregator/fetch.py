@@ -315,12 +315,14 @@ class _ImpersonatingSession:
     ) -> requests.Response:
         if allow_redirects:
             # Every hop must pass through Fetcher's validate-and-pin loop.
-            raise ValueError("redirects are followed by Fetcher, hop by hop")
+            msg = "redirects are followed by Fetcher, hop by hop"
+            raise ValueError(msg)
         parts = urlsplit(url)
         host = parts.hostname or ""
         ip = (getattr(_pin, "map", None) or {}).get(_pin_key(host))
         if ip is None:
-            raise RuntimeError("refusing an unpinned host: libcurl would resolve it")
+            msg = "refusing an unpinned host: libcurl would resolve it"
+            raise RuntimeError(msg)
         # _validate_ip has already refused a malformed port and port 0.
         port = (
             parts.port
@@ -364,7 +366,7 @@ class _ImpersonatingSession:
                 raise _as_requests_error(exc, method, url) from exc
             resp = aborted  # aborted by the sink: hand back the overflow
         if _canonical_ip(resp.primary_ip) not in validated[host]:
-            raise _FetchFailure(BLOCKED_IP, host=host)
+            raise _FetchError(BLOCKED_IP, host=host)
         out = requests.Response()
         out.status_code = resp.status_code
         out.reason = resp.reason
@@ -428,7 +430,7 @@ def _referer_for(url: str) -> dict[str, str]:
     return {}
 
 
-class _FetchFailure(Exception):
+class _FetchError(Exception):
     """A classified, non-retryable failure — a blocked IP, an oversized body or a
     broken redirect chain. Distinct from requests' exceptions because retrying cannot
     change the verdict. Carries the failing HOP's host, which on a redirect is not the
@@ -441,6 +443,28 @@ class _FetchFailure(Exception):
         super().__init__(reason)
         self.reason = reason
         self.host = host
+
+
+def _refuse_redirect(resp: requests.Response, host: str) -> None:
+    """Close and refuse a redirect where the request must not get one."""
+    if resp.is_redirect or resp.is_permanent_redirect:
+        resp.close()
+        raise _FetchError(UNEXPECTED_REDIRECT, host=host)
+
+
+def _read_capped(
+    resp: requests.Response, cap: int, host: str, chunk_size: int = 8192
+) -> bytes:
+    """Read a streamed body, refusing it as too large once it passes `cap` bytes."""
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in resp.iter_content(chunk_size):
+        total += len(chunk)
+        if total > cap:
+            resp.close()
+            raise _FetchError(TOO_LARGE, host=host)
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 class FetchStats:
@@ -804,16 +828,12 @@ class Fetcher:
         for attempt in range(self._retries):
             try:
                 body = self._fetch_following(url, timeout)
-                time.sleep(self._delay)
-                self._stats.record(host, OK)
-                return body, OK
-            except _FetchFailure as exc:
+            except _FetchError as exc:
                 outcome = exc.reason
                 host = exc.host or host  # the failing HOP, not the original URL
-                # The politeness delay applies to failures too. It used to, by accident
-                # (these cases returned None down the success path); dropping it would
-                # let a bot-wall serving redirect loops turn into unthrottled hammering
-                # across every worker — the fastest way to earn a hard block.
+                # The politeness delay applies to failures too: without it, a bot wall
+                # serving redirect loops gets unthrottled requests from every worker,
+                # the fastest way to earn a hard block.
                 # EXCEPT a pacer refusal: no request was made, and a source failing
                 # fast makes thousands of them — delaying each would burn minutes of
                 # pool time being polite about requests that never happened.
@@ -823,7 +843,7 @@ class Fetcher:
             except requests.RequestException as exc:
                 outcome = _classify(exc)
                 # Attribute a mid-redirect-chain failure to the hop that failed, not
-                # the URL the caller asked for. _FetchFailure carries its hop above;
+                # the URL the caller asked for. _FetchError carries its hop above;
                 # requests' exceptions carry the failing response/request instead.
                 hop = getattr(exc.response, "url", None) or getattr(
                     exc.request, "url", None
@@ -836,6 +856,10 @@ class Fetcher:
                 if self._retry_only_shedding and outcome not in _SHEDDING_OUTCOMES:
                     break  # a dead cam costs one attempt; only shedding earns more
                 time.sleep(2**attempt)
+            else:
+                time.sleep(self._delay)
+                self._stats.record(host, OK)
+                return body, OK
         self._stats.record(host, outcome)
         return None, outcome
 
@@ -852,11 +876,11 @@ class Fetcher:
             if self._pacer is not None:
                 acquired = self._pacer.acquire(host)
                 if acquired is None:
-                    raise _FetchFailure(HOST_BACKOFF, host=host)
+                    raise _FetchError(HOST_BACKOFF, host=host)
                 gen = acquired
             ip, reason = _validate_ip(current)
             if ip is None:
-                raise _FetchFailure(reason, host=host)
+                raise _FetchError(reason, host=host)
             # Fresh per-call session pinned to the validated IP (thread-safe).
             with _PinDNS(host, ip):
                 resp = self._session.get(
@@ -870,7 +894,7 @@ class Fetcher:
                     location = resp.headers.get("Location")
                     resp.close()
                     if not location:
-                        raise _FetchFailure(REDIRECT_NO_LOCATION, host=host)
+                        raise _FetchError(REDIRECT_NO_LOCATION, host=host)
                     current = urljoin(current, location)
                     continue
                 if resp.status_code >= 400:
@@ -880,16 +904,10 @@ class Fetcher:
                     resp.close()
                     self._penalise_if_shedding(resp, host, gen)
                 resp.raise_for_status()
-                chunks: list[bytes] = []
-                total = 0
-                for chunk in resp.iter_content(8192):
-                    total += len(chunk)
-                    if total > self._byte_cap:
-                        resp.close()
-                        raise _FetchFailure(TOO_LARGE, host=host)  # oversized → refuse
-                    chunks.append(chunk)
-                return b"".join(chunks).decode("utf-8", "replace")
-        raise _FetchFailure(TOO_MANY_REDIRECTS, host=urlsplit(current).hostname or "")
+                return _read_capped(resp, self._byte_cap, host).decode(
+                    "utf-8", "replace"
+                )
+        raise _FetchError(TOO_MANY_REDIRECTS, host=urlsplit(current).hostname or "")
 
     def _penalise_if_shedding(
         self, resp: requests.Response, host: str, gen: int
@@ -947,25 +965,16 @@ class Fetcher:
                     stream=True,
                     allow_redirects=False,
                 )
-                if resp.is_redirect or resp.is_permanent_redirect:
-                    resp.close()
-                    # signed segment URLs shouldn't redirect; refuse
-                    return None, UNEXPECTED_REDIRECT
-                chunks: list[bytes] = []
-                total = 0
-                for chunk in resp.iter_content(65536):
-                    total += len(chunk)
-                    if total > SEGMENT_MAX_BYTES:
-                        resp.close()
-                        return None, TOO_LARGE
-                    chunks.append(chunk)
+                # signed segment URLs shouldn't redirect
+                _refuse_redirect(resp, host)
+                body = _read_capped(resp, SEGMENT_MAX_BYTES, host, chunk_size=65536)
                 return (
                     resp.status_code,
                     resp.headers.get("Content-Type", "video/mp2t"),
                     resp.headers.get("Content-Range"),
-                    b"".join(chunks),
+                    body,
                 ), OK
-        except _FetchFailure as exc:
+        except _FetchError as exc:
             return None, exc.reason
         except requests.RequestException as exc:
             return None, _classify(exc)
@@ -1012,28 +1021,19 @@ class Fetcher:
                         stream=True,
                         allow_redirects=False,
                     )
-                    if resp.is_redirect or resp.is_permanent_redirect:
-                        resp.close()
-                        # admin-ajax POSTs shouldn't redirect; refuse
-                        raise _FetchFailure(UNEXPECTED_REDIRECT, host=host)
+                    # admin-ajax POSTs shouldn't redirect
+                    _refuse_redirect(resp, host)
                     if resp.status_code >= 400:
                         resp.close()  # streamed: release the pooled connection
                         self._penalise_if_shedding(resp, host, gen)
                     resp.raise_for_status()
-                    chunks: list[bytes] = []
-                    total = 0
-                    for chunk in resp.iter_content(8192):
-                        total += len(chunk)
-                        if total > MAX_BYTES:
-                            resp.close()
-                            raise _FetchFailure(TOO_LARGE, host=host)
-                        chunks.append(chunk)
+                    raw = _read_capped(resp, MAX_BYTES, host)
                     self._stats.record(host, OK)
-                    # Politeness delay AFTER the body, like get() — it used to run
-                    # mid-response, which held the connection through the sleep.
+                    # Politeness delay after the body, like get(): sleeping
+                    # mid-response would hold the connection through the sleep.
                     time.sleep(self._delay)
-                    return b"".join(chunks).decode("utf-8", "replace"), OK
-            except _FetchFailure as exc:
+                    return raw.decode("utf-8", "replace"), OK
+            except _FetchError as exc:
                 outcome = exc.reason
                 time.sleep(self._delay)  # failures pay the politeness delay too
                 break  # retrying cannot change this verdict

@@ -39,7 +39,8 @@ class BalticResolver:
         cam = _ID.search(page)
         if not cam:
             # no URL in the message — see the aggregated-detail rule in AGENTS.md
-            raise ValueError("baltic: no camera id in target")
+            msg = "baltic: no camera id in target"
+            raise ValueError(msg)
         fragment = self._post(
             _AJAX,
             {
@@ -53,9 +54,8 @@ class BalticResolver:
             (m for m in _URL_RUN.finditer(fragment) if ".m3u8" in m.group(0)), None
         )
         if not found:
-            raise ValueError(
-                f"baltic: no m3u8 in auth_token response for id {cam.group(1)}"
-            )
+            msg = f"baltic: no m3u8 in auth_token response for id {cam.group(1)}"
+            raise ValueError(msg)
         url = found.group(0)
         epoch = _EPOCH_MS.search(url)
         ttl = int(epoch.group(1)) // 1000 - int(time.time()) if epoch else None

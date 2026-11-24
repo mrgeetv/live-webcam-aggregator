@@ -30,7 +30,8 @@ class EarthcamResolver:
             # no URL in the message: it feeds the aggregated resolve-failed detail
             # at INFO, where a URL would shatter one failure mode into per-cam
             # buckets (liveness already logs the URL at DEBUG)
-            raise ValueError("earthcam: no live HLS (offline?)")
+            msg = "earthcam: no live HLS (offline?)"
+            raise ValueError(msg)
         return Resolved(
             url=m.group(0).replace("\\/", "/"), stream_type="hls", ttl_seconds=120
         )

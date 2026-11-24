@@ -98,7 +98,9 @@ class YoutubeApiSource:
             try:
                 with self._lock:
                     resp = self._client.search().list(**params).execute()
-            except Exception as exc:
+            # Any failure (an HttpError, a wedged socket's BrokenPipeError) ends this
+            # search with what it has; it must never abort the build.
+            except Exception as exc:  # noqa: BLE001
                 # Report what ACTUALLY went wrong. Blaming API quota for every failure
                 # misdiagnoses the common ones — a wedged socket raises BrokenPipeError
                 # with no HTTP status at all. NEVER format the exception raw:

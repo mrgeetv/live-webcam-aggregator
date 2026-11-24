@@ -35,7 +35,8 @@ class ViewsurfResolver:
     def resolve(self, target_url: str) -> Resolved:
         m = _UUID.search(target_url)
         if not m:
-            raise ValueError("viewsurf: no uuid in embed url")
+            msg = "viewsurf: no uuid in embed url"
+            raise ValueError(msg)
         uuid = m.group(1)
         # A dead platform host can answer with an HTML maintenance page (a 200, not a
         # raised fetch), so treat a non-JSON body as a failure and fall through to the
@@ -54,8 +55,10 @@ class ViewsurfResolver:
                 doc = parsed
                 break
         if doc is None:
-            raise ValueError("viewsurf: no manifest from any api host")
+            msg = "viewsurf: no manifest from any api host"
+            raise ValueError(msg)
         m3u8 = doc.get("m3u8")
         if not isinstance(m3u8, str) or not m3u8:
-            raise ValueError("viewsurf: no m3u8 in manifest api response")
+            msg = "viewsurf: no m3u8 in manifest api response"
+            raise ValueError(msg)
         return Resolved(url=m3u8, stream_type="hls", ttl_seconds=1800)

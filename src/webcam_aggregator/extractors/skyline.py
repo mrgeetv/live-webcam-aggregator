@@ -49,7 +49,8 @@ class SkylineResolver:
             # URL is both a log-policy leak (paths stay at DEBUG) and a bucket
             # splitter (details truncate, so URLs shatter one failure mode into
             # per-prefix counts). Liveness logs the URL at DEBUG already.
-            raise ValueError("skyline: no stream token (offline?)")
+            msg = "skyline: no stream token (offline?)"
+            raise ValueError(msg)
         return Resolved(
             url=f"{_MANIFEST}{token}",
             stream_type="hls",
