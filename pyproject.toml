@@ -44,10 +44,43 @@ min_confidence = 60
 ignore_names = ["do_GET", "log_message"]
 
 [tool.ruff]
-# First-party roots for import sorting: the package, the scripts the tests import,
-# and the tests themselves.
+# Import roots: the package, the scripts the tests import, and the tests, which
+# pytest imports as top-level modules (tests/ has no __init__.py).
 src = ["src", "scripts", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F"]
-ignore = ["E501"]
+# Every stable rule. A rule is ignored only with its reason beside it, here or on
+# the noqa that suppresses one site. Preview rules stay off: they can change in any
+# patch release, which would fail the hooks on a routine version bump.
+select = ["ALL"]
+ignore = [
+    # Conflict with the formatter (ruff docs: formatter.md, "Conflicting lint rules").
+    "COM812", "COM819", "D206", "D300", "E111", "E114", "E117",
+    "Q000", "Q001", "Q002", "Q003", "Q004", "W191",
+    # The other half of D211 / D212, which stay on.
+    "D203", "D213",
+    # Its notice pattern needs a year, and shipped source carries no dates
+    # (tests/repo_hygiene_test.py).
+    "CPY001",
+    # Wants a custom exception class per message; the messages are plain strings by
+    # design (one stable text per failure mode, aggregated in the build log).
+    "TRY003",
+    # Counts keyword-only parameters too. PLR0917 (too many positional) stays on,
+    # and keyword-only arguments are named at every call site.
+    "PLR0913",
+]
+# Real typography in scraped titles and Japanese pages, which the patterns and test
+# fixtures have to match literally.
+allowed-confusables = ["–", "’", "（", "）", "［", "］", "×"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest's assert is its API; a test's expected values are the point of it; a test's
+# name is its docstring; and basedpyright's reportPrivateUsage already gates private
+# access, with an ignore at each site.
+"tests/**" = ["S101", "PLR2004", "D1", "SLF001"]
+# The scripts are command-line tools, and print is their output.
+"scripts/**" = ["T201"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# One import style across the package: absolute, as the parent-package ones must be.
+ban-relative-imports = "all"
