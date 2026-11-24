@@ -8,12 +8,12 @@ from webcam_aggregator.config import (
 )
 
 
-def test_requires_api_key():
-    with pytest.raises(ValueError):
+def test_requires_api_key() -> None:
+    with pytest.raises(ValueError, match="YOUTUBE_API_KEY"):
         config.load({})
 
 
-def test_defaults_and_strip_trailing_slash():
+def test_defaults_and_strip_trailing_slash() -> None:
     c = config.load(
         {"YOUTUBE_API_KEY": "k", "PUBLIC_BASE_URL": "https://cams.example/"}
     )
@@ -21,14 +21,14 @@ def test_defaults_and_strip_trailing_slash():
     assert c.catalogue_interval_hours == 6
 
 
-def test_interval_floor_and_bad_value():
+def test_interval_floor_and_bad_value() -> None:
     floored = config.load({"YOUTUBE_API_KEY": "k", "CATALOGUE_INTERVAL_HOURS": "0"})
     assert floored.catalogue_interval_hours == 1
     bad = config.load({"YOUTUBE_API_KEY": "k", "CATALOGUE_INTERVAL_HOURS": "x"})
     assert bad.catalogue_interval_hours == 6
 
 
-def test_new_field_defaults():
+def test_new_field_defaults() -> None:
     c = config.load({"YOUTUBE_API_KEY": "k"})
     assert c.search_query  # non-empty built-in default
     assert c.log_level == "INFO"
@@ -36,7 +36,7 @@ def test_new_field_defaults():
     assert c.max_parallel_sources == 4
 
 
-def test_new_fields_from_env():
+def test_new_fields_from_env() -> None:
     c = config.load(
         {
             "YOUTUBE_API_KEY": "k",
@@ -52,14 +52,14 @@ def test_new_fields_from_env():
     assert c.max_parallel_sources == 8
 
 
-def test_exclude_categories_parsed_casefolded():
+def test_exclude_categories_parsed_casefolded() -> None:
     c = config.load(
         {"YOUTUBE_API_KEY": "k", "EXCLUDE_CATEGORIES": "Religion, Sports ,music"}
     )
     assert c.exclude_categories == frozenset({"religion", "sports", "music"})
 
 
-def test_exclude_categories_default_empty():
+def test_exclude_categories_default_empty() -> None:
     assert config.load({"YOUTUBE_API_KEY": "k"}).exclude_categories == frozenset()
 
 

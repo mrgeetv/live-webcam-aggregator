@@ -19,8 +19,9 @@ _DATE = re.compile(r"\b20\d{2}-\d{2}(?:-\d{2})?\b")
 # Named consumer infrastructure/services that belong to whoever runs this, not to it —
 # VPNs, uptime tooling, and the operator's edge proxy alike.
 _PRIVATE_INFRA = re.compile(
-    r"\b(protonvpn|nordvpn|mullvad|tailscale|wireguard|uptime[- ]kuma|caddy(?:file)?)\b",
-    re.I,
+    r"\b(protonvpn|nordvpn|mullvad|tailscale|wireguard"
+    r"|uptime[- ]kuma|caddy(?:file)?)\b",
+    re.IGNORECASE,
 )
 
 

@@ -38,7 +38,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_beachcam_appends_auth_token_and_keys_on_bare_url():
+def test_beachcam_appends_auth_token_and_keys_on_bare_url() -> None:
     cands = list(BeachcamSource(_FakeFetch()).discover())
     by_title = {c.title: c for c in cands}
 
@@ -63,7 +63,7 @@ def test_beachcam_appends_auth_token_and_keys_on_bare_url():
         assert c.angle_key is None  # one stream per page
 
 
-def test_beachcam_token_special_chars_are_url_encoded():
+def test_beachcam_token_special_chars_are_url_encoded() -> None:
     # a Wowza wmsAuthSign is base64 and can contain '+', which a bare query decodes to
     # a space -> signature mismatch -> 403; it must be percent-encoded
     # ≥20 chars (the _TOKEN_SHAPE floor) and carries the base64 '+' and '/'
@@ -78,11 +78,12 @@ def test_beachcam_token_special_chars_are_url_encoded():
     assert cands
     for c in cands:
         token = c.target_url.split("wmsAuthSign=")[1]
-        assert "%2B" in token and "%2F" in token  # + and / encoded
+        assert "%2B" in token
+        assert "%2F" in token
         assert "+" not in token
 
 
-def test_beachcam_token_failure_ships_bare_urls():
+def test_beachcam_token_failure_ships_bare_urls() -> None:
     # an error page is not a token: the bare URL still ships, so liveness sees the
     # cams die (dead-manifest) instead of the whole source vanishing silently
     pages = dict(_PAGES, **{_SIGN_API: "<html>Forbidden</html>"})
@@ -96,7 +97,7 @@ def test_beachcam_token_failure_ships_bare_urls():
     assert all("wmsAuthSign" not in c.target_url for c in cands)
 
 
-def test_beachcam_handles_missing_index():
+def test_beachcam_handles_missing_index() -> None:
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None

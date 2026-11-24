@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 import threading
+import time
 
 from webcam_aggregator.cache import (
     DEFAULT_TTL,
@@ -125,7 +125,8 @@ def test_negative_cache() -> None:
     def failing_resolve(_entry_id: str, _target_url: str) -> Resolved:
         nonlocal call_count
         call_count += 1
-        raise RuntimeError("stream unavailable")
+        msg = "stream unavailable"
+        raise RuntimeError(msg)
 
     cache = ResolveCache(failing_resolve, clock=clock)
     r1 = cache.get("cam1", "http://t").resolved
@@ -145,7 +146,8 @@ def test_negative_cache_expires() -> None:
     def failing_resolve(_entry_id: str, _target_url: str) -> Resolved:
         nonlocal call_count
         call_count += 1
-        raise RuntimeError("stream unavailable")
+        msg = "stream unavailable"
+        raise RuntimeError(msg)
 
     cache = ResolveCache(failing_resolve, clock=clock)
     cache.get("cam1", "http://t")
@@ -165,7 +167,8 @@ def test_negative_entry_keeps_the_failure_reason() -> None:
     clock = _Clock()
 
     def failing_resolve(_entry_id: str, _target_url: str) -> Resolved:
-        raise ValueError("yt-dlp failed: Private video https://x.example/p?tok=s3cret")
+        msg = "yt-dlp failed: Private video https://x.example/p?tok=s3cret"
+        raise ValueError(msg)
 
     cache = ResolveCache(failing_resolve, clock=clock)
     expected = Lookup(
@@ -181,7 +184,8 @@ def test_failed_fresh_resolve_keeps_the_cached_one_and_says_why() -> None:
 
     def resolve(_entry_id: str, _target_url: str) -> Resolved:
         if fail:
-            raise RuntimeError("bot check")
+            msg = "bot check"
+            raise RuntimeError(msg)
         return _resolved()
 
     cache = ResolveCache(resolve, clock=clock)
@@ -212,7 +216,7 @@ def test_lru_eviction() -> None:
 
     cache.get("cam1", "http://t")
     cache.get("cam2", "http://t")
-    cache.get("cam3", "http://t").resolved  # cam1 should be evicted (LRU)
+    cache.get("cam3", "http://t")  # cam1 should be evicted (LRU)
 
     # cam1 was evicted — its get should trigger a fresh resolve
     cache.get("cam1", "http://t")
@@ -243,12 +247,14 @@ def test_target_url_hash_invalidation() -> None:
 
     r1 = cache.get("cam1", "http://t1").resolved
     assert call_count == 1
-    assert r1 is not None and r1.url == "http://t1"
+    assert r1 is not None
+    assert r1.url == "http://t1"
 
     # Different target_url → stale entry, must re-resolve
     r2 = cache.get("cam1", "http://t2").resolved
     assert call_count == 2
-    assert r2 is not None and r2.url == "http://t2"
+    assert r2 is not None
+    assert r2.url == "http://t2"
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +287,7 @@ def test_default_ttl_when_none() -> None:
 
 
 def test_non_positive_ttl_not_cached() -> None:
-    """An already-expired token (ttl_seconds <= 0) must NOT be cached for DEFAULT_TTL."""
+    """An expired token (ttl_seconds <= 0) must NOT be cached for DEFAULT_TTL."""
     clock = _Clock()
     calls = 0
 
@@ -292,5 +298,5 @@ def test_non_positive_ttl_not_cached() -> None:
 
     cache = ResolveCache(resolve, clock=clock)
     cache.get("cam", "http://t")
-    cache.get("cam", "http://t").resolved  # ttl<=0 → not cached → resolves again
+    cache.get("cam", "http://t")  # ttl<=0 → not cached → resolves again
     assert calls == 2

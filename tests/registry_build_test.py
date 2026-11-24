@@ -31,7 +31,7 @@ def _route(url: str) -> str | None:
     return build_registry(_EXTRACTORS).match(url)
 
 
-def test_real_registry_predicates():
+def test_real_registry_predicates() -> None:
     assert _route("https://webtv.feratel.com/webtv/?cam=1") == "metatag"
     # the webtvfc. variant third-party embeds carry serves the same og:video
     assert (
@@ -75,11 +75,11 @@ def test_real_registry_predicates():
     assert _route("https://example.com/page") is None
 
 
-def test_unknown_extractor_name_fails_at_build():
+def test_unknown_extractor_name_fails_at_build() -> None:
     incomplete: dict[str, Extractor] = {
         k: v for k, v in _EXTRACTORS.items() if k != "baltic"
     }
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown extractor"):
         build_registry(incomplete)
 
 
@@ -113,7 +113,7 @@ def test_wetmet_widget_frame_routes_to_its_resolver() -> None:
 
 
 def test_wetmet_direct_m3u8_still_routes_to_direct() -> None:
-    """Only the widget frame needs the resolver; a resolved wetmet CDN URL is plain HLS."""
+    """Only the widget frame needs the resolver; a wetmet CDN URL is plain HLS."""
     assert (
         _route("https://wmso-us-ea1.wetmet.net/live/289-06-01/playlist.m3u8?x=1")
         == "direct"

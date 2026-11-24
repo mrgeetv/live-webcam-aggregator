@@ -9,9 +9,7 @@ import threading
 import time
 import urllib.parse
 from http.server import ThreadingHTTPServer
-from typing import Any
-
-import pytest
+from typing import TYPE_CHECKING, Any
 
 from webcam_aggregator.app import CatalogueStore, make_handler
 from webcam_aggregator.cache import ResolveCache
@@ -19,6 +17,11 @@ from webcam_aggregator.catalogue import build_catalogue
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.signing import sign
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    import pytest
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -46,21 +49,21 @@ _RESOLVED_URL = "https://cdn.example/cam/playlist.m3u8"
 class _FakeSource:
     name: str = "fake"
 
-    def discover(self):  # type: ignore[override]
+    def discover(self) -> Iterator[Candidate]:
         yield _CANDIDATE
 
 
-def _make_store(ready: bool = True) -> tuple[CatalogueStore, str]:
+def _make_store(*, ready: bool = True) -> tuple[CatalogueStore, str]:
     store = CatalogueStore()
     if ready:
         entries = build_catalogue(
             [_FakeSource()],
-            drop_reason_for=lambda c: None,
+            drop_reason_for=lambda _c: None,
             youtube_live=lambda ids: {i: i for i in ids},
             history={},
         )
         store.swap(entries)
-        entry_id = list(store.snapshot().keys())[0]
+        entry_id = next(iter(store.snapshot().keys()))
     else:
         entry_id = "irrelevant"
     return store, entry_id

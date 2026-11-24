@@ -2,7 +2,10 @@ import time
 from collections import Counter
 
 from webcam_aggregator.models import Candidate, stable_id
-from webcam_aggregator.sources.wildlife_trusts import WildlifeTrustsSource
+from webcam_aggregator.sources.wildlife_trusts import (
+    _TAG,  # pyright: ignore[reportPrivateUsage]
+    WildlifeTrustsSource,
+)
 
 _INDEX = "https://www.wildlifetrusts.org/webcams"
 _GTM = '<iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"></iframe>'
@@ -87,19 +90,21 @@ _PAGES = {
     # The hub: a consent-gated YouTube with a plugin-quoted title; a camstreamer and a
     # camsecure behind the GTM iframe; a tokened streamdays script; a playlist; a
     # channel live embed; the channel link every page's chrome carries.
-    "https://www.essexwt.org/wildlife/webcams": "<title>Webcams | Essex Wildlife Trust</title>"
-    + _GTM
-    + _CHROME
-    + (
-        '<iframe src="about:blank" data-src-cmplz="https://www.youtube.com/embed/'
-        'bbbbbbbbbbb" title="Youtube video &quot;Barn owl nest box&quot;"></iframe>'
-        '<iframe src="https://camstreamer.com/embed/abc" title="YouTube"></iframe>'
-        '<iframe src="https://camsecure.uk/httpswebcam/ewt/ewt1.html"></iframe>'
-        '<script src="https://live.streamdays.com/6o8zzn7m"></script>'
-        '<iframe src="https://www.youtube.com/embed/videoseries?list=PLx"></iframe>'
-        '<iframe data-src="https://www.youtube-nocookie.com/embed/live_stream?'
-        'autoplay=1&amp;channel=UCbats"></iframe>'
-        '<iframe src="https://www.youtube.com/embed/eeeeeeeeeee"></iframe>'
+    "https://www.essexwt.org/wildlife/webcams": (
+        "<title>Webcams | Essex Wildlife Trust</title>"
+        + _GTM
+        + _CHROME
+        + (
+            '<iframe src="about:blank" data-src-cmplz="https://www.youtube.com/embed/'
+            'bbbbbbbbbbb" title="Youtube video &quot;Barn owl nest box&quot;"></iframe>'
+            '<iframe src="https://camstreamer.com/embed/abc" title="YouTube"></iframe>'
+            '<iframe src="https://camsecure.uk/httpswebcam/ewt/ewt1.html"></iframe>'
+            '<script src="https://live.streamdays.com/6o8zzn7m"></script>'
+            '<iframe src="https://www.youtube.com/embed/videoseries?list=PLx"></iframe>'
+            '<iframe data-src="https://www.youtube-nocookie.com/embed/live_stream?'
+            'autoplay=1&amp;channel=UCbats"></iframe>'
+            '<iframe src="https://www.youtube.com/embed/eeeeeeeeeee"></iframe>'
+        )
     ),
     "https://camstreamer.com/embed/abc": (
         '<iframe src="https://www.youtube.com/embed/ccccccccccc?autoplay=1">'
@@ -161,7 +166,7 @@ def _discover() -> dict[str, Candidate]:
     return {c.target_url: c for c in WildlifeTrustsSource(_FakeFetch()).discover()}
 
 
-def test_wildlife_trusts_finds_cams_from_cards_sitemaps_and_every_embed_form():
+def test_wildlife_trusts_finds_cams_from_cards_sitemaps_and_every_embed_form() -> None:
     assert set(_discover()) == {
         # index cards: a YouTube card is the cam, a channel tab becomes its live
         f"{_YT}aaaaaaaaaaa",
@@ -187,7 +192,7 @@ def test_wildlife_trusts_finds_cams_from_cards_sitemaps_and_every_embed_form():
     }
 
 
-def test_wildlife_trusts_names_each_cam_from_its_best_source():
+def test_wildlife_trusts_names_each_cam_from_its_best_source() -> None:
     cams = _discover()
     # card title, unescaped; reached by an embed (owl-cam) and a link (the article)
     owls = cams["https://www.youtube.com/channel/UCowls/live"]
@@ -213,7 +218,7 @@ def test_wildlife_trusts_names_each_cam_from_its_best_source():
     )
 
 
-def test_wildlife_trusts_keeps_chrome_and_noise_out():
+def test_wildlife_trusts_keeps_chrome_and_noise_out() -> None:
     cams = _discover()
     # a bare channel link alone on a sitemap page is chrome, not a cam
     assert "https://www.youtube.com/@OspreyProject/live" not in cams
@@ -233,7 +238,7 @@ def test_wildlife_trusts_keeps_chrome_and_noise_out():
         assert c.category == "Animals"
 
 
-def test_wildlife_trusts_stable_ids_are_unique_and_follow_the_cam():
+def test_wildlife_trusts_stable_ids_are_unique_and_follow_the_cam() -> None:
     """The id belongs to the cam, not to its position.
 
     Every YouTube card shares the index page, and a page's embeds can be added, removed
@@ -259,10 +264,11 @@ def test_wildlife_trusts_stable_ids_are_unique_and_follow_the_cam():
         for c in WildlifeTrustsSource(_Fetch()).discover()
         if c.source_page_url == hub
     }
-    assert before and all(after[t] == before[t] for t in before)
+    assert before
+    assert all(after[t] == before[t] for t in before)
 
 
-def test_wildlife_trusts_finds_a_sitemap_named_only_in_robots_txt():
+def test_wildlife_trusts_finds_a_sitemap_named_only_in_robots_txt() -> None:
     pages = {
         "https://wp.example/robots.txt": (
             "User-agent: *\nSitemap: https://wp.example/sitemap_index.xml\n"
@@ -285,7 +291,7 @@ def test_wildlife_trusts_finds_a_sitemap_named_only_in_robots_txt():
     assert found == ["https://wp.example/badger-cam/"]
 
 
-def test_wildlife_trusts_sitemap_filter_keeps_cam_pages_only():
+def test_wildlife_trusts_sitemap_filter_keeps_cam_pages_only() -> None:
     src = WildlifeTrustsSource(_FakeFetch())
     trust = "https://www.essexwt.org"
     found = src._cam_pages(trust)  # pyright: ignore[reportPrivateUsage]
@@ -297,16 +303,12 @@ def test_wildlife_trusts_sitemap_filter_keeps_cam_pages_only():
     ]
 
 
-def test_wildlife_trusts_markup_scan_stays_linear_on_hostile_pages():
+def test_wildlife_trusts_markup_scan_stays_linear_on_hostile_pages() -> None:
     """`re` holds the GIL, so a backtracking blow-up on one page stalls playback too.
 
     This source's own scans (cards, player tags) must stay linear on unclosed tags and
     link-less cards.
     """
-    from webcam_aggregator.sources.wildlife_trusts import (
-        _TAG,  # pyright: ignore[reportPrivateUsage]
-    )
-
     hostile = "<iframe " * 200_000 + "featured-cards-custom" * 50_000
 
     class _Fetch:

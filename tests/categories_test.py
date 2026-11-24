@@ -1,13 +1,24 @@
-import pytest
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from webcam_aggregator.categories import (
+    ALL_CATEGORIES,
+    TITLE_FALLBACK_CATEGORIES,
+    UNMAPPED,
     category_from_title,
     map_category,
     unknown_categories,
 )
+from webcam_aggregator.sources.youtube_api import (
+    _YT_CATEGORIES,  # pyright: ignore[reportPrivateUsage]
+)
+
+if TYPE_CHECKING:
+    import pytest
 
 
-def test_known_mappings():
+def test_known_mappings() -> None:
     assert map_category("Birds") == "Animals"
     assert map_category("Pets & Animals") == "Animals"
     assert map_category("Ski Resorts") == "Mountains"
@@ -18,31 +29,29 @@ def test_known_mappings():
     assert map_category("Watch Soccer Live") == "Sports"
 
 
-def test_source_other_and_quality_tags_map_to_other_not_unmapped():
+def test_source_other_and_quality_tags_map_to_other_not_unmapped() -> None:
     # a source's literal "Other" (and non-content tags) -> our "Other", NOT "Unmapped"
     assert map_category("Other") == "Other"
     assert map_category("High Definition Hd") == "Other"
 
 
-def test_native_youtube_kept():
+def test_native_youtube_kept() -> None:
     assert map_category("Entertainment") == "Entertainment"
     assert map_category("Travel & Events") == "Travel & Events"
 
 
-def test_empty_falls_back_to_other():
+def test_empty_falls_back_to_other() -> None:
     assert map_category(None) == "Other"
     assert map_category("") == "Other"
 
 
-def test_unknown_category_is_flagged_not_buried_in_other():
+def test_unknown_category_is_flagged_not_buried_in_other() -> None:
     # a source that DID give a category we don't recognise -> distinct "Unmapped
     # Category" (visible + logged), NOT silently "Other"
     assert map_category("Something Random") == "Unmapped Category"
 
 
-def test_unmapped_category_logged_once(caplog: pytest.LogCaptureFixture):
-    import logging
-
+def test_unmapped_category_logged_once(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.categories"):
         assert map_category("Zqx Unmapped Probe") == "Unmapped Category"
         assert map_category("Zqx Unmapped Probe") == "Unmapped Category"  # 2nd: no log
@@ -50,9 +59,7 @@ def test_unmapped_category_logged_once(caplog: pytest.LogCaptureFixture):
     assert len(hits) == 1
 
 
-def test_all_categories_set():
-    from webcam_aggregator.categories import ALL_CATEGORIES
-
+def test_all_categories_set() -> None:
     assert "Animals" in ALL_CATEGORIES  # unified
     assert "Trains & Railways" in ALL_CATEGORIES
     assert "Travel & Events" in ALL_CATEGORIES  # native YouTube, passes through
@@ -61,17 +68,17 @@ def test_all_categories_set():
     assert list(ALL_CATEGORIES) == sorted(ALL_CATEGORIES)  # stable, sorted order
 
 
-def test_unknown_categories_returns_empty_for_valid():
+def test_unknown_categories_returns_empty_for_valid() -> None:
     assert unknown_categories(frozenset({"animals", "religion"})) == frozenset()
 
 
-def test_unknown_categories_returns_typos():
+def test_unknown_categories_returns_typos() -> None:
     assert unknown_categories(frozenset({"relgion", "animals"})) == frozenset(
         {"relgion"}
     )
 
 
-def test_category_from_title_keywords():
+def test_category_from_title_keywords() -> None:
     assert category_from_title("Brown Bear Cam - Brooks Falls") == "Animals"
     assert category_from_title("Brixham Harbour") == "Ports & Ships"
     assert category_from_title("Mount Buller Ski Area") == "Mountains"
@@ -82,7 +89,7 @@ def test_category_from_title_keywords():
     assert category_from_title("Aurora Borealis Live") == "Weather"
 
 
-def test_category_from_title_non_english_keywords():
+def test_category_from_title_non_english_keywords() -> None:
     # our European sources title their cams in the local language, so the keyword
     # rules carry the common content words alongside the English ones
     assert category_from_title("Hafen Greetsiel") == "Ports & Ships"
@@ -97,7 +104,7 @@ def test_category_from_title_non_english_keywords():
     assert category_from_title("Dongdaemun Design Plaza") == "Cities"
 
 
-def test_category_from_title_japanese_keywords():
+def test_category_from_title_japanese_keywords() -> None:
     # wholly-Japanese sources (tomarigi, shareju) leave many cams uncategorised, and a
     # \b-anchored English rule can never fire on unspaced Japanese
     assert category_from_title("【神田川】柏橋映像監視局［新宿区北新宿3-36］") == (
@@ -112,7 +119,7 @@ def test_category_from_title_japanese_keywords():
     assert category_from_title("横須賀市災害監視カメラ　野比海岸") == "Beaches"
 
 
-def test_japanese_keywords_avoid_place_name_false_positives():
+def test_japanese_keywords_avoid_place_name_false_positives() -> None:
     # 川/湖/滝 are the trap: these are PLACES whose name merely contains one, and each
     # is really something else (a road cam, a station, a plain city view)
     assert category_from_title("旭川市国道12号線 忠和ライブカメラ") == "Traffic"
@@ -128,7 +135,7 @@ def test_japanese_keywords_avoid_place_name_false_positives():
     assert category_from_title("道の駅うつのみや ライブカメラ") == "Traffic"
 
 
-def test_compound_and_non_english_words_the_english_rules_missed():
+def test_compound_and_non_english_words_the_english_rules_missed() -> None:
     # \bgolf\b cannot match the compound spelling these languages use
     assert category_from_title("Varbergs Golfklubb - Västra Banan") == "Sports"
     assert category_from_title("Golfclub Donau-Riss e.V.") == "Sports"
@@ -139,7 +146,7 @@ def test_compound_and_non_english_words_the_english_rules_missed():
     assert category_from_title("Süd-Dakota-Brücke") == "Landmarks"
 
 
-def test_education_and_hotels_titles():
+def test_education_and_hotels_titles() -> None:
     # Education and Hotels carry their own title rules — campus and hotel cams must
     # not fall through to "Other"
     assert category_from_title("University of Nevada, Reno - Quadrangle") == "Education"
@@ -149,8 +156,9 @@ def test_education_and_hotels_titles():
     assert category_from_title("Base Cam at Stratton Mountain Resort") == "Mountains"
 
 
-def test_non_english_keywords_avoid_english_false_positives():
-    # "the strand" is a London street, not a beach; the German beach word takes no article
+def test_non_english_keywords_avoid_english_false_positives() -> None:
+    # "the strand" is a London street, not a beach; the German beach word takes no
+    # article
     assert category_from_title("The Strand — London, England") != "Beaches"
     # "montagn" must be a whole word (montagna/montagne), not a place-name fragment
     assert category_from_title("Montagnana Town Square") == "Cities"
@@ -158,14 +166,14 @@ def test_non_english_keywords_avoid_english_false_positives():
     assert category_from_title("Nice Montagne — France") == "Mountains"
 
 
-def test_category_from_title_first_match_wins():
+def test_category_from_title_first_match_wins() -> None:
     # specific beats generic: "harbour" (Ports, earlier rule) over "beach" (later)
     assert category_from_title("Harbour Beach") == "Ports & Ships"
     # a species beats a generic "street"
     assert category_from_title("Eagle Street") == "Animals"
 
 
-def test_category_from_title_geo_default_to_travel():
+def test_category_from_title_geo_default_to_travel() -> None:
     # a named place + geo but no content word -> place view -> Travel & Events
     assert category_from_title("Suzu — Ishikawa, Japan") == "Travel & Events"
     assert (
@@ -174,37 +182,28 @@ def test_category_from_title_geo_default_to_travel():
     assert category_from_title("Vlora - Albania") == "Travel & Events"
 
 
-def test_category_from_title_keyword_uses_name_not_geo():
+def test_category_from_title_keyword_uses_name_not_geo() -> None:
     # a category word in the " — geo" suffix must NOT win; only the name counts
     assert category_from_title("Old Mill — Lake District, England") == "Travel & Events"
 
 
-def test_category_from_title_no_signal_is_none():
+def test_category_from_title_no_signal_is_none() -> None:
     # a bare word with no keyword and no geo stays Other (None)
     assert category_from_title("Bude") is None
     assert category_from_title("Channel Cam") is None
 
 
-def test_title_rule_categories_are_all_valid():
+def test_title_rule_categories_are_all_valid() -> None:
     # every category the title fallback can emit must be a real, excludable category
-    from webcam_aggregator.categories import (
-        ALL_CATEGORIES,
-        TITLE_FALLBACK_CATEGORIES,
-    )
-
     invalid = TITLE_FALLBACK_CATEGORIES - set(ALL_CATEGORIES)
     assert not invalid, f"title rules emit non-categories: {invalid}"
 
 
-def test_readme_documents_every_category():
+def test_readme_documents_every_category() -> None:
     """Drift guard: every excludable category is listed in the README.
 
     Users then always know what they can pass to EXCLUDE_CATEGORIES.
     """
-    from pathlib import Path
-
-    from webcam_aggregator.categories import ALL_CATEGORIES
-
     readme = (Path(__file__).resolve().parent.parent / "README.md").read_text("utf-8")
     missing = [c for c in ALL_CATEGORIES if c not in readme]
     assert not missing, f"categories missing from README: {missing}"
@@ -218,11 +217,6 @@ def test_every_youtube_category_maps_to_a_real_group() -> None:
     exclude all four together (or none). Every YouTube category must land on a real,
     individually-excludable group.
     """
-    from webcam_aggregator.categories import ALL_CATEGORIES, UNMAPPED, map_category
-    from webcam_aggregator.sources.youtube_api import (
-        _YT_CATEGORIES,  # pyright: ignore[reportPrivateUsage]
-    )
-
     for yt_name in _YT_CATEGORIES.values():
         mapped = map_category(yt_name)
         assert mapped != UNMAPPED, f"YouTube category {yt_name!r} is unmapped"
@@ -236,7 +230,5 @@ def test_gaming_is_individually_excludable() -> None:
 
     They sneak in via the YouTube search.
     """
-    from webcam_aggregator.categories import map_category, unknown_categories
-
     assert map_category("Gaming") == "Gaming"
     assert unknown_categories(frozenset({"gaming"})) == frozenset()

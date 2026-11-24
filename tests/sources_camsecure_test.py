@@ -74,7 +74,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_camsecure_discover_sitemap_titles_dedup_and_filtering():
+def test_camsecure_discover_sitemap_titles_dedup_and_filtering() -> None:
     cands = list(CamSecureSource(_FakeFetch()).discover())
     by_title = {c.title: c for c in cands}
 

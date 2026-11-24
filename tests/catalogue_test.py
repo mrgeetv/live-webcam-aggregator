@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
-
-import pytest
+from typing import TYPE_CHECKING
 
 from webcam_aggregator.catalogue import (
     AGREE_TO_ACCEPT,
@@ -12,12 +10,18 @@ from webcam_aggregator.catalogue import (
 )
 from webcam_aggregator.models import Candidate
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    import pytest
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
 def _make_candidate(
+    *,
     source: str = "worldcams",
     key: str | None = "hls:cam1",
     page: str = "https://example.com/page1",
@@ -61,7 +65,7 @@ def _no_yt_live(_ids: Iterable[str]) -> dict[str, str]:
 
 
 def _all_yt_live(ids: Iterable[str]) -> dict[str, str]:
-    return {i: "" for i in ids}
+    return dict.fromkeys(ids, "")
 
 
 # ---------------------------------------------------------------------------
@@ -129,16 +133,16 @@ def test_shared_cam_is_probed_once_across_sources() -> None:
         probed.append(c.target_url)
         return "dead-manifest" if "dead" in c.target_url else None
 
-    shared_live = dict(
-        key="feratel:5751",
-        target="https://webtv.feratel.com/webtv/?cam=5751",
-        title="Ischgl",
-    )
-    shared_dead = dict(
-        key="hls:https://cdn.example/dead.m3u8",
-        target="https://cdn.example/dead.m3u8",
-        title="Dead",
-    )
+    shared_live = {
+        "key": "feratel:5751",
+        "target": "https://webtv.feratel.com/webtv/?cam=5751",
+        "title": "Ischgl",
+    }
+    shared_dead = {
+        "key": "hls:https://cdn.example/dead.m3u8",
+        "target": "https://cdn.example/dead.m3u8",
+        "title": "Dead",
+    }
     a = _Src(
         "feratel",
         [
@@ -233,7 +237,7 @@ def test_same_key_different_target_probed_independently() -> None:
 
 
 def test_multisource_deduped_category_mapped_id_non_empty() -> None:
-    """Two sources with distinct keys produce two entries; Birds→Animals; id non-empty."""
+    """Two sources with distinct keys make two entries; Birds→Animals; id set."""
     c1 = _make_candidate(
         source="worldcams",
         key="hls:birds1",
@@ -270,8 +274,10 @@ def test_multisource_deduped_category_mapped_id_non_empty() -> None:
     assert city_entry.category == "Cities"
 
     # Non-empty id (sha256[:16] = 16 hex chars)
-    assert birds_entry.id != "" and len(birds_entry.id) == 16
-    assert city_entry.id != "" and len(city_entry.id) == 16
+    assert birds_entry.id != ""
+    assert len(birds_entry.id) == 16
+    assert city_entry.id != ""
+    assert len(city_entry.id) == 16
 
 
 def test_entity_escaped_title_is_decoded() -> None:
@@ -479,7 +485,7 @@ def test_empty_guard_no_history_promotes_unconditionally() -> None:
 
 
 def test_empty_guard_streak_increments_then_resets() -> None:
-    """Two consecutive shrinks: first reuses old set; second (AGREE_TO_ACCEPT=2) accepts."""
+    """Two consecutive shrinks: the first reuses the old set; the second accepts."""
     old_kept = _make_old_candidates(10)
     history: dict[str, Hist] = {
         "worldcams": Hist(last_count=10, shrink_streak=0, last_kept=old_kept)
@@ -504,7 +510,7 @@ def test_empty_guard_streak_increments_then_resets() -> None:
     assert history["worldcams"].shrink_streak == 1
     assert history["worldcams"].last_count == 10  # not updated yet
 
-    # Second guarded build → streak reaches AGREE_TO_ACCEPT (2), so new baseline accepted
+    # Second guarded build → streak reaches AGREE_TO_ACCEPT (2): new baseline accepted
     second = build_catalogue(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
@@ -536,7 +542,8 @@ def test_crash_reuses_last_good_set_and_never_wipes() -> None:
             self.calls += 1
             if self.calls == 1:
                 return [cam]
-            raise RuntimeError("boom")
+            msg = "boom"
+            raise RuntimeError(msg)
 
     src = _CrashSrc()
     history: dict[str, Hist] = {}
@@ -617,7 +624,8 @@ def test_health_fields_flag_crash() -> None:
             self.calls += 1
             if self.calls == 1:
                 return [cam]
-            raise RuntimeError("boom")
+            msg = "boom"
+            raise RuntimeError(msg)
 
     src = _CrashSrc()
     history: dict[str, Hist] = {}
@@ -649,7 +657,8 @@ def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
 
     def _selective_alive(c: Candidate) -> str | None:
         if "boom" in c.target_url:
-            raise RuntimeError("liveness boom")
+            msg = "liveness boom"
+            raise RuntimeError(msg)
         return None
 
     history: dict[str, Hist] = {

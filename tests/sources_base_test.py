@@ -1,7 +1,6 @@
 import threading
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
@@ -10,6 +9,9 @@ from webcam_aggregator.sources.base import (
     with_location,
     with_location_parts,
 )
+
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 
 class _FakeFetch:
@@ -45,7 +47,7 @@ class _StubSource(HtmlScraperSource[str]):
         return f"{ctx} [{category}]"
 
 
-def test_html_scraper_base_crawls_skips_empty_and_titles():
+def test_html_scraper_base_crawls_skips_empty_and_titles() -> None:
     pages = {
         "https://s/a": '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>',
         "https://s/b": "",  # empty body -> skipped by the base loop
@@ -74,7 +76,7 @@ class _CountingFetch(_FakeFetch):
         return super().get(url)
 
 
-def test_html_scraper_base_parses_pages_before_the_crawl_ends():
+def test_html_scraper_base_parses_pages_before_the_crawl_ends() -> None:
     """A page is parsed while later ones are still to be fetched.
 
     A big sitemap's bodies are then never all held in memory at once.
@@ -89,14 +91,14 @@ def test_html_scraper_base_parses_pages_before_the_crawl_ends():
     assert [c.source_page_url for c in cands] == urls[1:]
 
 
-def test_decode_entities_decodes_character_references():
+def test_decode_entities_decodes_character_references() -> None:
     assert (
         decode_entities("Ryan&#39;s &quot;View&quot; &#x2013; Fish &amp; Chips")
         == 'Ryan\'s "View" \u2013 Fish & Chips'
     )
 
 
-def test_decode_entities_leaves_already_decoded_text_alone():
+def test_decode_entities_leaves_already_decoded_text_alone() -> None:
     # Text may be decoded twice (a source, then the build). A bare `&` is just an
     # ampersand, even when the letters after it spell a legacy entity name HTML
     # would decode without its `;`, or a `;` follows a name that isn't an entity.
@@ -104,7 +106,7 @@ def test_decode_entities_leaves_already_decoded_text_alone():
     assert decode_entities(text) == text
 
 
-def test_with_location_appends_only_new_parts():
+def test_with_location_appends_only_new_parts() -> None:
     wc = "https://worldcams.tv"
     # generic title gains the distinguishing place (redundant country/word dropped)
     assert (
@@ -136,7 +138,7 @@ def test_with_location_appends_only_new_parts():
     )
 
 
-def test_with_location_drops_category_from_suffix():
+def test_with_location_drops_category_from_suffix() -> None:
     wc = "https://worldcams.tv"
     url = f"{wc}/spain/gran-canaria/beaches"
     # the category is shown as the group, so keep it out of the suffix
@@ -151,7 +153,7 @@ def test_with_location_drops_category_from_suffix():
     )
 
 
-def test_with_location_parts_dedupes_repeated_breadcrumb_levels():
+def test_with_location_parts_dedupes_repeated_breadcrumb_levels() -> None:
     # some breadcrumbs name the same place at two levels (a parish == its only town)
     assert (
         with_location_parts(
@@ -162,7 +164,7 @@ def test_with_location_parts_dedupes_repeated_breadcrumb_levels():
     )
 
 
-def test_ignores_source_attribution_link():
+def test_ignores_source_attribution_link() -> None:
     html = '<div class="player"></div> Source: <a href="https://www.youtube.com/@SlowTVLive">x</a>'
     cands = list(
         extract_candidates(html, page_url="https://worldcams.tv/x", source="worldcams")
@@ -170,7 +172,7 @@ def test_ignores_source_attribution_link():
     assert cands == []
 
 
-def test_youtube_playlist_embed():
+def test_youtube_playlist_embed() -> None:
     html = '<iframe src="https://www.youtube.com/embed?list=UUabc&playnext=1"></iframe>'
     cands = list(
         extract_candidates(
@@ -180,13 +182,13 @@ def test_youtube_playlist_embed():
     assert any("list=UUabc" in c.target_url for c in cands)
 
 
-def test_youtube_video_predisc_key():
+def test_youtube_video_predisc_key() -> None:
     html = '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>'
     cands = list(extract_candidates(html, page_url="https://s/x", source="cxtvlive"))
     assert cands[0].predisc_key == "yt:aaaaaaaaaaa"
 
 
-def test_reserved_embed_paths_are_not_video_ids():
+def test_reserved_embed_paths_are_not_video_ids() -> None:
     """`embed/videoseries` and `embed/live_stream` are 11 characters, like an id."""
     html = (
         '<iframe src="https://www.youtube.com/embed/videoseries?list=PLx"></iframe>'
@@ -199,7 +201,7 @@ def test_reserved_embed_paths_are_not_video_ids():
     ]
 
 
-def test_multiangle_distinct_keys():
+def test_multiangle_distinct_keys() -> None:
     html = (
         'streams[0] = "<iframe src=\\"https://www.youtube.com/embed/aaaaaaaaaaa\\"></iframe>";'
         'streams[1] = "<iframe src=\\"https://www.youtube.com/embed/bbbbbbbbbbb\\"></iframe>";'
@@ -210,7 +212,7 @@ def test_multiangle_distinct_keys():
     assert len({c.angle_key for c in cands}) == 2
 
 
-def test_single_quote_streams_keyed_by_stream_id():
+def test_single_quote_streams_keyed_by_stream_id() -> None:
     # worldcams multi-cam pages use streams[<id>] = '<iframe …>' (SINGLE quotes),
     # keyed by the site's stream-id (not a 0..n index). Each candidate's angle_key
     # IS that stream-id, so it survives the page reordering its cams.
@@ -226,7 +228,7 @@ def test_single_quote_streams_keyed_by_stream_id():
     assert by_key["1378"] == "https://en.example.es/cam"
 
 
-def test_feratel_embeds_key_on_the_cam_id():
+def test_feratel_embeds_key_on_the_cam_id() -> None:
     # the same cam appears as webtv.…?cam=<id> and webtvfc.…?design=…&cam=<id>
     # across sources; keying on the id is what lets dedup merge them
     html = (
@@ -240,11 +242,12 @@ def test_feratel_embeds_key_on_the_cam_id():
     )
 
 
-def test_channel_has_no_predisc_key():
+def test_channel_has_no_predisc_key() -> None:
     html = '<a href="https://www.youtube.com/@SomeCam/live">live</a>'
     # NOTE: a bare channel link with no attribution prefix is a stream candidate
     cands = list(extract_candidates(html, page_url="https://s/x", source="cxtvlive"))
-    assert cands and cands[0].predisc_key is None
+    assert cands
+    assert cands[0].predisc_key is None
 
 
 def test_relative_embed_is_resolved_against_the_page() -> None:

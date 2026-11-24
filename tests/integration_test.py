@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import http.client
 import json
+import threading
 import time
-from collections.abc import Iterable, Iterator
 from http.server import ThreadingHTTPServer
+from typing import TYPE_CHECKING
 
 from webcam_aggregator.app import CatalogueStore, make_handler
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.catalogue import build_catalogue
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 # ---------------------------------------------------------------------------
 # Fake source
@@ -80,14 +84,14 @@ def test_end_to_end_server() -> None:
 
     entries = build_catalogue(
         [FakeSource()],
-        drop_reason_for=lambda c: None,
+        drop_reason_for=lambda _c: None,
         youtube_live=_youtube_live,
         history={},
     )
     store.swap(entries)
 
     assert len(entries) == 1, f"expected 1 entry, got {len(entries)}"
-    entry_id = list(store.snapshot().keys())[0]
+    entry_id = next(iter(store.snapshot().keys()))
 
     # Start server on port 0 (OS assigns free port)
     handler_cls = make_handler(
@@ -100,12 +104,10 @@ def test_end_to_end_server() -> None:
             "unhealthy": [],
             "last_build_seconds": None,
         },
-        segment_fetch=lambda u, r: ((200, "video/mp2t", None, b"seg"), "ok"),
+        segment_fetch=lambda _u, _r: ((200, "video/mp2t", None, b"seg"), "ok"),
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
     port = server.server_address[1]
-
-    import threading
 
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

@@ -2,27 +2,30 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import pytest
 
+from webcam_aggregator import serving
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import CatalogueEntry
-from webcam_aggregator import serving
 from webcam_aggregator.serving import (
     _proxy_segments_for,  # pyright: ignore[reportPrivateUsage]
     is_playable_manifest,
     loggable,
-    rewrite_manifest,
     render_playlist,
+    rewrite_manifest,
+    serve_child_manifest,
     serve_segment,
     serve_stream,
-    serve_child_manifest,
     truncate_to_live_edge,
 )
 from webcam_aggregator.signing import sign
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,7 +56,8 @@ def _make_cache(resolved: Resolved | None) -> ResolveCache:
 
     def _resolve(_entry_id: str, _target_url: str) -> Resolved:
         if resolved is None:
-            raise RuntimeError("resolve failed")
+            msg = "resolve failed"
+            raise RuntimeError(msg)
         return resolved
 
     return ResolveCache(_resolve, clock=lambda: 0.0)
@@ -305,7 +309,7 @@ def test_rewrite_manifest_off_site_uri_attribute_is_not_proxied() -> None:
 
 
 def test_rewrite_manifest_wowza_segment_not_proxied() -> None:
-    """Segment URL must appear verbatim (absolute), not wrapped in our /stream/ proxy path."""
+    """Segment URL must appear verbatim (absolute), not wrapped in our /stream/ path."""
     out = rewrite_manifest(
         WOWZA_MEDIA, upstream_url=WOWZA_UPSTREAM, entry_id=ENTRY_ID, base_url=BASE
     )
@@ -325,7 +329,7 @@ def test_serve_stream_unknown_id_returns_404() -> None:
         "unknown",
         catalogue={},
         cache=cache,
-        fetch=lambda u: (None, "timeout"),
+        fetch=lambda _u: (None, "timeout"),
         base_url=BASE,
     )
     assert status == 404
@@ -338,7 +342,7 @@ def test_serve_stream_cache_miss_returns_502() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: (None, "timeout"),
+        fetch=lambda _u: (None, "timeout"),
         base_url=BASE,
     )
     assert status == 502
@@ -420,7 +424,7 @@ def test_serve_stream_non_hls_manifest_returns_502() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: ("<?xml version='1.0'?><MPD></MPD>", "ok"),
+        fetch=lambda _u: ("<?xml version='1.0'?><MPD></MPD>", "ok"),
         base_url=BASE,
     )
     assert status == 502
@@ -496,7 +500,8 @@ class _YtResolver:
             self.started.set()
             self.release.wait(5)
         if n in self.fail:
-            raise RuntimeError("yt-dlp failed")
+            msg = "yt-dlp failed"
+            raise RuntimeError(msg)
         yt = f"https://manifest.googlevideo.com/api/manifest/hls_playlist/r{n}/index.m3u8"
         return Resolved(url=yt, stream_type="hls", ttl_seconds=21600)
 
@@ -673,13 +678,16 @@ def test_serve_stream_hls_returns_200_rewritten_body() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: (manifest, "ok"),
+        fetch=lambda _u: (manifest, "ok"),
         base_url=BASE,
     )
     assert status == 200
     assert "mpegurl" in ct
     text = body.decode()
-    expected_proxied = f"{BASE}/stream/{ENTRY_ID}/m?u={quote('https://cdn.x/cam/relative_chunk.m3u8', safe='')}&sig="
+    expected_proxied = (
+        f"{BASE}/stream/{ENTRY_ID}/m"
+        f"?u={quote('https://cdn.x/cam/relative_chunk.m3u8', safe='')}&sig="
+    )
     assert expected_proxied in text
 
 
@@ -692,7 +700,7 @@ def test_serve_stream_mp4_returns_302_with_location() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: (None, "timeout"),
+        fetch=lambda _u: (None, "timeout"),
         base_url=BASE,
     )
     assert status == 302
@@ -708,7 +716,8 @@ def test_serve_stream_pixelcaster_hls_passthrough_302_no_proxy() -> None:
     entry = _entry()
 
     def _fail_fetch(_u: str) -> tuple[str | None, str]:
-        raise AssertionError("a direct-playback host must not be proxied/fetched")
+        msg = "a direct-playback host must not be proxied/fetched"
+        raise AssertionError(msg)
 
     status, location, body = serve_stream(
         ENTRY_ID,
@@ -774,11 +783,12 @@ def test_serve_child_manifest_fetch_failure_returns_502(
             ENTRY_ID,
             url,
             sign(url),
-            fetch=lambda u: (None, "timeout"),
+            fetch=lambda _u: (None, "timeout"),
             base_url=BASE,
         )
     assert status == 502
-    assert ENTRY_ID in caplog.text and "cdn.x/cam/chunklist.m3u8" in caplog.text
+    assert ENTRY_ID in caplog.text
+    assert "cdn.x/cam/chunklist.m3u8" in caplog.text
 
 
 def test_serve_child_manifest_refuses_an_unplayable_child(
@@ -799,7 +809,8 @@ def test_serve_child_manifest_refuses_an_unplayable_child(
             base_url=BASE,
         )
     assert status == 502
-    assert ENTRY_ID in caplog.text and "cdn.x/cam/media_0.m3u8" in caplog.text
+    assert ENTRY_ID in caplog.text
+    assert "cdn.x/cam/media_0.m3u8" in caplog.text
 
 
 def test_serve_child_manifest_returns_200_rewritten_body() -> None:
@@ -809,7 +820,7 @@ def test_serve_child_manifest_returns_200_rewritten_body() -> None:
         ENTRY_ID,
         upstream_url,
         sign(upstream_url),
-        fetch=lambda u: (media_manifest, "ok"),
+        fetch=lambda _u: (media_manifest, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -832,7 +843,7 @@ def test_serve_child_manifest_valid_sig_returns_200() -> None:
         ENTRY_ID,
         url,
         sign(url),
-        fetch=lambda u: (media_manifest, "ok"),
+        fetch=lambda _u: (media_manifest, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -845,7 +856,7 @@ def test_serve_child_manifest_bad_sig_returns_403() -> None:
         ENTRY_ID,
         url,
         "0" * 32,  # wrong sig
-        fetch=lambda u: ("#EXTM3U\n", "ok"),
+        fetch=lambda _u: ("#EXTM3U\n", "ok"),
         base_url=BASE,
     )
     assert status == 403
@@ -858,7 +869,7 @@ def test_serve_child_manifest_empty_sig_returns_403() -> None:
         ENTRY_ID,
         url,
         "",  # missing/empty sig
-        fetch=lambda u: ("#EXTM3U\n", "ok"),
+        fetch=lambda _u: ("#EXTM3U\n", "ok"),
         base_url=BASE,
     )
     assert status == 403
@@ -958,7 +969,7 @@ def test_serve_stream_baltic_segments_proxied_via_s() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: (BALTIC_MANIFEST, "ok"),
+        fetch=lambda _u: (BALTIC_MANIFEST, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -989,7 +1000,7 @@ def test_serve_stream_enhd_es_segments_proxied_via_s() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: (manifest, "ok"),
+        fetch=lambda _u: (manifest, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -1030,7 +1041,7 @@ def test_serve_segment_bad_sig_returns_403() -> None:
         ENTRY_ID,
         url,
         "0" * 32,
-        fetch_segment=lambda u, r: ((200, "video/mp2t", None, b"data"), "ok"),
+        fetch_segment=lambda _u, _r: ((200, "video/mp2t", None, b"data"), "ok"),
     )
     assert status == 403
     assert b"bad signature" in body
@@ -1043,7 +1054,7 @@ def test_serve_segment_empty_sig_returns_403() -> None:
         ENTRY_ID,
         url,
         "",
-        fetch_segment=lambda u, r: ((200, "video/mp2t", None, b"data"), "ok"),
+        fetch_segment=lambda _u, _r: ((200, "video/mp2t", None, b"data"), "ok"),
     )
     assert status == 403
     assert b"bad signature" in body
@@ -1056,7 +1067,7 @@ def test_serve_segment_fetch_failure_returns_502() -> None:
         ENTRY_ID,
         url,
         sig,
-        fetch_segment=lambda u, r: (None, "timeout"),
+        fetch_segment=lambda _u, _r: (None, "timeout"),
     )
     assert status == 502
     assert b"segment fetch failed" in body
@@ -1278,7 +1289,8 @@ def test_serve_stream_resolve_failure_logs_why_and_which_cam(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     def resolve(_id: str, _url: str) -> Resolved:
-        raise ValueError("yt-dlp failed: ERROR: [youtube] abcdefghijk: Private video")
+        msg = "yt-dlp failed: ERROR: [youtube] abcdefghijk: Private video"
+        raise ValueError(msg)
 
     entry = _entry(target_url="https://www.youtube.com/watch?v=abcdefghijk")
     cache = ResolveCache(resolve, clock=lambda: 0.0)
@@ -1293,8 +1305,10 @@ def test_serve_stream_resolve_failure_logs_why_and_which_cam(
             )
             assert status == 502
     assert [r.getMessage() for r in caplog.records] == [
-        f"resolve failed: {ENTRY_ID} -> https://www.youtube.com/watch?v=abcdefghijk:"
-        " ValueError: yt-dlp failed: ERROR: [youtube] abcdefghijk: Private video"
+        (
+            f"resolve failed: {ENTRY_ID} -> https://www.youtube.com/watch?v=abcdefghijk:"
+            " ValueError: yt-dlp failed: ERROR: [youtube] abcdefghijk: Private video"
+        )
     ]
 
 
@@ -1327,8 +1341,10 @@ def test_a_repeated_failure_logs_once_a_minute_with_a_count(
     assert [r.getMessage() for r in caplog.records] == [
         f"segment upstream http-403: {ENTRY_ID} -> https://cdn.x/cam/seg_1.ts",
         f"segment upstream http-404: {ENTRY_ID} -> https://cdn.x/cam/seg_3.ts",
-        f"segment upstream http-403: {ENTRY_ID} -> https://cdn.x/cam/seg_4.ts"
-        " (+1 repeat since the last line)",
+        (
+            f"segment upstream http-403: {ENTRY_ID} -> https://cdn.x/cam/seg_4.ts"
+            " (+1 repeat since the last line)"
+        ),
     ]
 
 
@@ -1389,8 +1405,10 @@ def test_serve_stream_failed_retry_resolve_logs_why(
     with caplog.at_level(logging.WARNING, logger=_SERVING):
         _play(cache)
     assert [r.getMessage() for r in caplog.records] == [
-        f"re-resolve failed, keeping the cached URL: {ENTRY_ID} ->"
-        " https://origin.example/cam/playlist.m3u8: RuntimeError: yt-dlp failed"
+        (
+            f"re-resolve failed, keeping the cached URL: {ENTRY_ID} ->"
+            " https://origin.example/cam/playlist.m3u8: RuntimeError: yt-dlp failed"
+        )
     ]
 
 

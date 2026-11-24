@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, override
+from typing import TYPE_CHECKING, ClassVar, NoReturn, override
 from unittest.mock import patch
 
 import pytest
@@ -20,12 +20,15 @@ import webcam_aggregator.fetch as fetch_mod
 from webcam_aggregator.fetch import (
     _PACE_BREAK_AT,  # pyright: ignore[reportPrivateUsage]
     _PACE_MAX_HOSTS,  # pyright: ignore[reportPrivateUsage]
-    _retry_after_seconds,  # pyright: ignore[reportPrivateUsage]
     Fetcher,
     FetchStats,
     HostPacer,
+    _retry_after_seconds,  # pyright: ignore[reportPrivateUsage]
     thread_map,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class _FakeClock:
@@ -178,7 +181,8 @@ def test_breaker_lets_one_probe_per_decay_period() -> None:
     # A failing probe pins the breaker open, capped just past the threshold so
     # recovery time doesn't inflate with every failed probe.
     strikes, _window, escalated = p.penalise("h.example", gen)
-    assert escalated and strikes == _PACE_BREAK_AT + 1
+    assert escalated
+    assert strikes == _PACE_BREAK_AT + 1
     clock.t = s.quiet_since + 1.0
     strikes2, _w2, _e2 = p.penalise("h.example", s.gen)
     assert strikes2 == _PACE_BREAK_AT + 1  # still capped
@@ -351,7 +355,7 @@ class _Resp:
             real.status_code = self.status_code
             raise requests.HTTPError(response=real)
 
-    def iter_content(self, _n: int) -> Any:
+    def iter_content(self, _n: int) -> Iterator[bytes]:
         return iter([self.body])
 
     def close(self) -> None: ...
@@ -387,8 +391,9 @@ def test_fetcher_breaker_refusal_is_fast_and_skips_politeness_delay(
     p, _clock, _sleeps = _make_pacer()
     _escalate(p, "shed.example", _PACE_BREAK_AT)
 
-    def _no_call(_self: object, _url: str, **_k: object) -> Any:
-        raise AssertionError("a refused request must never reach the network")
+    def _no_call(_self: object, _url: str, **_k: object) -> NoReturn:
+        msg = "a refused request must never reach the network"
+        raise AssertionError(msg)
 
     monkeypatch.setattr("requests.Session.get", _no_call)
     s = FetchStats()
@@ -436,11 +441,11 @@ def test_get_segment_bypasses_the_pacer(monkeypatch: pytest.MonkeyPatch) -> None
 
     class _Seg:
         status_code: int = 200
-        headers: dict[str, str] = {"Content-Type": "video/mp2t"}
+        headers: ClassVar[dict[str, str]] = {"Content-Type": "video/mp2t"}
         is_redirect: bool = False
         is_permanent_redirect: bool = False
 
-        def iter_content(self, _n: int) -> Any:
+        def iter_content(self, _n: int) -> Iterator[bytes]:
             return iter([b"seg"])
 
         def close(self) -> None: ...
@@ -449,7 +454,8 @@ def test_get_segment_bypasses_the_pacer(monkeypatch: pytest.MonkeyPatch) -> None
     f = Fetcher(delay=0.0, retries=1, pacer=p)
     got, outcome = f.get_segment("https://cdn.example/seg.ts")
     assert outcome == "ok"
-    assert got is not None and got[3] == b"seg"
+    assert got is not None
+    assert got[3] == b"seg"
 
 
 def test_post_is_paced_and_penalised(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -600,19 +606,21 @@ def test_sixteen_workers_against_a_shedding_host_terminate(
 
     class _MidBodyBoom(_Resp):
         @override
-        def iter_content(self, _n: int) -> Any:
-            def _gen() -> Any:
+        def iter_content(self, _n: int) -> Iterator[bytes]:
+            def _gen() -> Iterator[bytes]:
                 yield b"partial"
-                raise requests.ConnectionError("mid-body")
+                msg = "mid-body"
+                raise requests.ConnectionError(msg)
 
             return _gen()
 
-    def scripted(_self: object, url: str, **_k: object) -> Any:
+    def scripted(_self: object, url: str, **_k: object) -> _Resp:
         with lock:
             calls[0] += 1
             n = calls[0]
         if url.endswith("/t"):
-            raise requests.Timeout("slow")
+            msg = "slow"
+            raise requests.Timeout(msg)
         if url.endswith("/b"):
             return _MidBodyBoom(200)
         return _Resp(503) if n % 4 == 0 else _Resp(200, b"ok")

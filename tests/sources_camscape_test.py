@@ -1,6 +1,10 @@
-import pytest
+import logging
+from typing import TYPE_CHECKING
 
 from webcam_aggregator.sources.camscape import CamscapeSource
+
+if TYPE_CHECKING:
+    import pytest
 
 _BASE = "https://www.camscape.com"
 
@@ -49,7 +53,7 @@ class _FakeFetch:
         return self._pages.get(url)
 
 
-def test_camscape_discover_multistream_category_location_and_dedup():
+def test_camscape_discover_multistream_category_location_and_dedup() -> None:
     cam = f"{_BASE}/webcam/dawlish-webcams/"
     streams = (
         '[{"name":"Marine Parade Cam","url":"https://content.jwplatform.com/players/A.html"},'
@@ -73,7 +77,7 @@ def test_camscape_discover_multistream_category_location_and_dedup():
     assert yt.predisc_key == "yt:aaaaaaaaaaa"  # dedups with youtube-api
 
 
-def test_camscape_ignores_the_nav_category_link():
+def test_camscape_ignores_the_nav_category_link() -> None:
     """Every page's nav links /showing/christmas/.
 
     An untagged cam must stay uncategorised (-> title fallback), not land in Seasonal.
@@ -85,7 +89,7 @@ def test_camscape_ignores_the_nav_category_link():
     assert c.category is None
 
 
-def test_camscape_reads_every_webcam_sitemap_and_only_those():
+def test_camscape_reads_every_webcam_sitemap_and_only_those() -> None:
     a, b = f"{_BASE}/webcam/a/", f"{_BASE}/webcam/b/"
     streams = '[{"name":"Live","url":"https://www.youtube.com/embed/ddddddddddd"}]'
     pages = {
@@ -104,7 +108,7 @@ def test_camscape_reads_every_webcam_sitemap_and_only_those():
     assert {c.source_page_url for c in cands} == {a, b}
 
 
-def test_camscape_normalises_twitch_embed_for_ytdlp():
+def test_camscape_normalises_twitch_embed_for_ytdlp() -> None:
     cam = f"{_BASE}/webcam/x/"
     streams = '[{"name":"Live","url":"https://player.twitch.tv/?channel=foo&parent=www.camscape.com"}]'
     pages = {
@@ -114,7 +118,7 @@ def test_camscape_normalises_twitch_embed_for_ytdlp():
     assert cands[0].target_url == "https://www.twitch.tv/foo"
 
 
-def test_camscape_resolves_camsecure_player_embed_to_its_hls():
+def test_camscape_resolves_camsecure_player_embed_to_its_hls() -> None:
     """Camsecure embeds are resolved at discovery, not left as a page URL.
 
     The m3u8 is the key dedup shares with the camsecure source, and it can't be derived
@@ -134,7 +138,7 @@ def test_camscape_resolves_camsecure_player_embed_to_its_hls():
     assert c.predisc_key == "hls:https://camsecure.co/HLS/cityair.m3u8"
 
 
-def test_camscape_follows_a_camsecure_cam_page_to_its_player():
+def test_camscape_follows_a_camsecure_cam_page_to_its_player() -> None:
     """Some camscape embeds point at a camsecure CAM page rather than the player.
 
     That needs the extra iframe hop the camsecure source also does.
@@ -153,7 +157,7 @@ def test_camscape_follows_a_camsecure_cam_page_to_its_player():
     assert c.target_url == "https://camsecure.uk/HLS/sennen.m3u8"
 
 
-def test_camscape_keeps_an_unresolvable_camsecure_embed_visible():
+def test_camscape_keeps_an_unresolvable_camsecure_embed_visible() -> None:
     """If neither hop yields an HLS, the original URL stands.
 
     The cam still shows up as a no-extractor drop rather than vanishing silently.
@@ -168,7 +172,7 @@ def test_camscape_keeps_an_unresolvable_camsecure_embed_visible():
     assert c.target_url == embed
 
 
-def test_camscape_leaves_a_direct_camsecure_m3u8_alone():
+def test_camscape_leaves_a_direct_camsecure_m3u8_alone() -> None:
     """Many camsecure embeds are already the .m3u8.
 
     No hop needed, and fetching one as if it were a player page would be a wasted
@@ -185,9 +189,9 @@ def test_camscape_leaves_a_direct_camsecure_m3u8_alone():
     assert c.target_url == m3u8  # untouched; _FakeFetch has no entry for it
 
 
-def test_camscape_unknown_tag_flagged_unmapped(caplog: pytest.LogCaptureFixture):
-    import logging
-
+def test_camscape_unknown_tag_flagged_unmapped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     cam = f"{_BASE}/webcam/drone-cam/"
     streams = '[{"name":"Drone","url":"https://www.youtube.com/embed/bbbbbbbbbbb"}]'
     pages = {
@@ -197,6 +201,7 @@ def test_camscape_unknown_tag_flagged_unmapped(caplog: pytest.LogCaptureFixture)
     }
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.camscape"):
         cands = list(CamscapeSource(_FakeFetch(pages)).discover())
-    # the unknown tag passes through as the raw slug -> map_category -> "Unmapped Category"
+    # the unknown tag passes through as the raw slug -> map_category ->
+    # "Unmapped Category"
     assert cands[0].category == "drones"
     assert any("drones" in r.getMessage() for r in caplog.records)  # crawl-first log

@@ -40,7 +40,9 @@ _PAGES = {
         '/playlist.m3u8"></iframe>'
     ),
     # the "not available" stub: 200 but tiny, must be treated as not live
-    303: "<div>Sorry. The live stream for this webcam is currently not available.</div>",
+    303: (
+        "<div>Sorry. The live stream for this webcam is currently not available.</div>"
+    ),
 }
 
 
@@ -66,7 +68,7 @@ class _FakeFetch:
         return None
 
 
-def test_windy_enumerates_probes_and_extracts_provider_embeds():
+def test_windy_enumerates_probes_and_extracts_provider_embeds() -> None:
     fetch = _FakeFetch()
     src = WindySource(fetch)
     cands = {c.target_url: c for c in src.discover()}
@@ -88,7 +90,7 @@ def test_windy_enumerates_probes_and_extracts_provider_embeds():
         assert c.category is None
 
 
-def test_windy_state_persists_and_reprobes_live_first():
+def test_windy_state_persists_and_reprobes_live_first() -> None:
     fetch = _FakeFetch()
     src = WindySource(fetch)
     list(src.discover())
@@ -106,7 +108,7 @@ def test_windy_state_persists_and_reprobes_live_first():
     assert len(cands) == 2
 
 
-def test_windy_probes_each_id_once_when_corpus_below_budget():
+def test_windy_probes_each_id_once_when_corpus_below_budget() -> None:
     # regression: (rest+rest)[start:start+slice_n] emitted every id TWICE whenever
     # slice_n exceeded the corpus size (any corpus under _BUDGET) — double fetches
     # and duplicate candidates. The rotation must be capped to what actually exists.
@@ -117,7 +119,7 @@ def test_windy_probes_each_id_once_when_corpus_below_budget():
     assert fetch.stream_fetches.count(303) == 1
 
 
-def test_windy_paginates_a_dense_circle():
+def test_windy_paginates_a_dense_circle() -> None:
     # the pagination branch (total > one page) was previously untested
     class _Paged:
         def __init__(self) -> None:
@@ -148,10 +150,11 @@ def test_windy_paginates_a_dense_circle():
     f = _Paged()
     list(WindySource(f).discover())
     # offset 0 plus the two extra pages (25, 50) for a 60-cam circle
-    assert "25" in f.offsets and "50" in f.offsets
+    assert "25" in f.offsets
+    assert "50" in f.offsets
 
 
-def test_windy_survives_dead_api():
+def test_windy_survives_dead_api() -> None:
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None
@@ -159,7 +162,7 @@ def test_windy_survives_dead_api():
     assert list(WindySource(_Dead()).discover()) == []
 
 
-def test_windy_fetch_failure_keeps_cam_in_live_set():
+def test_windy_fetch_failure_keeps_cam_in_live_set() -> None:
     # a None fetch is a failure, not a "not live" verdict: a known-live cam must stay
     # in the priority set (retried first next build), not be exiled to the rotation
     fetch = _FakeFetch()

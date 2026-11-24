@@ -27,7 +27,10 @@ _GTM = '<iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"></iframe
 _YT_PAGE = (
     "<title>Cook Inlet Alaska Bear Viewing Live Cam - HDOnTap</title>"
     + _GTM
-    + '<iframe src="https://www.youtube.com/embed/Hkvl3vlT4k8" allowfullscreen></iframe>'
+    + (
+        '<iframe src="https://www.youtube.com/embed/Hkvl3vlT4k8"'
+        " allowfullscreen></iframe>"
+    )
 )
 # offline: no player-data blob, no embed -> yields nothing
 _OFFLINE_PAGE = "<title>Bay Point Marina Ospreys - HDOnTap</title>" + _GTM + "Offline"
@@ -47,7 +50,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_hdontap_discover_dedup_native_hls_and_youtube():
+def test_hdontap_discover_dedup_native_hls_and_youtube() -> None:
     cands = list(HdOnTapSource(_FakeFetch()).discover())
     by_title = {c.title: c for c in cands}
 
@@ -76,7 +79,7 @@ def test_hdontap_discover_dedup_native_hls_and_youtube():
         assert c.category is None  # no taxonomy -> title fallback / "Other"
 
 
-def test_hdontap_title_stripping():
+def test_hdontap_title_stripping() -> None:
     url = "https://hdontap.com/stream/1/pa-peregrine-falcon-cam-live-webcam/"
     # boilerplate is stripped once, end-anchored: a mid-name "Cam" survives
     t = _title_of("<title>PA Peregrine Falcon Cam Live Webcam - HDOnTap</title>", url)

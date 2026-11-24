@@ -1,5 +1,9 @@
-from webcam_aggregator.models import Candidate
+from typing import TYPE_CHECKING
+
 from webcam_aggregator.sources.airportwebcams import AirportWebcamsSource
+
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 _INDEX = "https://airportwebcams.net/airport-webcams-by-webcam-speed/"
 # nav category links + a still-image section after Streaming, both must be ignored
@@ -7,13 +11,18 @@ _INDEX_HTML = """
 <p><strong><a href="https://airportwebcams.net/category/streaming/">Streaming</a> |
 <a href="https://airportwebcams.net/category/1-to-5-sec/">1 to 5 sec</a></strong></p>
 <p><strong>Streaming</strong></p>
-<p><a href="https://airportwebcams.net/ahmosuo-airfield-webcam/">Ahmosuo Airport</a><br />
-<a href="https://airportwebcams.net/amsterdam-schiphol-airport-webcam/">Amsterdam Schiphol Airport</a><br />
+<p><a href="https://airportwebcams.net/ahmosuo-airfield-webcam/">
+Ahmosuo Airport</a><br />
+<a href="https://airportwebcams.net/amsterdam-schiphol-airport-webcam/">
+Amsterdam Schiphol Airport</a><br />
 <a href="https://airportwebcams.net/zurich-airport-webcam/">Zurich Airport</a><br />
-<a href="https://airportwebcams.net/tokyo-haneda-airport-webcam-2/">Tokyo Haneda Airport</a><br />
-<a href="https://airportwebcams.net/aberporth-west-wales-airport-webcam/">Aberporth Airport</a></p>
+<a href="https://airportwebcams.net/tokyo-haneda-airport-webcam-2/">
+Tokyo Haneda Airport</a><br />
+<a href="https://airportwebcams.net/aberporth-west-wales-airport-webcam/">
+Aberporth Airport</a></p>
 <p><strong>1 to 5 Second refresh</strong></p>
-<p><a href="https://airportwebcams.net/still-image-airport-webcam/">Still Image Airport</a></p>
+<p><a href="https://airportwebcams.net/still-image-airport-webcam/">
+Still Image Airport</a></p>
 """
 
 # every real page carries the site's own footer channel in the user/… form
@@ -21,7 +30,10 @@ _FOOTER = '<a href="https://www.youtube.com/user/AirportWebcams">our channel</a>
 
 
 def _page(title: str, body: str) -> str:
-    return f'<h2><a href="x" rel="bookmark" title="Permanent Link to {title}">{title}</a></h2>{body}{_FOOTER}'
+    return (
+        f'<h2><a href="x" rel="bookmark" title="Permanent Link to {title}">{title}</a>'
+        f"</h2>{body}{_FOOTER}"
+    )
 
 
 _PAGES = {
@@ -67,14 +79,14 @@ def _discover() -> list[Candidate]:
     return list(AirportWebcamsSource(_FakeFetch()).discover())
 
 
-def test_only_streaming_section_pages_are_scraped():
+def test_only_streaming_section_pages_are_scraped() -> None:
     pages = AirportWebcamsSource(_FakeFetch())._page_urls()  # pyright: ignore[reportPrivateUsage]
     assert "https://airportwebcams.net/still-image-airport-webcam/" not in pages
     assert not any("/category/" in u for u in pages)
     assert len(pages) == 5
 
 
-def test_channels_become_live_targets_with_titles_and_category():
+def test_channels_become_live_targets_with_titles_and_category() -> None:
     cands = _discover()
     by_target = {c.target_url: c for c in cands}
 
@@ -91,7 +103,7 @@ def test_channels_become_live_targets_with_titles_and_category():
     assert not any("AirportWebcams" in c.target_url for c in cands)
 
 
-def test_occasional_streamers_skipped_unless_page_has_nothing_else():
+def test_occasional_streamers_skipped_unless_page_has_nothing_else() -> None:
     by_page: dict[str, list[Candidate]] = {}
     for c in _discover():
         by_page.setdefault(c.source_page_url, []).append(c)

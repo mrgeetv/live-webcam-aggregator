@@ -1,4 +1,6 @@
 import logging
+import threading
+import time
 from typing import TYPE_CHECKING, Any, cast, override
 
 import pytest
@@ -7,35 +9,40 @@ from webcam_aggregator.sources.youtube_api import YoutubeApiSource
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
     from googleapiclient._apis.youtube.v3.resources import YouTubeResource
 
 # Fake, non-functional key in the real AIza… shape.
 _FAKE_KEY = "AIzaSyFAKEKEY_notarealkey_1234567890"
 
 
-class _Req:
-    _result: Any
+# What a fake API call yields: a response body, or an error to raise.
+_Response = dict[str, Any] | Exception
 
-    def __init__(self, result: Any) -> None:
+
+class _Req:
+    _result: _Response
+
+    def __init__(self, result: _Response) -> None:
         self._result = result
 
-    def execute(self) -> Any:
+    def execute(self) -> dict[str, Any]:
         if isinstance(self._result, Exception):
             raise self._result
         return self._result
 
 
 class _Endpoint:
-    _results: list[Any]
+    _results: list[_Response]
     _i: int
-    calls: list[dict[str, Any]]
+    calls: list[dict[str, object]]
 
-    def __init__(self, results: list[Any]) -> None:
+    def __init__(self, results: list[_Response]) -> None:
         self._results = results
         self._i = 0
         self.calls = []
 
-    def list(self, **kwargs: Any) -> _Req:
+    def list(self, **kwargs: object) -> _Req:
         self.calls.append(kwargs)
         r = self._results[min(self._i, len(self._results) - 1)]
         self._i += 1
@@ -48,8 +55,8 @@ class _FakeClient:
 
     def __init__(
         self,
-        search: list[Any] | None = None,
-        videos: list[Any] | None = None,
+        search: list[_Response] | None = None,
+        videos: list[_Response] | None = None,
     ) -> None:
         self._search = _Endpoint(search or [])
         self._videos = _Endpoint(videos or [])
@@ -83,7 +90,8 @@ def test_discover_walks_published_windows() -> None:
     client = _FakeClient(search=[page1, page2])
     cands = list(_source(lambda: client, query="cam").discover())
     assert [c.predisc_key for c in cands] == ["yt:aaaaaaaaaaa", "yt:bbbbbbbbbbb"]
-    # 1st call has no window; 2nd carries publishedBefore = 1st window's last publishedAt
+    # 1st call has no window; 2nd carries publishedBefore = the 1st window's last
+    # publishedAt
     assert "publishedBefore" not in client.search().calls[0]
     assert client.search().calls[1]["publishedBefore"] == "2026-01-02T00:00:00Z"
 
@@ -99,7 +107,7 @@ class _Resp403:
     status: int = 403
 
 
-class _Denied(Exception):
+class _DeniedError(Exception):
     resp: _Resp403 = _Resp403()
 
 
@@ -135,7 +143,7 @@ def test_search_warning_names_the_real_exception(
 def test_search_warning_mentions_quota_only_on_403(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    src = _source(lambda: _FakeClient(search=[_Denied("forbidden")]), query="cam")
+    src = _source(lambda: _FakeClient(search=[_DeniedError("forbidden")]), query="cam")
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
         assert list(src.discover()) == []
     assert "HTTP 403" in caplog.text
@@ -245,13 +253,10 @@ def test_client_access_is_serialised_across_threads() -> None:
     # discover()'s search and live_ids()'s videos.list share ONE non-thread-safe
     # httplib2 client and run concurrently during a build; the internal lock must stop
     # them ever executing on it at the same time (else the TLS socket corrupts).
-    import threading
-    import time
-
     state = {"inside": 0, "overlap": False}
     pages = iter([{"items": [_item("aaaaaaaaaaa")]}, {"items": []}])
 
-    def _slow_execute() -> Any:
+    def _slow_execute() -> dict[str, Any]:
         state["inside"] += 1
         if state["inside"] > 1:
             state["overlap"] = True
@@ -260,21 +265,21 @@ def test_client_access_is_serialised_across_threads() -> None:
         return next(pages, {"items": []})
 
     class _SlowReq:
-        def execute(self) -> Any:
+        def execute(self) -> dict[str, Any]:
             return _slow_execute()
 
     class _SlowEndpoint:
-        def list(self, **_kwargs: Any) -> Any:
+        def list(self, **_kwargs: object) -> _SlowReq:
             return _SlowReq()
 
     class _SlowClient:
-        def search(self) -> Any:
+        def search(self) -> _SlowEndpoint:
             return _SlowEndpoint()
 
-        def videos(self) -> Any:
+        def videos(self) -> _SlowEndpoint:
             return _SlowEndpoint()
 
-    src = _source(lambda: _SlowClient(), query="cam")
+    src = _source(_SlowClient, query="cam")
     t = threading.Thread(target=lambda: list(src.discover()))
     t.start()
     for _ in range(5):

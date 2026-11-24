@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
-from typing import override
+from typing import TYPE_CHECKING, override
 
 from webcam_aggregator.categories import _MAP  # pyright: ignore[reportPrivateUsage]
-from webcam_aggregator.fetch import FetcherProtocol
 from webcam_aggregator.sources.tomarigi import (
     _CATEGORY_MAP,  # pyright: ignore[reportPrivateUsage]
     _UNCATEGORISED,  # pyright: ignore[reportPrivateUsage]
     TomarigiSource,
 )
+
+if TYPE_CHECKING:
+    from webcam_aggregator.fetch import FetcherProtocol
 
 _SITEMAP_URL = "https://tomarigi.me/sitemap.xml"
 _SPOT = "https://tomarigi.me/spot/1b6ea960-f566-44f9-a63d-94de856b206d"
@@ -62,7 +64,8 @@ def _page(
         "embedUrl": f"https://www.youtube.com/embed/{video_id}",
     }
     site = (
-        '<script type="application/ld+json">{"@type":"WebSite","name":"とまり木"}</script>'
+        '<script type="application/ld+json">'
+        '{"@type":"WebSite","name":"とまり木"}</script>'
         if extra_ld
         else ""
     )

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from webcam_aggregator.categories import _MAP  # pyright: ignore[reportPrivateUsage]
-from webcam_aggregator.fetch import FetcherProtocol
 from webcam_aggregator.sources.shareju import (
     _TAG_CATEGORY,  # pyright: ignore[reportPrivateUsage]
     SharejuSource,
 )
+
+if TYPE_CHECKING:
+    from webcam_aggregator.fetch import FetcherProtocol
 
 
 class _FakeFetcher:
@@ -41,8 +44,7 @@ def _cam(
     *,
     url: str = "https://its-i.com/camera/camera8",
     tags: str = "",
-    locality: str = "港区…",
-    region: str = "東京都",
+    place: tuple[str, str] = ("港区…", "東京都"),  # (locality, region)
 ) -> dict[str, object]:
     return {
         "@type": "VideoObject",
@@ -54,8 +56,8 @@ def _cam(
             "@type": "Place",
             "address": {
                 "@type": "PostalAddress",
-                "addressLocality": locality,
-                "addressRegion": region,
+                "addressLocality": place[0],
+                "addressRegion": place[1],
             },
         },
     }
@@ -112,8 +114,7 @@ def test_duplicate_embeds_and_geo_already_in_name() -> None:
                 "川越駅西口",
                 "https://www.youtube.com/embed/aaaaaaaaaaa",
                 tags="河川",
-                locality="川越市…",
-                region="埼玉県",
+                place=("川越市…", "埼玉県"),
             ),
             _cam("重複", "https://www.youtube.com/embed/aaaaaaaaaaa?si=x"),
         ]
@@ -134,7 +135,8 @@ def test_empty_or_malformed_index_yields_nothing() -> None:
     assert (
         list(
             _source(
-                '<script type="application/ld+json">{"@type": "BreadcrumbList"}</script>'
+                '<script type="application/ld+json">'
+                '{"@type": "BreadcrumbList"}</script>'
             ).discover()
         )
         == []

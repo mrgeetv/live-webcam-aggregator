@@ -8,7 +8,7 @@ _FIX = Path(__file__).parent / "fixtures"
 _CAM_HTML = (_FIX / "hdontap_cam.html").read_text()
 
 
-def test_hdontap_resolves_player_data_hls_with_both_token_params():
+def test_hdontap_resolves_player_data_hls_with_both_token_params() -> None:
     r = HdontapResolver(lambda _u: _CAM_HTML).resolve(
         "https://hdontap.com/stream/269629/carmel-by-the-sea-live-webcam/"
     )
@@ -21,16 +21,16 @@ def test_hdontap_resolves_player_data_hls_with_both_token_params():
     assert r.ttl_seconds is not None  # token is per-fetch; never cache indefinitely
 
 
-def test_hdontap_offline_page_raises_without_url_in_message():
+def test_hdontap_offline_page_raises_without_url_in_message() -> None:
     # an offline cam renders its page with no player-data blob at all
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ValueError, match="hdontap:") as exc:
         HdontapResolver(lambda _u: "<title>Ospreys - HDOnTap</title>Offline").resolve(
             "https://hdontap.com/stream/723586/bay-point-marina-ospreys/"
         )
     assert "http" not in str(exc.value)  # error detail feeds INFO aggregates
 
 
-def test_stream_src_rejects_malformed_or_streamless_blobs():
+def test_stream_src_rejects_malformed_or_streamless_blobs() -> None:
     bad_json = '<script id="player-data" type="application/json">{oops</script>'
     no_src = '<script id="player-data" type="application/json">{"ads": {}}</script>'
     not_hls = (

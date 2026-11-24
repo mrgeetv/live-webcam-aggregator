@@ -1,5 +1,9 @@
-from webcam_aggregator.fetch import FetcherProtocol
+from typing import TYPE_CHECKING
+
 from webcam_aggregator.sources.worldcams import WorldcamsSource
+
+if TYPE_CHECKING:
+    from webcam_aggregator.fetch import FetcherProtocol
 
 
 class _FakeFetcher:

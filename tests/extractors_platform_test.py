@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from webcam_aggregator.extractors.baltic import BalticResolver
@@ -6,23 +8,23 @@ from webcam_aggregator.extractors.ipcamlive import IpcamliveResolver
 # --- offline unit tests -----------------------------------------------------
 
 
-def test_ipcamlive_builds_m3u8():
+def test_ipcamlive_builds_m3u8() -> None:
     body = 'var address = "https://g0.ipcamlive.com/"; var streamid = "abc123";'
-    out = IpcamliveResolver(fetch=lambda u: body).resolve(
+    out = IpcamliveResolver(fetch=lambda _u: body).resolve(
         "https://g0.ipcamlive.com/player.php?alias=x"
     )
     assert out.url == "https://g0.ipcamlive.com/streams/abc123/stream.m3u8"
     assert out.stream_type == "hls"
 
 
-def test_ipcamlive_missing_vars_raises():
-    with pytest.raises(ValueError):
-        IpcamliveResolver(fetch=lambda u: "no vars here").resolve(
+def test_ipcamlive_missing_vars_raises() -> None:
+    with pytest.raises(ValueError, match="ipcamlive:"):
+        IpcamliveResolver(fetch=lambda _u: "no vars here").resolve(
             "https://x/player.php?alias=y"
         )
 
 
-def test_baltic_extracts_m3u8_from_auth_token():
+def test_baltic_extracts_m3u8_from_auth_token() -> None:
     page = "var data = { action: 'auth_token', id: 126, embed:1 };"
     fragment = 'sources:[{src:"https://edge01.balticlivecam.com/blc/x/index.m3u8?token=hash:1781917651106"}]'
 
@@ -63,8 +65,6 @@ def test_baltic_no_m3u8_in_response_raises() -> None:
 
 def test_baltic_ttl_derived_from_epoch_ms() -> None:
     """ttl_seconds is derived from the 13-digit epoch-ms in the token."""
-    import time
-
     page = "var data = { action: 'auth_token', id: 7, embed: 1 };"
     # Use a far-future epoch_ms (year 2099) so ttl is always positive in tests.
     future_epoch_ms = 4_070_908_800_000  # 2099-01-01 00:00:00 UTC in ms
@@ -118,9 +118,7 @@ def test_ipcamlive_offline_alias_error_carries_no_url() -> None:
     A URL would shatter one failure mode into per-cam buckets (liveness logs the URL at
     DEBUG).
     """
-    import pytest
-
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ValueError, match="ipcamlive:") as exc:
         IpcamliveResolver(lambda _u: "<html>nothing</html>").resolve(
             "https://www.ipcamlive.com/elhovo"
         )

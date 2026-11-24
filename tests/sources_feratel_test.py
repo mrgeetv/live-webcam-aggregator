@@ -42,7 +42,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_feratel_takes_own_cam_id_from_url_not_carousel_siblings():
+def test_feratel_takes_own_cam_id_from_url_not_carousel_siblings() -> None:
     fetch = _FakeFetch()
     cands = {c.source_page_url: c for c in FeratelSource(fetch).discover()}
 
@@ -62,7 +62,7 @@ def test_feratel_takes_own_cam_id_from_url_not_carousel_siblings():
     assert c.source == "feratel"
 
 
-def test_feratel_slug_title_fallback_drops_the_cam_id():
+def test_feratel_slug_title_fallback_drops_the_cam_id() -> None:
     c = next(
         c for c in FeratelSource(_FakeFetch()).discover() if c.source_page_url == _LENK
     )
@@ -71,7 +71,7 @@ def test_feratel_slug_title_fallback_drops_the_cam_id():
     assert c.title == "Lenk Im Simmental Metschstand — Bern, Switzerland"
 
 
-def test_feratel_handles_missing_sitemap():
+def test_feratel_handles_missing_sitemap() -> None:
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None

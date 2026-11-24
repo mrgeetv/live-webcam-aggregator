@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
-from webcam_aggregator.fetch import FetcherProtocol
 from webcam_aggregator.sources.cxtvlive import CxtvliveSource
+
+if TYPE_CHECKING:
+    from webcam_aggregator.fetch import FetcherProtocol
 
 _MAP_URL = "https://www.cxtvlive.com/data/cxl_mapa.php"
 _SITEMAP_URL = "https://www.cxtvlive.com/sitemap.php"
@@ -11,7 +14,8 @@ _CAM = "https://www.cxtvlive.com/live-camera/"
 
 
 def _map(*entries: list[object]) -> str:
-    # Map feed shape: [lat, lon, name, slug, thumb, "Country - Region - City", flag, cats]
+    # Map feed shape, in order: lat, lon, name, slug, thumb, "Country - Region - City",
+    # flag, cats
     return json.dumps({"n": len(entries), "p": list(entries)})
 
 
@@ -54,7 +58,8 @@ def test_category_and_geo_come_from_the_map_feed() -> None:
     assert c.source == "cxtvlive"
     assert c.category == "Beaches"  # first content segment of "Beaches · Cities"
     assert c.predisc_key == "hls:https://cdn.example/live.m3u8"
-    assert "Rio de Janeiro" in c.title and "Brazil" in c.title
+    assert "Rio de Janeiro" in c.title
+    assert "Brazil" in c.title
 
 
 def test_high_definition_tag_is_skipped_for_the_real_category() -> None:
