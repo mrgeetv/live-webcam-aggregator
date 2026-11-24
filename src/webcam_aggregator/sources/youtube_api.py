@@ -129,12 +129,15 @@ class YoutubeApiSource:
                 break
             before = len(seen)
             for it in items:
-                vid = it["id"]["videoId"]
-                if vid in seen:
+                # Both keys are optional in the API's schema: skip an item without
+                # them rather than let one end the whole search.
+                vid = it.get("id", {}).get("videoId")
+                title = it.get("snippet", {}).get("title")
+                if not vid or title is None or vid in seen:
                     continue
                 seen.add(vid)
                 yield Candidate(
-                    title=it["snippet"]["title"],
+                    title=title,
                     angle_key=None,
                     category=None,
                     source="youtube-api",
@@ -166,11 +169,13 @@ class YoutubeApiSource:
                 self._drop_client()
                 raise
             for it in resp.get("items", []):
+                vid = it.get("id")
                 snip = it.get("snippet", {})
                 details = it.get("liveStreamingDetails", {})
                 if (
-                    snip.get("liveBroadcastContent") == "live"
+                    vid
+                    and snip.get("liveBroadcastContent") == "live"
                     and "actualEndTime" not in details
                 ):
-                    live[it["id"]] = _YT_CATEGORIES.get(snip.get("categoryId", ""), "")
+                    live[vid] = _YT_CATEGORIES.get(snip.get("categoryId", ""), "")
         return live

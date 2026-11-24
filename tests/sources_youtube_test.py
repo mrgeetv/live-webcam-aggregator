@@ -274,3 +274,21 @@ def test_client_access_is_serialised_across_threads() -> None:
         src.live_ids(["aaaaaaaaaaa"])
     t.join()
     assert not state["overlap"]  # the two callers never ran on the client concurrently
+
+
+def test_discover_skips_a_sparse_search_item() -> None:
+    # The Data API marks id.videoId and snippet.title optional; an item missing one
+    # is skipped, and the rest of the page still yields.
+    sparse = [{"id": {}, "snippet": {"title": "x"}}, {"id": {"videoId": "bbbbbbbbbbb"}}]
+    page = {"items": [*sparse, _item("aaaaaaaaaaa")]}
+    src = YoutubeApiSource(
+        lambda: _FakeClient(search=[page, {"items": []}]), query="cam"
+    )
+    assert [c.predisc_key for c in src.discover()] == ["yt:aaaaaaaaaaa"]
+
+
+def test_live_ids_skips_an_item_without_an_id() -> None:
+    live = {"snippet": {"liveBroadcastContent": "live"}, "liveStreamingDetails": {}}
+    resp = {"items": [live, {**live, "id": "aaaaaaaaaaa"}]}
+    src = YoutubeApiSource(lambda: _FakeClient(videos=[resp]), query="cam")
+    assert src.live_ids(["aaaaaaaaaaa"]) == {"aaaaaaaaaaa": ""}
