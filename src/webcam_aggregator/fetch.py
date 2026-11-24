@@ -9,6 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http import HTTPStatus
 from http.cookiejar import DefaultCookiePolicy
 from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import urlencode, urljoin, urlsplit
@@ -934,7 +935,7 @@ class Fetcher:
                         raise _FetchError(REDIRECT_NO_LOCATION, host=host)
                     current = urljoin(current, location)
                     continue
-                if resp.status_code >= 400:
+                if resp.status_code >= HTTPStatus.BAD_REQUEST:
                     # Streamed response: close before raising, or the pooled
                     # connection is only returned by GC — a shedding episode would
                     # leak one per failure against a pool of SCRAPE_WORKERS.
@@ -1060,7 +1061,7 @@ class Fetcher:
                     )
                     # admin-ajax POSTs shouldn't redirect
                     _refuse_redirect(resp, host)
-                    if resp.status_code >= 400:
+                    if resp.status_code >= HTTPStatus.BAD_REQUEST:
                         resp.close()  # streamed: release the pooled connection
                         self._penalise_if_shedding(resp, host, gen)
                     resp.raise_for_status()

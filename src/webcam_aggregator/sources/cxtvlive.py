@@ -31,6 +31,8 @@ _YT_CHANNEL_LIVE = re.compile(
 
 # Quality/format tags the map lists as a "category" alongside the real one
 # ("High Definition · Cities"): skip them so the content category wins.
+# A map feed entry is read up to index 7 (name, slug, geo, categories at 2/3/5/7).
+_FEED_FIELDS = 8
 _NOISE_TAGS = {"high definition", "high definition hd"}
 
 # Per-cam context carried from _page_meta to _title_for: the title base and the map's
@@ -75,7 +77,7 @@ class CxtvliveSource(HtmlScraperSource[_Ctx]):
             except ValueError:
                 data = {}
             for p in data.get("p", []):
-                if not isinstance(p, list) or len(p) < 8:
+                if not isinstance(p, list) or len(p) < _FEED_FIELDS:
                     continue
                 name, slug, geo, cats = p[2], p[3], p[5], p[7]
                 if not isinstance(slug, str) or not slug:

@@ -90,8 +90,11 @@ def base_images(dockerfile: str) -> list[str]:
                 image = args.get(image.lstrip("$").strip("{}"), "")
             if image and image not in stages and image not in images:
                 images.append(image)
-            if len(operands) == 3 and operands[1].upper() == "AS":
-                stages.add(operands[2])
+            match operands:
+                case [_, as_keyword, stage] if as_keyword.upper() == "AS":
+                    stages.add(stage)
+                case _:
+                    pass
     return images
 
 

@@ -53,6 +53,7 @@ _PAGE = 25
 # latitudes outside the band hold no cams worth a probe row
 _STEP = 3.15
 _LAT_MIN, _LAT_MAX = -60.0, 72.0
+_LON_MIN, _LON_MAX = -180.0, 180.0
 # re-run the grid enumeration every N builds to pick up newly added cams
 _ENUM_EVERY = 40
 # a stream page smaller than this is the "not available" stub, not an embed
@@ -64,8 +65,8 @@ def _grid() -> list[tuple[float, float]]:
     lat = _LAT_MIN
     while lat <= _LAT_MAX:
         step = _STEP / max(0.2, math.cos(math.radians(lat)))
-        lon = -180.0
-        while lon < 180.0:
+        lon = _LON_MIN
+        while lon < _LON_MAX:
             pts.append((round(lat, 2), round(lon, 2)))
             lon += step
         lat += _STEP

@@ -30,6 +30,8 @@ _OG_TITLE = re.compile(r'property="og:title" content="([^"]+)"')
 # no Referer, no session binding; served by DirectHls). The cdn-0NN host varies
 # per cam, so the URL cannot be derived from the id — this API is the mapping.
 _API = "https://www.whatsupcams.com/cdn-api/streams/"
+# Path segments in a cam page URL: en/webcams/<country>/<region>/<town>/<slug>.
+_CAM_PAGE_DEPTH = 6
 
 
 def _on_site(url: str) -> bool:
@@ -63,7 +65,8 @@ class WhatsupcamsSource:
                 # the sitemap also lists the bare /en/webcams/ archive page. Anchor to
                 # our own host too: a tampered sitemap must not steer the build-time
                 # fetcher at arbitrary third-party hosts.
-                if _on_site(loc) and len(urlsplit(loc).path.strip("/").split("/")) >= 6:
+                depth = len(urlsplit(loc).path.strip("/").split("/"))
+                if _on_site(loc) and depth >= _CAM_PAGE_DEPTH:
                     pages.add(loc)
         page_list = sorted(pages)
         # hop 1: cam pages -> (page, title, cam id)

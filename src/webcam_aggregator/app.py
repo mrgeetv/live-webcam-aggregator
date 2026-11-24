@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import urllib.parse
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, override
 
@@ -390,8 +391,8 @@ def make_handler(
                     base_url=base_url,
                     proxy_youtube=proxy_youtube,
                 )
-                if status == 302:
-                    self.send_response(302)
+                if status == HTTPStatus.FOUND:
+                    self.send_response(HTTPStatus.FOUND)
                     self.send_header("Location", ct_or_loc)
                     self.end_headers()
                     return

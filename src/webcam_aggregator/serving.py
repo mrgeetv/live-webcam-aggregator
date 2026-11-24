@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 import time
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urljoin, urlsplit
 
@@ -218,8 +219,7 @@ def _redirects_youtube(url: str, *, proxy_youtube: bool) -> bool:
 
 
 def _registrable_domain(host: str) -> str:
-    parts = host.lower().split(".")
-    return ".".join(parts[-2:]) if len(parts) >= 2 else host.lower()
+    return ".".join(host.lower().split(".")[-2:])
 
 
 def _same_site(a: str, b: str) -> bool:
@@ -421,13 +421,17 @@ def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> st
     return "\n".join(out) + "\n"
 
 
+# ASCII control characters (C0 and DEL): never valid in a URL we emit.
+_URL_CONTROL_CHARS = frozenset(map(chr, [*range(0x20), 0x7F]))
+
+
 def _safe_redirect_target(url: str) -> bool:
     """A resolved URL is emitted verbatim in a 302 `Location` header, so it must be a
     plain http(s) URL with no control characters. An extractor reads its URL from a
     scraped page (e.g. a feratel/og:video meta), and `send_header` does NO CRLF
     sanitisation — a newline in that value would split the response (header injection
     on our own origin), and a non-http scheme would be an open redirect."""
-    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+    if not _URL_CONTROL_CHARS.isdisjoint(url):
         return False
     return urlsplit(url).scheme in ("http", "https")
 
@@ -609,7 +613,7 @@ def serve_segment(
             loggable(upstream_url),
         )
         return (502, "text/plain", None, b"segment fetch failed")
-    if result[0] >= 400:
+    if result[0] >= HTTPStatus.BAD_REQUEST:
         # relayed as-is, so the player sees it too; an IP-bound or lapsed token
         # usually shows up here, as a 401/403/404 on every segment
         _log(
