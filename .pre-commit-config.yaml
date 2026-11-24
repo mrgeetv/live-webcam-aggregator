@@ -7,7 +7,6 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
-      - id: check-ast
       - id: check-case-conflict
       - id: check-docstring-first
       - id: check-executables-have-shebangs
@@ -38,20 +37,6 @@ repos:
             "docker,api,playlist,scraper,config,deps,ci,docs",
           ]
 
-  - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 26.10.1
-    hooks:
-      - id: black
-        language_version: python3
-
-  - repo: https://github.com/PyCQA/flake8
-    rev: 7.5.0
-    hooks:
-      - id: flake8
-        # --extend-ignore (not --ignore) keeps flake8's black-compatible defaults
-        # (E704, W503, …) and just adds E501/E203 on top — per black's guidance.
-        args: ["--extend-ignore=E501,E203"]
-
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
     hooks:
@@ -81,6 +66,25 @@ repos:
   # --locked syncs the venv first and fails on a stale lock instead of rewriting it.
   - repo: local
     hooks:
+      # Ruff settings live in pyproject.toml. Both hooks run over the whole project,
+      # the files ruff itself finds, so the hook and a bare `ruff check` agree.
+      # The formatter also formats the Python code blocks in Markdown files.
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --locked ruff format
+        language: system
+        types_or: [python, pyi, markdown]
+        pass_filenames: false
+
+      # Linting reports and never fixes; `uv run ruff check --fix` applies the
+      # safe fixes by hand. Ruff also reports syntax errors, so no check-ast.
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --locked ruff check
+        language: system
+        types_or: [python, pyi, toml]
+        pass_filenames: false
+
       - id: check-python-version
         name: Check Python version consistency
         entry: scripts/check-python-version.sh

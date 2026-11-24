@@ -68,9 +68,7 @@ def _discover() -> list[Candidate]:
 
 
 def test_only_streaming_section_pages_are_scraped():
-    pages = AirportWebcamsSource(
-        _FakeFetch()
-    )._page_urls()  # pyright: ignore[reportPrivateUsage]
+    pages = AirportWebcamsSource(_FakeFetch())._page_urls()  # pyright: ignore[reportPrivateUsage]
     assert "https://airportwebcams.net/still-image-airport-webcam/" not in pages
     assert not any("/category/" in u for u in pages)
     assert len(pages) == 5

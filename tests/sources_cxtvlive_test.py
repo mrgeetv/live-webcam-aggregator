@@ -42,8 +42,7 @@ def test_category_and_geo_come_from_the_map_feed() -> None:
                 ]
             ),
             _SITEMAP_URL: "",
-            _CAM
-            + "rio-copacabana": (
+            _CAM + "rio-copacabana": (
                 "<h1>Copacabana</h1>"
                 '<div data-stream-url="https://cdn.example/live.m3u8"></div>'
             ),
@@ -74,8 +73,7 @@ def test_high_definition_tag_is_skipped_for_the_real_category() -> None:
                 ]
             ),
             _SITEMAP_URL: "",
-            _CAM
-            + "grand-central": (
+            _CAM + "grand-central": (
                 "<h1>Grand Central</h1>"
                 '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>'
             ),
@@ -114,8 +112,7 @@ def test_youtube_channel_chrome_link_is_dropped() -> None:
                 [0, 0, "Sq", "sq", "x.webp", "United States", "US.jpg", "Cities"]
             ),
             _SITEMAP_URL: "",
-            _CAM
-            + "sq": (
+            _CAM + "sq": (
                 "<h1>Square</h1>"
                 '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>'
                 '<a href="https://www.youtube.com/@SomeChannel">Our channel</a>'
@@ -133,8 +130,7 @@ def test_channel_link_kept_when_it_is_the_only_signal() -> None:
                 [0, 0, "Ch", "ch", "x.webp", "United States", "US.jpg", "Cities"]
             ),
             _SITEMAP_URL: "",
-            _CAM
-            + "ch": (
+            _CAM + "ch": (
                 "<h1>Channel cam</h1>"
                 '<a href="https://www.youtube.com/@SoleChannel">Watch live</a>'
             ),

@@ -121,8 +121,7 @@ uv run pre-commit install
 
 Hooks will run automatically on commit, checking:
 
-- Python formatting (black)
-- Python linting (flake8)
+- Python formatting and linting (ruff, configured in `pyproject.toml`)
 - Shell script validation (shellcheck)
 - Dockerfile linting (hadolint), and that its pinned image tag matches its `rev:`
 - Markdown formatting (markdownlint)
@@ -229,7 +228,7 @@ live-webcam-aggregator/
 ├── .github/workflows/          # CI/CD pipelines
 ├── Dockerfile                  # Container definition
 ├── docker-compose.yml          # Development compose file
-├── pyproject.toml              # Dependencies (runtime + dev group), vulture config
+├── pyproject.toml              # Dependencies (runtime + dev group), ruff + vulture config
 └── uv.lock                     # Locked dependency versions, every one hashed
 ```
 

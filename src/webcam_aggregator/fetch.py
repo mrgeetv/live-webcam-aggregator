@@ -326,7 +326,9 @@ class _ImpersonatingSession:
         port = (
             parts.port
             if parts.port is not None
-            else 443 if parts.scheme == "https" else 80
+            else 443
+            if parts.scheme == "https"
+            else 80
         )
         addr = f"[{ip}]" if ":" in ip else ip
         session = self._session()

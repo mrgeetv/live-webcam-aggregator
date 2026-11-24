@@ -13,6 +13,7 @@ __pycache__/
 # Local virtualenv (dev only)
 .venv/
 .pytest_cache/
+.ruff_cache/
 
 # Coverage artifacts
 .coverage

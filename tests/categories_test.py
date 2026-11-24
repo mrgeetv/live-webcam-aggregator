@@ -222,9 +222,9 @@ def test_every_youtube_category_maps_to_a_real_group() -> None:
     for yt_name in _YT_CATEGORIES.values():
         mapped = map_category(yt_name)
         assert mapped != UNMAPPED, f"YouTube category {yt_name!r} is unmapped"
-        assert (
-            mapped in ALL_CATEGORIES
-        ), f"{yt_name!r} -> {mapped!r} not a real category"
+        assert mapped in ALL_CATEGORIES, (
+            f"{yt_name!r} -> {mapped!r} not a real category"
+        )
 
 
 def test_gaming_is_individually_excludable() -> None:

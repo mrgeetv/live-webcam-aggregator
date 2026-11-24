@@ -24,6 +24,7 @@ dev = [
     "pytest==9.2.0",
     "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
+    "ruff==0.17.6",
     "types-psutil==7.2.2.20261111",
     "types-requests==2.33.0.20261030",
     "vulture==2.16",
@@ -41,3 +42,12 @@ paths = ["src/webcam_aggregator"]
 # the stdlib server, so they look unused; ignore them by name.
 min_confidence = 60
 ignore_names = ["do_GET", "log_message"]
+
+[tool.ruff]
+# First-party roots for import sorting: the package, the scripts the tests import,
+# and the tests themselves.
+src = ["src", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F"]
+ignore = ["E501"]

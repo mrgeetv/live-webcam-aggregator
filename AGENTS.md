@@ -734,7 +734,7 @@ comment, never the incident.
 The suite is **fully offline** — no real-endpoint/live tests (sources, resolvers,
 and the HTTP handler are exercised with injected fakes + real sockets on port 0).
 The gate is `pre-commit` (which runs `pytest` + a coverage floor as a `files:`-gated
-hook) plus the same checks in CI — not ruff/mypy. The Python hooks (pytest,
+hook) plus the same checks in CI. The Python hooks (ruff, pytest,
 basedpyright, vulture) run through `uv run --locked` from the project venv, so they
 use the versions pinned in `uv.lock` and no venv activation is needed to commit.
 
@@ -868,8 +868,8 @@ When updating this file:
 
 Pre-commit hooks enforced:
 
-- **black** - Python code formatting
-- **flake8** - Python linting (ignores: E501, E203)
+- **ruff format** - Python code formatting (Black's style), including Python code blocks in Markdown
+- **ruff check** - Python linting; settings and the reasons for every ignored rule in `pyproject.toml`'s `[tool.ruff]`. Reports only: `uv run ruff check --fix` applies the safe fixes
 - **shellcheck** - Shell script validation (severity: warning)
 - **markdownlint-cli2** - Markdown formatting (CHANGELOG.md excluded)
 - **hadolint** - Dockerfile linting
@@ -879,7 +879,7 @@ Pre-commit hooks enforced:
 - **check-hadolint-pin** - hadolint's pinned `entry:` image tag must match its `rev:` (Dependabot bumps only the `rev:`)
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
 - **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `scripts/`, `tests/`, `pyproject.toml` or `uv.lock` change. Also runs in CI.
-- **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what flake8/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name. Configured in `pyproject.toml`'s `[tool.vulture]`.
+- **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what ruff/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name. Configured in `pyproject.toml`'s `[tool.vulture]`.
 
 ## Python Version Synchronization
 

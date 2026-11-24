@@ -214,9 +214,9 @@ def test_lru_eviction() -> None:
 
     # cam1 was evicted — its get should trigger a fresh resolve
     cache.get("cam1", "http://t")
-    assert (
-        resolve_counts["cam1"] == 2
-    ), "cam1 should have been re-resolved after eviction"
+    assert resolve_counts["cam1"] == 2, (
+        "cam1 should have been re-resolved after eviction"
+    )
 
     # cam2 and cam3 should still be cached
     assert resolve_counts.get("cam2", 0) == 1

@@ -59,8 +59,7 @@ def _listing(*hrefs: str) -> str:
 
 _PAGES = {
     _BASE + "/mapa": _MAPA,
-    _BASE
-    + "/kategoria,plaze-i-morze": _listing(
+    _BASE + "/kategoria,plaze-i-morze": _listing(
         "https://hel.webcamera.pl/",
         "https://jaroslawiec.webcamera.pl/",  # inactive marker: stays skipped
         "https://www.webcamera.pl/",  # nav noise, not a cam page
@@ -69,8 +68,7 @@ _PAGES = {
     _BASE + "/kategoria,mazury": _listing(),
     # the city street cam is listed under BOTH miasta and gory: miasta wins
     _BASE + "/kategoria,miasta": _listing("https://krupowki.webcamera.pl/"),
-    _BASE
-    + "/kategoria,stacje-narciarskie": _listing(
+    _BASE + "/kategoria,stacje-narciarskie": _listing(
         "https://czarnagora.webcamera.pl/",  # not on the map at all
         "https://mp4cam.webcamera.pl/",
         "https://offline.webcamera.pl/",

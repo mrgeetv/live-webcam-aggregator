@@ -100,8 +100,7 @@ def test_whatsupcams_sitemap_page_api_discovery():
     # appended town-first (the title names Podstrana itself)
     pod = by_url["https://cdn-008.whatsupcams.com/hls/hr_podstrana01.m3u8"]
     assert pod.title == (
-        "Podstrana Beach Webcam – Live View from Hotel Split"
-        " — Split Dalmatia, Croatia"
+        "Podstrana Beach Webcam – Live View from Hotel Split — Split Dalmatia, Croatia"
     )
     assert pod.source_page_url == _PODSTRANA
     zoo = by_url["https://cdn-007.whatsupcams.com/hls/hr_zgzoo05.m3u8"]

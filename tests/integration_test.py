@@ -119,9 +119,9 @@ def test_end_to_end_server() -> None:
         assert resp.status == 200, f"playlist status={resp.status}"
         playlist_body = resp.read().decode()
         assert "/stream/" in playlist_body, f"no /stream/ in playlist:\n{playlist_body}"
-        assert (
-            'group-title="Beaches"' in playlist_body
-        ), f'no group-title="Beaches" in playlist:\n{playlist_body}'
+        assert 'group-title="Beaches"' in playlist_body, (
+            f'no group-title="Beaches" in playlist:\n{playlist_body}'
+        )
 
         # --- /stream/<id> → 200 rewritten manifest ---
         conn.request("GET", f"/stream/{entry_id}")
@@ -129,13 +129,13 @@ def test_end_to_end_server() -> None:
         assert resp.status == 200, f"/stream status={resp.status}"
         stream_body = resp.read().decode()
         # The chunklist_w1.m3u8 (child manifest) must be proxied via /stream/<id>/m?u=
-        assert (
-            f"/stream/{entry_id}/m?u=" in stream_body
-        ), f"no child-manifest proxy in stream body:\n{stream_body}"
+        assert f"/stream/{entry_id}/m?u=" in stream_body, (
+            f"no child-manifest proxy in stream body:\n{stream_body}"
+        )
         # The segment must be an absolute URL pointing at the CDN
-        assert (
-            "https://cdn.x/cam/seg_1.ts" in stream_body
-        ), f"no absolute segment URL in stream body:\n{stream_body}"
+        assert "https://cdn.x/cam/seg_1.ts" in stream_body, (
+            f"no absolute segment URL in stream body:\n{stream_body}"
+        )
 
         # --- /health → 200 JSON with streams: 1 ---
         conn.request("GET", "/health")

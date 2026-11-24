@@ -105,9 +105,9 @@ def test_cross_source_dedup_collapses_same_predisc_key() -> None:
     )
 
     # The fix: cross-source dedup means these collapse to ONE entry
-    assert (
-        len(result) == 1
-    ), f"Expected 1 entry after cross-source dedup, got {len(result)}: {result}"
+    assert len(result) == 1, (
+        f"Expected 1 entry after cross-source dedup, got {len(result)}: {result}"
+    )
 
     entry = result[0]
     # Scraper (cxtvlive) wins on category per _CAT_RANK

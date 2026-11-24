@@ -13,8 +13,7 @@ class _FakeFetcher:
 
 
 _LIST = (
-    '<div class="cam-promo__title">'
-    '<a href="/norway/finse/railroad-station">A</a></div>'
+    '<div class="cam-promo__title"><a href="/norway/finse/railroad-station">A</a></div>'
 )
 _CAM = (
     "<h1>Finse Railroad Station</h1>"
@@ -75,7 +74,7 @@ def test_skips_camera_page_returning_none() -> None:
 
 
 _MULTI_LIST = (
-    '<div class="cam-promo__title">' '<a href="/spain/gran-canaria/beaches">B</a></div>'
+    '<div class="cam-promo__title"><a href="/spain/gran-canaria/beaches">B</a></div>'
 )
 _MULTI_CAM = (
     "<h1>Gran Canaria Beaches Webcam</h1>"

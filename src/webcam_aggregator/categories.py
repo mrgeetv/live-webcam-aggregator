@@ -187,7 +187,8 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         r"|memorial|\barch\b|citadel|obelisk|granar|windmill)"
         # bridge in the languages our sources actually use. NOT `ponte`: Ponte di Legno
         # is a town, and a Landmarks match here would pre-empt the later Cities rule
-        r"|puente|brücke" r"|お城|城跡|天守|タワー|灯台|展望台",
+        r"|puente|brücke"
+        r"|お城|城跡|天守|タワー|灯台|展望台",
     ),
     (
         "Beaches",

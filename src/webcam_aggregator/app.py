@@ -178,8 +178,10 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
             "ozolio",
         ),
         (
-            lambda u: _host_ends(u, "joada.net")
-            and _path(u).startswith("/embeded/embeded.html"),
+            lambda u: (
+                _host_ends(u, "joada.net")
+                and _path(u).startswith("/embeded/embeded.html")
+            ),
             "viewsurf",
         ),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
