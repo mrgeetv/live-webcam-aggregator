@@ -5,9 +5,10 @@ import re
 import threading
 import time
 from collections.abc import Callable, Mapping
-from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 from .cache import ResolveCache
+from .logging_redaction import trim_url
 from .models import CatalogueEntry
 from .signing import sign, verify
 
@@ -68,15 +69,28 @@ class RepeatLimiter:
 repeats = RepeatLimiter()
 
 
-def _log(level: int, entry_id: str, reason: str, msg: str, *args: object) -> None:
+# The ids we issue (models.stable_id). /m and /s take the id from the request path
+# unchecked, since the signature covers only the upstream URL, so a log line echoes
+# an id only in this shape: anything else could be 60 KB long or carry terminal
+# escapes.
+_STREAM_ID = re.compile(r"[0-9a-f]{16}")
+
+
+def _shown(entry_id: str) -> str:
+    return entry_id if _STREAM_ID.fullmatch(entry_id) else "<malformed id>"
+
+
+def _log(level: int, stream: str, reason: str, msg: str, *args: object) -> None:
     """Log a serve-path line unless the same line for the same stream and reason
     logged within the last minute (`RepeatLimiter`); the next one that logs says
-    how many it stood for."""
-    suppressed = repeats.admit((msg, entry_id, reason))
+    how many came since. A line about a request that proved nothing (a bad
+    signature, an unknown id) passes stream "", so one line a minute covers every
+    id a client can make up."""
+    suppressed = repeats.admit((msg, stream, reason))
     if suppressed is None:
         return
     if suppressed:
-        msg += " (+%d repeat%s suppressed)"
+        msg += " (+%d repeat%s since the last line)"
         args = (*args, suppressed, "" if suppressed == 1 else "s")
     log.log(level, msg, *args)
 
@@ -116,64 +130,16 @@ def first_variant(master: str, url: str) -> str | None:
     return None
 
 
-# Query params that name a cam rather than authorise a fetch, each kept only on the
-# domain where it does (elsewhere a `uid=` could be a CDN session). For these targets
-# the query IS the cam's identity, so a line without it can't say which cam failed.
-_ID_PARAMS = {
-    "v": "youtube.com",
-    "cam": "feratel.com",  # webtv.feratel.com/webtv/?cam=<id>
-    "alias": "ipcamlive.com",  # player.php?alias=<alias>
-    "uid": "wetmet.net",  # widgets/stream/frame.php?uid=<id>
-    "uuid": "joada.net",  # viewsurf's embeded.html?uuid=<id>
-}
-
-
 def loggable(url: str) -> str:
-    """An upstream URL trimmed for logging to scheme://host/path, plus any query
-    params that only identify the cam (`_ID_PARAMS`).
-
-    Resolved CDN URLs carry live session credentials in the query string —
-    skyline's `?a=<token>`, baltic's session URL, a beachcam target's
-    `wmsAuthSign` — and googlevideo carries its ~6h playback token in the PATH
-    (`_googlevideo_path`). These warnings fire at the INFO default and land in a
-    log kept for weeks, so the credentials go, and so does any userinfo.
+    """An upstream URL trimmed for an INFO log line (`logging_redaction.trim_url`:
+    no credentials, but the params that name the cam). These warnings land in a
+    log kept for weeks.
 
     At DEBUG the full URL is kept: when you are actually debugging one stream, the
     token is the point, and DEBUG is opt-in and short-lived."""
     if log.isEnabledFor(logging.DEBUG):
         return url
-    parts = urlsplit(url)
-    host = parts.netloc.rpartition("@")[2]
-    name = parts.hostname or ""
-    path = parts.path
-    if name.endswith(".googlevideo.com"):
-        path = _googlevideo_path(path)
-    ids = [
-        (k, v)
-        for k, v in parse_qsl(parts.query)
-        if k in _ID_PARAMS
-        and (name == _ID_PARAMS[k] or name.endswith("." + _ID_PARAMS[k]))
-    ]
-    query = f"?{urlencode(ids)}" if ids else ""
-    return f"{parts.scheme}://{host}{path}{query}"
-
-
-def _googlevideo_path(path: str) -> str:
-    """A googlevideo path cut to its route and video id. After the route the path
-    is key/value pairs carrying the playback credentials (`ip/<our egress IP>`,
-    `sig/…`), so of those only `id/<video>.<n>` is kept, whatever their order. A
-    route other than a manifest's or `videoplayback` keeps nothing but the id."""
-    segs = path.split("/")
-    if segs[1:3] == ["api", "manifest"]:
-        kept = segs[:4]  # /api/manifest/<kind>
-    elif segs[1:2] == ["videoplayback"]:
-        kept = segs[:2]
-    else:
-        kept = [""]
-    if "id" in segs[len(kept) :]:
-        i = segs.index("id", len(kept))
-        kept += segs[i : i + 2]
-    return "/".join(kept) or "/"
+    return trim_url(url)
 
 
 _NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.M)
@@ -473,10 +439,11 @@ def serve_stream(
 ) -> Response:
     """Answer a player's `/stream/<id>`. `fetch` returns a body (None on failure)
     and its outcome label, as `Fetcher.get_with_outcome` does."""
+    sid = _shown(entry_id)
     entry = catalogue.get(entry_id)
     if entry is None:
         # a player holding a playlist older than the catalogue (a cam since dropped)
-        _log(logging.INFO, entry_id, "", "unknown stream: %s", entry_id)
+        _log(logging.INFO, "", "", "unknown stream: %s", sid)
         return (404, "text/plain", b"unknown stream")
     target = entry.target_url
     lookup = cache.get(entry_id, target)
@@ -494,20 +461,20 @@ def serve_stream(
         if resolved is not None and lookup.error is not None:
             _log(
                 logging.WARNING,
-                entry_id,
+                sid,
                 lookup.error,
                 "re-resolve failed, keeping the cached URL: %s -> %s: %s",
-                entry_id,
+                sid,
                 loggable(target),
                 lookup.error,
             )
     if resolved is None:
         _log(
             logging.WARNING,
-            entry_id,
+            sid,
             str(lookup.error),
             "resolve failed: %s -> %s: %s",
-            entry_id,
+            sid,
             loggable(target),
             lookup.error,
         )
@@ -517,10 +484,10 @@ def serve_stream(
         # rather than reflect it into a redirect (see _safe_redirect_target)
         _log(
             logging.WARNING,
-            entry_id,
+            sid,
             "",
             "unsafe resolved URL: %s -> %s",
-            entry_id,
+            sid,
             loggable(resolved.url),
         )
         return (502, "text/plain", b"unsafe upstream URL")
@@ -548,16 +515,11 @@ def serve_child_manifest(
     fetch: Callable[[str], tuple[str | None, str]],
     base_url: str,
 ) -> Response:
+    sid = _shown(entry_id)
     if not verify(upstream_url, sig):
         # the signing key is per-process: after a restart, a player still holding
         # the old URLs lands here until it reloads /stream/<id>
-        _log(
-            logging.WARNING,
-            entry_id,
-            "",
-            "bad signature on a child manifest: %s",
-            entry_id,
-        )
+        _log(logging.WARNING, "", "", "bad signature on a child manifest: %s", sid)
         return (403, "text/plain", b"bad signature")
     return _proxy_manifest(
         entry_id, upstream_url, fetch=fetch, base_url=base_url, kind="child manifest"
@@ -574,16 +536,17 @@ def _proxy_manifest(
 ) -> Response:
     """Fetch an upstream playlist and relay it trimmed and rewritten through us, or
     refuse it with a 502. `kind` names the playlist in the log."""
+    sid = _shown(entry_id)
     manifest, outcome = fetch(upstream_url)
     if manifest is None:
         _log(
             logging.WARNING,
-            entry_id,
+            sid,
             f"{kind} {outcome}",
             "%s fetch failed (%s): %s -> %s",
             kind,
             outcome,
-            entry_id,
+            sid,
             loggable(upstream_url),
         )
         return (502, "text/plain", b"upstream manifest fetch failed")
@@ -595,12 +558,12 @@ def _proxy_manifest(
         why = "no segments or variants" if "#EXTM3U" in manifest else "not HLS"
         _log(
             logging.WARNING,
-            entry_id,
+            sid,
             f"{kind} {why}",
             "unplayable %s (%s): %s -> %s",
             kind,
             why,
-            entry_id,
+            sid,
             loggable(upstream_url),
         )
         return (502, "text/plain", b"not a playable HLS stream")
@@ -625,19 +588,20 @@ def serve_segment(
 ) -> SegmentResponse:
     """Relay one segment. `fetch_segment` returns the upstream response (None on
     failure) and its outcome label, as `Fetcher.get_segment` does."""
+    sid = _shown(entry_id)
     if not verify(upstream_url, sig):
         # see child manifest
-        _log(logging.WARNING, entry_id, "", "bad signature on a segment: %s", entry_id)
+        _log(logging.WARNING, "", "", "bad signature on a segment: %s", sid)
         return (403, "text/plain", None, b"bad signature")
     result, outcome = fetch_segment(upstream_url, range_header)
     if result is None:
         _log(
             logging.WARNING,
-            entry_id,
+            sid,
             outcome,
             "segment fetch failed (%s): %s -> %s",
             outcome,
-            entry_id,
+            sid,
             loggable(upstream_url),
         )
         return (502, "text/plain", None, b"segment fetch failed")
@@ -646,11 +610,11 @@ def serve_segment(
         # usually shows up here, as a 401/403/404 on every segment
         _log(
             logging.WARNING,
-            entry_id,
+            sid,
             str(result[0]),
             "segment upstream http-%d: %s -> %s",
             result[0],
-            entry_id,
+            sid,
             loggable(upstream_url),
         )
     return result

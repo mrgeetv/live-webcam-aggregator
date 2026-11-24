@@ -193,14 +193,14 @@ The app is two phases, decoupled by a catalogue snapshot:
   which returns a **reason** (`models.NO_EXTRACTOR` / `RESOLVE_FAILED` /
   `DEAD_MANIFEST` / `YT_OFFLINE`, optionally `":<detail>"`) that `filter_source`
   counts. Log **hostnames** in aggregates; full URLs only via `serving.loggable()`,
-  which keeps the query string at DEBUG only (at INFO it keeps just the params that
-  name a cam on the site they name it on, `_ID_PARAMS` — YouTube's `v=`, feratel's
-  `cam=` — and cuts googlevideo's path, which carries our egress IP and the
-  signature) — and the `resolve-failed:<detail>` strings have embedded URL query
-  strings stripped (`logging_redaction.strip_url_queries`) before they reach the INFO
+  which keeps the query string at DEBUG only. At INFO it trims through
+  `logging_redaction.trim_url`: the params that name a cam stay, on the site they
+  name it on (`_ID_PARAMS` — YouTube's `v=`, feratel's `cam=`), and googlevideo's
+  path, which carries our egress IP and the signature, is cut to route and video id.
+  The `resolve-failed:<detail>` strings have every URL they quote trimmed the same
+  way, query and all (`trim_urls(..., keep_ids=False)`), before they reach the INFO
   aggregate, since an extractor error often quotes its target URL, token and all —
-  and the shared
-  resolver error messages (`app._resolver_get` / `_baltic_post`) carry the fetch
+  and the shared resolver error messages (`app._resolver_get` / `_baltic_post`) carry the fetch
   outcome label but deliberately NO URL, so one failure mode aggregates as one detail
   bucket instead of thousands of URL-prefix ones. A third seam covers what
   the per-source stats can't see: the cross-source liveness fetchers (resolver +
@@ -214,8 +214,12 @@ The app is two phases, decoupled by a catalogue snapshot:
   signature (the signing key is per-process, so a restart produces a burst of them).
   A failed retry re-resolve, which still serves the cached URL, logs its error the
   same way. These lines fire per player request, and a failing cam repeats itself
-  every few seconds per viewer, so `serving.RepeatLimiter` admits each (line, entry,
-  reason) once a minute and the next one to log counts what it stood for. All of this
+  every few seconds per viewer, so `serving.RepeatLimiter` admits each (line, stream,
+  reason) once a minute and the next one to log counts the repeats since. The id in
+  `/m` and `/s` comes from the request path unchecked (the signature covers only the
+  upstream URL), so a line echoes it only in the shape we issue, and the lines a
+  client can trigger without a valid URL (bad signature, unknown id) share one key
+  across all ids: made-up ids can't flood the log or grow the limiter. All of this
   detail is LOG-ONLY: `/health` stays a compact WHAT summary (per-source
   `kept`/`discovered`/`crashed`/`status`, plus `last_build_seconds`).
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and

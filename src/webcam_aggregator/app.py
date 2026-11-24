@@ -34,7 +34,7 @@ from .fetch import (
     FetchStats,
     HostPacer,
 )
-from .logging_redaction import RedactingFilter, scrub, strip_url_queries
+from .logging_redaction import RedactingFilter, scrub, trim_urls
 from .models import (
     DEAD_MANIFEST,
     NO_EXTRACTOR,
@@ -261,8 +261,9 @@ def make_liveness_check(
         except Exception as exc:
             log.debug("liveness resolve failed for %s: %s", c.target_url, exc)
             # The detail separates "yt-dlp is broken" from "this cam is off air".
-            # It is aggregated at INFO, so any URL it quotes loses its query.
-            detail = strip_url_queries(str(exc))[:_DETAIL_CHARS]
+            # It is aggregated at INFO, so any URL it quotes is trimmed, query and
+            # all: a cam's id would split one failure mode into a bucket per cam.
+            detail = trim_urls(str(exc), keep_ids=False)[:_DETAIL_CHARS]
             return f"{RESOLVE_FAILED}:{detail}"
         if r.stream_type != "hls":
             return None  # mp4/other: trust the resolve

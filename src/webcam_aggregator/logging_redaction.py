@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, override
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 # googleapiclient puts the developer key in the request URI, and HttpError.__str__ (which
 # IS its __repr__) prints that URI — so ANY log of such an exception writes the key to
@@ -22,21 +23,78 @@ def scrub(text: str) -> str:
     return _KEY_PARAM.sub(r"\1REDACTED", text)
 
 
-# An extractor error often quotes its target URL, query string and all, and a query
-# string can carry a session token. Error text logged at INFO keeps hostnames and
-# paths only, so every embedded URL is cut at its query.
-_URL_QUERY = re.compile(r"(https?://[^\s?\"']+)(?:\?\S*)?")
+# Query params that name a cam rather than authorise a fetch, each kept only on the
+# domain where it does (elsewhere a `uid=` could be a CDN session). For these targets
+# the query IS the cam's identity, so a line without it can't say which cam failed.
+_ID_PARAMS = {
+    "v": "youtube.com",
+    "cam": "feratel.com",  # webtv.feratel.com/webtv/?cam=<id>
+    "alias": "ipcamlive.com",  # player.php?alias=<alias>
+    "uid": "wetmet.net",  # widgets/stream/frame.php?uid=<id>
+    "uuid": "joada.net",  # viewsurf's embeded.html?uuid=<id>
+}
 
 
-def strip_url_queries(text: str) -> str:
-    """Trim every URL embedded in `text` to scheme://host/path."""
-    return _URL_QUERY.sub(r"\1", text)
+def trim_url(url: str, *, keep_ids: bool = True) -> str:
+    """A URL cut for an INFO log line to scheme://host/path, plus (with `keep_ids`)
+    any query params that only identify the cam (`_ID_PARAMS`).
+
+    Upstream URLs carry live session credentials in the query string (skyline's
+    `?a=<token>`, a beachcam target's `wmsAuthSign`), googlevideo carries its
+    playback token in the PATH (`_googlevideo_path`), and any URL can carry
+    userinfo, so all of that goes."""
+    try:
+        parts = urlsplit(url)
+        name = (parts.hostname or "").rstrip(".")  # `host.` is the same host
+    except ValueError:
+        return "<malformed url>"
+    host = parts.netloc.rpartition("@")[2]
+    path = parts.path
+    if name.endswith(".googlevideo.com"):
+        path = _googlevideo_path(path)
+    ids = [
+        (k, v)
+        for k, v in parse_qsl(parts.query)
+        if keep_ids
+        and k in _ID_PARAMS
+        and (name == _ID_PARAMS[k] or name.endswith("." + _ID_PARAMS[k]))
+    ]
+    query = f"?{urlencode(ids)}" if ids else ""
+    return f"{parts.scheme}://{host}{path}{query}"
+
+
+def _googlevideo_path(path: str) -> str:
+    """A googlevideo path cut to its route and video id. After the route the path
+    is key/value pairs carrying the playback credentials (`ip/<our egress IP>`,
+    `sig/…`), so of those only `id/<video>.<n>` is kept, whatever their order. A
+    route other than a manifest's or `videoplayback` keeps nothing but the id."""
+    segs = path.split("/")
+    if segs[1:3] == ["api", "manifest"]:
+        kept = segs[:4]  # /api/manifest/<kind>
+    elif segs[1:2] == ["videoplayback"]:
+        kept = segs[:2]
+    else:
+        kept = [""]
+    if "id" in segs[len(kept) :]:
+        i = segs.index("id", len(kept))
+        kept += segs[i : i + 2]
+    return "/".join(kept) or "/"
+
+
+# An extractor error often quotes its target URL, token and all.
+_URL = re.compile(r"https?://[^\s\"']+")
+
+
+def trim_urls(text: str, *, keep_ids: bool = True) -> str:
+    """`text` with every URL it quotes cut by `trim_url`."""
+    return _URL.sub(lambda m: trim_url(m.group(), keep_ids=keep_ids), text)
 
 
 def describe_error(exc: BaseException) -> str:
-    """`Type: message` for an INFO log line: credentials scrubbed and every URL the
-    message quotes cut at its query."""
-    return f"{type(exc).__name__}: {strip_url_queries(scrub(str(exc)))}"
+    """`Type: message` for one INFO log line: credentials scrubbed, every URL the
+    message quotes trimmed (`trim_url`), and line breaks flattened."""
+    text = " ".join(trim_urls(scrub(str(exc))).splitlines())
+    return f"{type(exc).__name__}: {text}"
 
 
 def _scrub_arg(value: Any) -> Any:

@@ -315,10 +315,12 @@ bad signature on a segment: 1f0c...
 ```
 
 Each line logs at most once a minute per stream and reason; the next one after that
-ends `(+N repeats suppressed)`, counting the requests it stood for. Bad signatures
-come in a burst after a restart: the signing key is per-process, so the URLs players
-still hold stop verifying until they reload the stream. An id the catalogue doesn't
-know logs `unknown stream: <id>` at `INFO`.
+ends `(+N repeats since the last line)`. Bad signatures come in a burst after a
+restart: the signing key is per-process, so the URLs players still hold stop
+verifying until they reload the stream. An id the catalogue doesn't know logs
+`unknown stream: <id>` at `INFO`. Those two need no valid URL to trigger, so they log
+once a minute across all ids, and an id not shaped like ours shows as
+`<malformed id>`.
 
 ### YouTube cams that play briefly, then stop
 

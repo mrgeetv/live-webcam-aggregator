@@ -29,7 +29,7 @@ from webcam_aggregator.signing import sign
 # ---------------------------------------------------------------------------
 
 BASE = "https://cams.example"
-ENTRY_ID = "ab12"
+ENTRY_ID = "ab12cd34ef567890"  # the shape models.stable_id issues
 
 
 def _entry(
@@ -1298,8 +1298,37 @@ def test_a_repeated_failure_logs_once_a_minute_with_a_count(
         f"segment upstream http-403: {ENTRY_ID} -> https://cdn.x/cam/seg_1.ts",
         f"segment upstream http-404: {ENTRY_ID} -> https://cdn.x/cam/seg_3.ts",
         f"segment upstream http-403: {ENTRY_ID} -> https://cdn.x/cam/seg_4.ts"
-        " (+1 repeat suppressed)",
+        " (+1 repeat since the last line)",
     ]
+
+
+def test_made_up_ids_cannot_flood_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    """A bad signature or an unknown id needs no valid URL, and the id is whatever
+    the request path says: one line a minute covers them all, and an id that isn't
+    one we issue (16 hex chars) is never echoed, so a 60 KB or escape-laden id
+    can't fill the log or the limiter."""
+    url = "https://cdn.x/cam/seg_1.ts"
+    with caplog.at_level(logging.INFO, logger=_SERVING):
+        for n in range(50):
+            serve_segment(
+                f"{n:016x}", url, "bogus", fetch_segment=lambda _u, _r: (None, "ok")
+            )
+        serve_segment(
+            "A" * 60000, url, "bogus", fetch_segment=lambda _u, _r: (None, "ok")
+        )
+        for bad in ("a\x1b[31mRED\x07b", "f" * 16):
+            serve_stream(
+                bad,
+                catalogue={},
+                cache=_make_cache(None),
+                fetch=lambda _u: (None, "ok"),
+                base_url=BASE,
+            )
+    assert [r.getMessage() for r in caplog.records] == [
+        "bad signature on a segment: 0000000000000000",
+        "unknown stream: <malformed id>",
+    ]
+    assert len(serving.repeats) == 2
 
 
 def test_repeat_limiter_stays_bounded_under_made_up_ids() -> None:
@@ -1331,13 +1360,15 @@ def test_serve_stream_failed_retry_resolve_logs_why(
 def test_serve_stream_logs_an_unknown_id(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger=_SERVING):
         serve_stream(
-            "gone1",
+            "0123456789abcdef",
             catalogue={},
             cache=_make_cache(None),
             fetch=lambda _u: (None, "timeout"),
             base_url=BASE,
         )
-    assert [r.getMessage() for r in caplog.records] == ["unknown stream: gone1"]
+    assert [r.getMessage() for r in caplog.records] == [
+        "unknown stream: 0123456789abcdef"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1528,6 +1559,17 @@ def test_loggable_keeps_only_the_route_and_id_of_any_googlevideo_path() -> None:
     assert loggable(url) == "https://rr1.googlevideo.com/videoplayback/id/abc.1"
     assert loggable("https://rr1.googlevideo.com/other/ip/203.0.113.7") == (
         "https://rr1.googlevideo.com/"
+    )
+
+
+def test_loggable_treats_a_trailing_dot_host_as_the_host() -> None:
+    """`host.` is the same host to DNS, so it gets the same trimming."""
+    url = "https://manifest.googlevideo.com./api/manifest/hls_playlist/ip/203.0.113.7"
+    assert loggable(url) == (
+        "https://manifest.googlevideo.com./api/manifest/hls_playlist"
+    )
+    assert loggable("https://www.youtube.com./watch?v=abcdefghijk") == (
+        "https://www.youtube.com./watch?v=abcdefghijk"
     )
 
 

@@ -6,7 +6,11 @@ import logging
 import pytest
 from googleapiclient.errors import HttpError
 
-from webcam_aggregator.logging_redaction import RedactingFilter, scrub
+from webcam_aggregator.logging_redaction import (
+    RedactingFilter,
+    describe_error,
+    scrub,
+)
 
 # A fake value in the real AIza… shape.
 _FAKE_KEY = "AIzaSyFAKEKEY_notarealkey_1234567890"
@@ -138,3 +142,18 @@ def test_filter_on_handler_covers_child_loggers() -> None:
     out = buf.getvalue()
     assert _FAKE_KEY not in out
     assert "key=REDACTED" in out
+
+
+def test_describe_error_trims_a_quoted_url_as_loggable_does() -> None:
+    """An error can quote a googlevideo URL, whose credentials sit in the PATH,
+    or one with userinfo; and a multi-line message must stay one log line."""
+    exc = ValueError(
+        "yt-dlp failed: ERROR: unable to download https://u:pw@manifest.googlevideo"
+        ".com/api/manifest/hls_variant/expire/1/ip/203.0.113.7/id/abc.1/sig/SECRET"
+        "/file/index.m3u8?x=1 (HTTP Error 403)\nsecond line"
+    )
+    assert describe_error(exc) == (
+        "ValueError: yt-dlp failed: ERROR: unable to download"
+        " https://manifest.googlevideo.com/api/manifest/hls_variant/id/abc.1"
+        " (HTTP Error 403) second line"
+    )
