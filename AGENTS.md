@@ -378,15 +378,20 @@ The app is two phases, decoupled by a catalogue snapshot:
   cached), and a discovery-time token is useless to the liveness phase minutes later —
   which is why skyline's cam pages are deliberately fetched twice per build and that
   cost is not a bug to optimise away.
-- camscape aggregates from many providers — the cam page's `"streams":[{…}]` JSON is the
-  source of truth (the rendered iframe shows only the active angle), one candidate per
-  stream `url`. Most route to existing extractors (YouTube, ipcamlive, m3u8, feratel);
+- camscape aggregates from many providers. The cam list is the `webcam-sitemap*.xml`
+  files named in `sitemap_index.xml`: they hold exactly the cams the category pages show
+  as live, leaving out each page's "Gone quiet" box. The `/showing/` index is still
+  fetched, only to log unmapped category slugs. On a cam page the
+  `<script id="streams-data">` JSON is the source of truth (the rendered player shows
+  only the active angle), one candidate per stream `url`. Most route to existing extractors (YouTube, ipcamlive, m3u8, feratel);
   plus a bespoke `earthcam` extractor (fetch page → grab its `.m3u8`; EarthCam 403s
   without a Referer, see `_REFERER_HOSTS` in `fetch.py`) and a twitch normalise
   (`player.twitch.tv/?channel=X` → `twitch.tv/X` → yt-dlp). ivideon (WebRTC), rtsp.me
   (server fetch gets only stub manifests, segments 404) + angelcam (auth) are
   unservable, dropped. Category + location come from the cam page's
-  `/showing/<cat>` + `/location/<loc>` tags.
+  `class="where-link"` `/showing/<cat>` + `/location/<loc>` links, never a bare
+  `/showing/` match: every page's nav links the seasonal category
+  (`/showing/christmas/`), which would tag every cam with it.
   **camsecure embeds are resolved to their `.m3u8` during discovery**
   (`_camsecure_hls`, reusing `sources.camsecure`'s `player_iframe` /
   `hls_from_player`; a cam-page embed costs one extra hop to its player). Do this at

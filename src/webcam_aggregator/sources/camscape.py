@@ -6,7 +6,6 @@ import re
 from typing import override
 from urllib.parse import urlsplit
 
-from ..fetch import thread_map
 from ..models import Candidate
 from .base import HtmlScraperSource, predisc_key, with_location_parts
 from .camsecure import hls_from_player, player_iframe
@@ -19,9 +18,11 @@ _BASE = "https://www.camscape.com"
 # build). The granular animal sub-cats all collapse to Animals; None -> "Other".
 _CATEGORY: dict[str, str | None] = {
     "alpacas": "Animals",
+    "animals": "Animals",
     "bats": "Animals",
     "beaches": "Beaches",
     "bears": "Animals",
+    "beavers": "Animals",
     "bees": "Animals",
     "big-cats": "Animals",
     "big-dogs": "Animals",
@@ -36,21 +37,27 @@ _CATEGORY: dict[str, str | None] = {
     "culture": None,
     "deer": "Animals",
     "domestic-animals": "Animals",
+    "donkeys": "Animals",
     "elephants": "Animals",
     "entertainment": "Entertainment",
     "giraffes": "Animals",
     "goats": "Animals",
     "horses": "Animals",
     "landscapes": "Parks",
+    "marsupials": "Animals",
     "monsters": None,
     "nature": "Parks",
     "nightlife": "Bars",
+    # people/scenery/transport are umbrella categories spanning several of ours; left
+    # uncategorised so the title fallback decides per cam.
+    "people": None,
     "pigs": "Animals",
     "planes-airports": "Airports",
     "primates": "Animals",
     "religion": "Religion",
     "rivers-seas-lakes": "Rivers Lakes",
     "roads": "Traffic",
+    "scenery": None,
     "sealife": "Animals",
     "shopping-district": None,
     "ski-resorts": "Ski Resorts",
@@ -59,15 +66,22 @@ _CATEGORY: dict[str, str | None] = {
     "tortoises": "Animals",
     "tourist-attractions": "Sights",
     "trains-railways": "Trains",
+    "transport": None,
     "urban-spaces": "Cities",
     "zebras": "Animals",
+    "zoos": "Animals",
 }
 
-_CAT_PAGE = re.compile(r'href="(https://www\.camscape\.com/showing/[a-z0-9-]+/)"')
-_PAGE = re.compile(r'href="(https://www\.camscape\.com/showing/[a-z0-9-]+/page/\d+/)"')
-_CAM = re.compile(r'href="(https://www\.camscape\.com/webcam/[a-z0-9-]+/)"')
-_TAG = re.compile(r'/showing/([a-z0-9-]+)/"')  # only the cam's own tags on a cam page
-_LOC = re.compile(r'/location/([a-z0-9-]+)/"')
+_CAT_SLUG = re.compile(r'href="/showing/([a-z0-9-]+)/"')
+_WEBCAM_SITEMAP = re.compile(
+    r"<loc>(https://www\.camscape\.com/webcam-sitemap\d*\.xml)</loc>"
+)
+_CAM = re.compile(r"<loc>(https://www\.camscape\.com/webcam/[a-z0-9-]+/)</loc>")
+# The cam's own tags are its `where-link`s. Every page's nav also links a seasonal
+# category (/showing/christmas/), so an unanchored /showing/ match tags every cam with it.
+_TAG = re.compile(r'class="where-link" href="/showing/([a-z0-9-]+)/"')
+_LOC = re.compile(r'class="where-link" href="/location/([a-z0-9-]+)/"')
+_STREAMS = '<script id="streams-data" type="application/json">'
 _CHANNEL = re.compile(r"[?&]channel=([A-Za-z0-9_]+)")
 
 
@@ -80,14 +94,14 @@ def _is_camsecure(url: str) -> bool:
     return "camsecure" in labels[:-1] and parts.path.startswith("/")
 
 
-# ctx = (location parts general->specific, {stream index: name})
+# ctx = (location parts, {stream index: name})
 _Ctx = tuple[list[str], dict[str, str]]
 
 
 def _streams(html: str) -> list[dict[str, object]]:
-    # The cam's streams (every angle's embed url + name) live in a "streams":[{...}] JSON
-    # blob; the rendered iframe only shows the active one, so parse the JSON.
-    i = html.find('"streams":')
+    # The cam's streams (every angle's embed url + name) live in a JSON script block;
+    # the rendered player only shows the active one, so parse the JSON.
+    i = html.find(_STREAMS)
     if i < 0:
         return []
     try:
@@ -102,13 +116,10 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
 
     @override
     def _page_urls(self) -> list[str]:
-        cat_pages = sorted(
-            set(_CAT_PAGE.findall(self._fetch.get(f"{_BASE}/showing/") or ""))
-        )
-        # Crawl-first coverage: flag category pages we have no mapping for, so a new
+        # Crawl-first coverage: flag category slugs we have no mapping for, so a new
         # camscape category surfaces (its cams also land in "Unmapped Category") instead
         # of silently dropping to "Other".
-        slugs = [u.rstrip("/").rsplit("/", 1)[-1] for u in cat_pages]
+        slugs = set(_CAT_SLUG.findall(self._fetch.get(f"{_BASE}/showing/") or ""))
         unmapped = sorted(s for s in slugs if s not in _CATEGORY)
         if unmapped:
             log.warning(
@@ -116,24 +127,12 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
                 len(unmapped),
                 ", ".join(unmapped),
             )
-
-        def crawl(cat: str) -> set[str]:
-            out: set[str] = set()
-            seen: set[str] = set()
-            queue = [cat]
-            while queue:
-                p = queue.pop()
-                if p in seen:
-                    continue
-                seen.add(p)
-                h = self._fetch.get(p) or ""
-                out.update(_CAM.findall(h))
-                queue += [u for u in set(_PAGE.findall(h)) if u not in seen]
-            return out
-
+        # The webcam sitemaps list exactly the cams the category pages show as live,
+        # without the stale ones in each category page's "Gone quiet" box.
+        index = self._fetch.get(f"{_BASE}/sitemap_index.xml") or ""
         cams: set[str] = set()
-        for found in thread_map(crawl, cat_pages):
-            cams |= found
+        for sitemap in _WEBCAM_SITEMAP.findall(index):
+            cams.update(_CAM.findall(self._fetch.get(sitemap) or ""))
         return sorted(cams)
 
     @override
@@ -144,10 +143,8 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
             # No mapped tag: surface an unknown tag so it lands in "Unmapped Category"
             # (+ gets logged); else None -> "Other" (untagged, or only None-mapped tags).
             category = next((t for t in tags if t not in _CATEGORY), None)
-        # location tags are specific->general in the doc; with_location_parts wants
-        # general->specific, so reverse + prettify.
-        locs = list(dict.fromkeys(_LOC.findall(html)))
-        location = [loc.replace("-", " ").title() for loc in reversed(locs)]
+        locs = dict.fromkeys(_LOC.findall(html))
+        location = [loc.replace("-", " ").title() for loc in locs]
         names = {str(i): str(s.get("name") or "") for i, s in enumerate(_streams(html))}
         return category, (location, names)
 
