@@ -27,7 +27,7 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.4.0
+    rev: v4.5.0
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
@@ -40,13 +40,13 @@ repos:
           ]
 
   - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 26.5.1
+    rev: 26.10.1
     hooks:
       - id: black
         language_version: python3
 
   - repo: https://github.com/PyCQA/flake8
-    rev: 7.3.0
+    rev: 7.5.0
     hooks:
       - id: flake8
         # --extend-ignore (not --ignore) keeps flake8's black-compatible defaults
@@ -122,17 +122,17 @@ repos:
           - "do_GET,log_message"
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: v0.22.1
+    rev: v0.24.2
     hooks:
       - id: markdownlint-cli2
 
   - repo: https://github.com/DetachHead/basedpyright-pre-commit-mirror
-    rev: 1.39.8
+    rev: 1.40.2
     hooks:
       - id: basedpyright
         additional_dependencies:
-          - google-api-python-client-stubs==1.37.0
-          - types-psutil==7.2.2.20260518
-          - types-requests==2.33.0.20260518
-          - pytest==9.1.1  # so basedpyright can resolve pytest types in tests/
+          - google-api-python-client-stubs==1.40.0
+          - types-psutil==7.2.2.20261111
+          - types-requests==2.33.0.20261030
+          - pytest==9.2.0  # so basedpyright can resolve pytest types in tests/
           - curl_cffi==0.17.0  # fetch.py imports it; ships its own type hints
