@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.15](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.14...v2.14.15) (2026-11-24)
+
+### Bug Fixes
+
+* **deps:** uv for dependencies, ruff with every stable rule ([#197](https://github.com/mrgeetv/live-webcam-aggregator/issues/197)) ([73f4bd8](https://github.com/mrgeetv/live-webcam-aggregator/commit/73f4bd8a82654120b03ccfcb286ed289aa65355e)), closes [#151](https://github.com/mrgeetv/live-webcam-aggregator/issues/151) [#165](https://github.com/mrgeetv/live-webcam-aggregator/issues/165) [#127](https://github.com/mrgeetv/live-webcam-aggregator/issues/127) [#127](https://github.com/mrgeetv/live-webcam-aggregator/issues/127)
+
 ## [2.14.14](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.13...v2.14.14) (2026-11-24)
 
 ### Bug Fixes
