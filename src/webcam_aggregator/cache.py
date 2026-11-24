@@ -62,7 +62,7 @@ class ResolveCache:
     _resolve: Callable[[str, str], Resolved]
     _clock: Callable[[], float]
     _cap: int
-    _data: "OrderedDict[str, _Entry]"
+    _data: OrderedDict[str, _Entry]
     _locks: dict[str, threading.Lock]
     _guard: threading.Lock
 

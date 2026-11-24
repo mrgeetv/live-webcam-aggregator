@@ -21,7 +21,7 @@ _PLAYER = re.compile(
     r"https://g0\.ipcamlive\.com/player/player\.php\?alias=[A-Za-z0-9_-]+"
 )
 _TITLE = re.compile(r"<title>([^<]*)</title>")
-_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Live From Iceland\s*$", re.I)
+_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Live From Iceland\s*$", re.IGNORECASE)
 
 
 class LiveFromIcelandSource(HtmlScraperSource[str]):

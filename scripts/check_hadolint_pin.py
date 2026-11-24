@@ -8,6 +8,7 @@ Dependabot only bumps `rev:`, so a hadolint bump needs the tag moved by hand too
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 _REPO = "https://github.com/hadolint/hadolint"
 _IMAGE = "ghcr.io/hadolint/hadolint:"
@@ -23,9 +24,13 @@ def mismatch(config: str) -> str | None:
             in_block = words[2:3] == [_REPO]
         elif in_block and words[:1] == ["rev:"] and len(words) > 1:
             rev = words[1]
-        elif in_block and words[:1] == ["entry:"] and len(words) > 1:
-            if words[1].startswith(_IMAGE):
-                tag = words[1].removeprefix(_IMAGE)
+        elif (
+            in_block
+            and words[:1] == ["entry:"]
+            and len(words) > 1
+            and words[1].startswith(_IMAGE)
+        ):
+            tag = words[1].removeprefix(_IMAGE)
     if rev is None or tag is None:
         return f"no {_REPO} hook with a pinned {_IMAGE}<tag> entry found"
     if rev != tag:
@@ -35,8 +40,7 @@ def mismatch(config: str) -> str | None:
 
 def main(paths: list[str]) -> int:
     for path in paths or [".pre-commit-config.yaml"]:
-        with open(path, encoding="utf-8") as f:
-            problem = mismatch(f.read())
+        problem = mismatch(Path(path).read_text(encoding="utf-8"))
         if problem:
             print(f"{path}: {problem}", file=sys.stderr)
             return 1

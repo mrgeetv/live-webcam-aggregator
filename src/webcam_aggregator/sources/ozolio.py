@@ -16,7 +16,7 @@ _SITEMAP = "https://www.ozolio.com/cameras-sitemap.xml"
 _LOC = re.compile(r"<loc>([^<]+)</loc>")
 _EXPLORE = re.compile(r"https?://www\.ozolio\.com/explore/[A-Z0-9]+$")
 # "Keauhou Bay, Hawaii - Webcam - Ozolio" -> "Keauhou Bay, Hawaii"
-_TITLE = re.compile(r"<title>([^<]+?)-\s*Webcam\s*-\s*Ozolio\s*</title>", re.I)
+_TITLE = re.compile(r"<title>([^<]+?)-\s*Webcam\s*-\s*Ozolio\s*</title>", re.IGNORECASE)
 
 
 class OzolioSource:

@@ -122,8 +122,8 @@ def first_variant(master: str, url: str) -> str | None:
     lines = iter(master.splitlines())
     for ln in lines:
         if ln.startswith("#EXT-X-STREAM-INF"):
-            for ref in lines:
-                ref = ref.strip()
+            for raw in lines:
+                ref = raw.strip()
                 if ref and not ref.startswith("#"):
                     return urljoin(url, ref)
             return None
@@ -142,7 +142,7 @@ def loggable(url: str) -> str:
     return trim_url(url)
 
 
-_NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.M)
+_NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.MULTILINE)
 # Tags that carry a reference in an attribute instead of on the next line. These are
 # every attribute RFC 8216bis defines as a possibly-relative reference: URI (an fMP4
 # init segment on #EXT-X-MAP, a key, an alternate rendition on #EXT-X-MEDIA — Wowza's
@@ -152,11 +152,11 @@ _NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.M)
 # absolute by definition.) Left relative, the player resolves them against
 # /stream/<id> and 404s.
 _URI_ATTRIBUTES = frozenset({"URI", "SERVER-URI", "X-ASSET-LIST", "X-URI"})
-# An #EXT-X- tag's attribute list (never an #EXTINF title), read one attribute at a
-# time from the start of the list or a comma: a quoted value is consumed whole, so a
+# Reads an #EXT-X- tag's attribute list (never an #EXTINF title) one attribute at a
+# time, from the start of the list or a comma. A quoted value is consumed whole, so a
 # `,URI="` inside an earlier quoted value is never mistaken for an attribute. Never
 # past the end of the line.
-_TAG_LINE = re.compile(r"^(#EXT-X-[A-Z0-9-]+:)(.*)$", re.M)
+_TAG_LINE = re.compile(r"^(#EXT-X-[A-Z0-9-]+:)(.*)$", re.MULTILINE)
 _ATTRIBUTE = re.compile(r'(?<![^,])([A-Z0-9-]+)=("[^"]*"|[^,]*)')
 
 # Hosts whose HLS sessions are bound to the IP that fetches the manifest. Proxying
@@ -225,10 +225,10 @@ def _same_site(a: str, b: str) -> bool:
     return bool(a) and bool(b) and _registrable_domain(a) == _registrable_domain(b)
 
 
-# (status_code, content_type_or_location, body)
+# A response: status code, content type (or a redirect's location), body.
 Response = tuple[int, str, bytes]
 
-# (status_code, content_type, content_range_or_None, body)
+# A segment response: status code, content type, Content-Range if any, body.
 SegmentResponse = tuple[int, str, str | None, bytes]
 
 

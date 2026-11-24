@@ -23,7 +23,9 @@ _TITLE = re.compile(r"<h1[^<>]*>([^<]{1,120})</h1>")
 # shared ladder emits it as `…/live` beside the real video embed. Drop it when the page
 # has a real candidate too (same reasoning as beachcam) — keep it only if it's the lone
 # signal, when it IS the cam.
-_YT_CHANNEL_LIVE = re.compile(r"youtube\.com/(?:channel/[\w-]+|@[\w.-]+)/live$", re.I)
+_YT_CHANNEL_LIVE = re.compile(
+    r"youtube\.com/(?:channel/[\w-]+|@[\w.-]+)/live$", re.IGNORECASE
+)
 
 # Quality/format tags the map lists as a "category" alongside the real one
 # ("High Definition · Cities"): skip them so the content category wins.
@@ -37,8 +39,8 @@ _Ctx = tuple[str, list[str]]
 def _primary_category(field: object) -> str | None:
     """The first real content category in a map entry's "A · B" category field,
     skipping quality tags like "High Definition". None when nothing's left."""
-    for seg in str(field).split("·"):
-        seg = seg.strip()
+    for raw in str(field).split("·"):
+        seg = raw.strip()
         if seg and seg.lower() not in _NOISE_TAGS:
             return seg
     return None
@@ -91,7 +93,7 @@ class CxtvliveSource(HtmlScraperSource[_Ctx]):
     def _candidates(self, html: str, url: str):
         cands = list(extract_candidates(html, page_url=url, source=self.name))
         real = [c for c in cands if not _YT_CHANNEL_LIVE.search(c.target_url)]
-        return real if real else cands
+        return real or cands
 
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, _Ctx]:

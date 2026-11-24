@@ -10,7 +10,7 @@ from .base import Resolved
 _OG = re.compile(
     r'<meta(?=[^<>]+?(?:property|name)=["\'](?:og:video|twitter:player)["\'])'
     r'[^<>]+?content=["\']([^"\']+)["\']',
-    re.I,
+    re.IGNORECASE,
 )
 
 

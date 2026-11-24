@@ -18,7 +18,7 @@ from .base import Resolved
 # body from being rescanned from every repeat inside it.
 _BLOB = re.compile(
     r'<script(?=[^<>]+?id="player-data")[^<>]*+>((?:[^<]|<(?!/?script))*+)</script>',
-    re.I,
+    re.IGNORECASE,
 )
 
 

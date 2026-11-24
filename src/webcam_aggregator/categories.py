@@ -122,24 +122,28 @@ def map_category(raw: str | None) -> str:
 _TITLE_RULES: tuple[tuple[str, str], ...] = (
     (
         "Animals",
-        r"\b(bear|eagle|osprey|falcon|peregrine|hawk|owl|heron|egret|stork|puffin|gannet"
-        r"|kittiwake|\btern\b|penguin|manatee|otter|\bseal\b|sea ?lion|walrus|dolphin|whale"
-        r"|orca|shark|panda|tiger|\blion\b|elephant|giraffe|gorilla|lemur|sloth|monkey|bison"
-        r"|buffalo|\bdeer\b|moose|\belk\b|\bfox\b|\bwolf|\bbat\b|\bbee\b|alpaca|llama|sheep"
-        r"|\bgoat|\bpig\b|horse|pony|cattle|\bcow\b|alligator|crocodile|tortoise|turtle"
-        r"|kitten|pupp|\bcat cam|\bdog\b|guide dogs|\bbird|wildlife|\bzoo\b|aquarium|reef"
-        r"|coral|salmon|hummingbird|feeder|\bnest(s|ing)?\b|aviary|sanctuary|\bgull|\bswan"
-        r"|\bduck\b|goose|flamingo|parrot|condor|vulture|badger|hedgehog|squirrel|raccoon"
-        r"|toucan|rhino|\bmares?\b|foal|musk ox|guillemot|roller|canine|safari|africam"
-        r"|\bmara\b|kalahari|savanna|pasture|fishing hole)"
-        r"|動物園|水族館|野鳥|野生動物|コウノトリ",
+        (
+            r"\b(bear|eagle|osprey|falcon|peregrine|hawk|owl|heron|egret|stork|puffin|gannet"
+            r"|kittiwake|\btern\b|penguin|manatee|otter|\bseal\b|sea ?lion|walrus|dolphin|whale"
+            r"|orca|shark|panda|tiger|\blion\b|elephant|giraffe|gorilla|lemur|sloth|monkey|bison"
+            r"|buffalo|\bdeer\b|moose|\belk\b|\bfox\b|\bwolf|\bbat\b|\bbee\b|alpaca|llama|sheep"
+            r"|\bgoat|\bpig\b|horse|pony|cattle|\bcow\b|alligator|crocodile|tortoise|turtle"
+            r"|kitten|pupp|\bcat cam|\bdog\b|guide dogs|\bbird|wildlife|\bzoo\b|aquarium|reef"
+            r"|coral|salmon|hummingbird|feeder|\bnest(s|ing)?\b|aviary|sanctuary|\bgull|\bswan"
+            r"|\bduck\b|goose|flamingo|parrot|condor|vulture|badger|hedgehog|squirrel|raccoon"
+            r"|toucan|rhino|\bmares?\b|foal|musk ox|guillemot|roller|canine|safari|africam"
+            r"|\bmara\b|kalahari|savanna|pasture|fishing hole)"
+            r"|動物園|水族館|野鳥|野生動物|コウノトリ"
+        ),
     ),
-    ("Weather", r"\b(weather|northern lights|aurora)\b" r"|天気|気象"),
+    ("Weather", r"\b(weather|northern lights|aurora)\b|天気|気象"),
     (
         "Religion",
-        r"\b(church(es)?|mosque|temple|chapel|basilica|cathedral|minster|abbey|shrine"
-        r"|synagogue)\b"
-        r"|神社|神宮|大社|寺院|参道|教会|大仏",
+        (
+            r"\b(church(es)?|mosque|temple|chapel|basilica|cathedral|minster|abbey|shrine"
+            r"|synagogue)\b"
+            r"|神社|神宮|大社|寺院|参道|教会|大仏"
+        ),
     ),
     (
         "Music",
@@ -151,90 +155,110 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
     ),
     (
         "Sports",
-        r"\b(sailing club|\bgolf\b|gliding|\bregatta|stadium|\btennis|football|cricket"
-        # Swedish/German/Dutch write it as one word, which \bgolf\b cannot match; the
-        # compounds are spelled out because a bare \bgolf prefix would eat Golfo di Napoli
-        r"|\bgolf(klubb|club|platz|baan|bana|park))"
-        r"|競技場|スタジアム|ゴルフ場|野球場",
+        (
+            r"\b(sailing club|\bgolf\b|gliding|\bregatta|stadium|\btennis|football|cricket"
+            # Swedish/German/Dutch write it as one word, which \bgolf\b cannot match; the
+            # compounds are spelled out because a bare \bgolf prefix would eat Golfo di Napoli
+            r"|\bgolf(klubb|club|platz|baan|bana|park))"
+            r"|競技場|スタジアム|ゴルフ場|野球場"
+        ),
     ),
     ("Space", r"\b(observatory|\biss\b|telescope|starry|space station|cosmodrome)"),
-    ("Airports", r"\b(airport|airfield|runway|aerodrome)\b" r"|空港|飛行場"),
+    ("Airports", r"\b(airport|airfield|runway|aerodrome)\b|空港|飛行場"),
     (
         "Trains & Railways",
-        r"\b(railway|railroad|\btrain|locomotive|\brail\b)"
-        # 道の駅 is a roadside REST STOP, not a station — the Traffic rule claims it.
-        r"|(?<!道の)駅|鉄道|新幹線|電車|踏切",
+        (
+            r"\b(railway|railroad|\btrain|locomotive|\brail\b)"
+            # 道の駅 is a roadside REST STOP, not a station — the Traffic rule claims it.
+            r"|(?<!道の)駅|鉄道|新幹線|電車|踏切"
+        ),
     ),
     (
         "Ports & Ships",
-        r"\b(harbou?r|marina|\bpier\b|wharf|\bquay|lifeboat|\byacht|\bdocks?\b|seaport"
-        r"|\bport\b|\bferry\b|shipping|\bhafen\b)"
-        r"|漁港|港湾|埠頭|マリーナ|フェリー",
+        (
+            r"\b(harbou?r|marina|\bpier\b|wharf|\bquay|lifeboat|\byacht|\bdocks?\b|seaport"
+            r"|\bport\b|\bferry\b|shipping|\bhafen\b)"
+            r"|漁港|港湾|埠頭|マリーナ|フェリー"
+        ),
     ),
     ("Bars & Nightlife", r"\b(\bpub\b|tavern|nightclub|\bbar\b|brewery|cocktail)"),
     (
         "Mountains",
-        r"\b(\bski\b|\balps\b|alpine|glacier|volcano|\bpiste|\bsummit|\bmount\b|mountain"
-        r"|\bpeak\b|dolomite|\bdome\b|\bbutte\b|\bmesa\b|\bgorge\b|narciarsk|montagn[ae]\b"
-        r"|bergbahn|gondelbahn|seilbahn|bergstation)"
-        r"|スキー場|ゲレンデ|山頂|富士山|登山",
+        (
+            r"\b(\bski\b|\balps\b|alpine|glacier|volcano|\bpiste|\bsummit|\bmount\b|mountain"
+            r"|\bpeak\b|dolomite|\bdome\b|\bbutte\b|\bmesa\b|\bgorge\b|narciarsk|montagn[ae]\b"
+            r"|bergbahn|gondelbahn|seilbahn|bergstation)"
+            r"|スキー場|ゲレンデ|山頂|富士山|登山"
+        ),
     ),
-    ("Education", r"\b(universit|college|campus|schule)" r"|大学|学校|キャンパス"),
-    ("Hotels", r"\b(hotell?|gasthof|guest ?house|pension)\b" r"|旅館|温泉宿"),
+    ("Education", r"\b(universit|college|campus|schule)|大学|学校|キャンパス"),
+    ("Hotels", r"\b(hotell?|gasthof|guest ?house|pension)\b|旅館|温泉宿"),
     (
         "Landmarks",
-        r"\b(\bbridge|castle|\btowers?\b|\bfort\b|fortress|monument|palace|lighthouse|statue"
-        r"|memorial|\barch\b|citadel|obelisk|granar|windmill)"
-        # bridge in the languages our sources actually use. NOT `ponte`: Ponte di Legno
-        # is a town, and a Landmarks match here would pre-empt the later Cities rule
-        r"|puente|brücke"
-        r"|お城|城跡|天守|タワー|灯台|展望台",
+        (
+            r"\b(\bbridge|castle|\btowers?\b|\bfort\b|fortress|monument|palace|lighthouse|statue"
+            r"|memorial|\barch\b|citadel|obelisk|granar|windmill)"
+            # bridge in the languages our sources actually use. NOT `ponte`: Ponte di Legno
+            # is a town, and a Landmarks match here would pre-empt the later Cities rule
+            r"|puente|brücke"
+            r"|お城|城跡|天守|タワー|灯台|展望台"
+        ),
     ),
     (
         "Beaches",
-        r"\b(beach|\bsurf|seafront|esplanade|\bplaya|\bpraia|\bsands?\b|\bshore|boardwalk"
-        # plaża/plaža only: bare "plaza" is a town square and belongs to Cities
-        # "the strand" is a common English street/place name (London); the German
-        # beach word never takes a definite article in front of it
-        r"|promenade|\bcove\b|\bdunes?\b|\bcoast|(?<!the )\bstrand|spiaggia|\bplage\b"
-        r"|pla[żž])"
-        r"|海岸|砂浜|ビーチ|海水浴場",
+        (
+            r"\b(beach|\bsurf|seafront|esplanade|\bplaya|\bpraia|\bsands?\b|\bshore|boardwalk"
+            # plaża/plaža only: bare "plaza" is a town square and belongs to Cities
+            # "the strand" is a common English street/place name (London); the German
+            # beach word never takes a definite article in front of it
+            r"|promenade|\bcove\b|\bdunes?\b|\bcoast|(?<!the )\bstrand|spiaggia|\bplage\b"
+            r"|pla[żž])"
+            r"|海岸|砂浜|ビーチ|海水浴場"
+        ),
     ),
     (
         "Water & Waterways",
-        r"\b(\blake|\briver|\bfalls\b|waterfall|\bcanal|lagoon|\bpond|\bloch\b|reservoir"
-        r"|estuary|\bcreek|\bweir\b|fjord|\bdam\b|rapids|\bbay\b|\bcaverns?\b|\bcaves?\b"
-        r"|\bfirth\b|\bsound\b|jezior|jezero)"
-        r"|河川|水害|水位|映像監視局|用水|ダム|運河|合流|支流"
-        # 川/湖/滝 alone only where they read as the water itself: a monitoring word
-        # (or 畔, lakeside) follows, or the name simply ends (西除川, 【神田川】, 琵琶湖,
-        # 白糸の滝) — unlike 旭川市/川崎/湖西市/滝沢市, which run on into more name.
-        r"|[川湖滝](?:(?=映像|カメラ|ライブ|合流|上流|下流|水位|畔)"
-        r"|(?![ぁ-んァ-ヶ一-龥A-Za-z0-9]))",
+        (
+            r"\b(\blake|\briver|\bfalls\b|waterfall|\bcanal|lagoon|\bpond|\bloch\b|reservoir"
+            r"|estuary|\bcreek|\bweir\b|fjord|\bdam\b|rapids|\bbay\b|\bcaverns?\b|\bcaves?\b"
+            r"|\bfirth\b|\bsound\b|jezior|jezero)"
+            r"|河川|水害|水位|映像監視局|用水|ダム|運河|合流|支流"
+            # 川/湖/滝 alone only where they read as the water itself: a monitoring word
+            # (or 畔, lakeside) follows, or the name simply ends (西除川, 【神田川】, 琵琶湖,
+            # 白糸の滝) — unlike 旭川市/川崎/湖西市/滝沢市, which run on into more name.
+            r"|[川湖滝](?:(?=映像|カメラ|ライブ|合流|上流|下流|水位|畔)"
+            r"|(?![ぁ-んァ-ヶ一-龥A-Za-z0-9]))"
+        ),
     ),
     (
         "Traffic",
-        r"\b(\btraffic|highway|motorway|interstate|freeway|roundabout|expressway"
-        r"|\bhwy\b|I-\d{1,3}\b)"
-        r"|国道|県道|道道|市道|道の駅|交差点|高速|自動車道|バイパス|街道|渋滞|道路|トンネル"
-        r"|ラウンドアバウト|インターチェンジ",
+        (
+            r"\b(\btraffic|highway|motorway|interstate|freeway|roundabout|expressway"
+            r"|\bhwy\b|I-\d{1,3}\b)"
+            r"|国道|県道|道道|市道|道の駅|交差点|高速|自動車道|バイパス|街道|渋滞|道路|トンネル"
+            r"|ラウンドアバウト|インターチェンジ"
+        ),
     ),
     (
         "Nature & Parks",
-        r"\b(national park|\bpark\b|nature reserve|\bgarden|\bforest|\bmeadow|\bvalley"
-        r"|\bcanyon|botanic|\bmoor\b|\bheath\b|\bwoods?\b|wetland)"
-        r"|公園|森林|渓谷|湿原",
+        (
+            r"\b(national park|\bpark\b|nature reserve|\bgarden|\bforest|\bmeadow|\bvalley"
+            r"|\bcanyon|botanic|\bmoor\b|\bheath\b|\bwoods?\b|wetland)"
+            r"|公園|森林|渓谷|湿原"
+        ),
     ),
     (
         "Cities",
-        r"\b(skyline|cityscape|\bsquare\b|downtown|\bplaza|boulevard|\bcity\b|old town"
-        r"|piazza|\bstreet\b|panorama|\btown\b|village|\bcentre\b|\bcenter\b|centar"
-        r"|altstadt|innenstadt|\brynek\b)"
-        r"|市街地|商店街|繁華街|歩行者天国",
+        (
+            r"\b(skyline|cityscape|\bsquare\b|downtown|\bplaza|boulevard|\bcity\b|old town"
+            r"|piazza|\bstreet\b|panorama|\btown\b|village|\bcentre\b|\bcenter\b|centar"
+            r"|altstadt|innenstadt|\brynek\b)"
+            r"|市街地|商店街|繁華街|歩行者天国"
+        ),
     ),
 )
 _TITLE_COMPILED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
-    (cat, re.compile(pat, re.I)) for cat, pat in _TITLE_RULES
+    (cat, re.compile(pat, re.IGNORECASE)) for cat, pat in _TITLE_RULES
 )
 # A name carrying a "City, Region, Country"-style location is a place view: the " — geo"
 # suffix with_location appends, a trailing ", State"/", Country", or " - Country" at the end.
@@ -246,7 +270,7 @@ def category_from_title(title: str) -> str | None:
     Keyword rules first (first match wins), then a geo-suffix fallback (a named place with
     no content word is a location view -> "Travel & Events"). None = nothing matched, so
     the cam stays "Other". Never call this when the source DID give a category."""
-    head = title.split(" — ")[0]
+    head = title.split(" — ", maxsplit=1)[0]
     for category, rx in _TITLE_COMPILED:
         if rx.search(head):
             return category
@@ -268,7 +292,7 @@ ALL_CATEGORIES: tuple[str, ...] = tuple(
 
 # Fail fast at import if a title rule names a category outside the taxonomy (a typo guard,
 # mirroring the registry's extractor-name validation at startup).
-if not TITLE_FALLBACK_CATEGORIES <= set(ALL_CATEGORIES):
+if not set(ALL_CATEGORIES) >= TITLE_FALLBACK_CATEGORIES:
     raise ValueError(
         f"title rules emit unknown categories: "
         f"{TITLE_FALLBACK_CATEGORIES - set(ALL_CATEGORIES)}"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sys
@@ -15,8 +16,8 @@ import psutil
 from . import config
 from .cache import ResolveCache
 from .catalogue import Hist, build_catalogue, failure_counts, top_counts
-from .extractors.base import Extractor, Resolved
 from .extractors.baltic import BalticResolver
+from .extractors.base import Extractor, Resolved
 from .extractors.direct_hls import DirectHls
 from .extractors.earthcam import EarthcamResolver
 from .extractors.hdontap import HdontapResolver
@@ -87,10 +88,9 @@ def _total_rss() -> int:
     total = p.memory_info().rss
     try:
         for child in p.children(recursive=True):
-            try:
+            # A child can exit between listing and measuring.
+            with contextlib.suppress(psutil.Error):
                 total += child.memory_info().rss
-            except psutil.Error:
-                pass  # child exited between listing and measuring
     except psutil.Error:
         pass
     return total
@@ -185,7 +185,7 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
             "viewsurf",
         ),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
-        (lambda u: _is_ytdlp(u), "ytdlp"),
+        (_is_ytdlp, "ytdlp"),
         (lambda u: ".m3u8" in u or "worldcams.tv/player?url=" in u, "direct"),
     ]
     for _predicate, name in rules:

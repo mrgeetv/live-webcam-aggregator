@@ -11,7 +11,7 @@ from .base import HtmlScraperSource, decode_entities
 _SITEMAP = "https://www.resortcams.com/webcams-sitemap1.xml"
 _LOC = re.compile(r"<loc>(https://www\.resortcams\.com/webcams/[^<]+)</loc>")
 _TITLE = re.compile(r"<title>([^<]*)</title>")
-_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Resort Cams\s*$", re.I)
+_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Resort Cams\s*$", re.IGNORECASE)
 
 
 class ResortCamsSource(HtmlScraperSource[str]):

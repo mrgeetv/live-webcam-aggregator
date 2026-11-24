@@ -7,7 +7,7 @@ from .base import Resolved
 
 
 def unwrap(url: str) -> str:
-    m = re.search(r"[?&]url=(.+)$", url, re.S)
+    m = re.search(r"[?&]url=(.+)$", url, re.DOTALL)
     return unquote(m.group(1)) if m else url
 
 

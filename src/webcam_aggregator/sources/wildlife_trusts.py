@@ -26,20 +26,22 @@ _CATEGORY = "Animals"
 _CARD_MARK = "paragraph--type--featured-cards-custom"
 _CARD_HREF = re.compile(r'<a href="([^"<>]+)"')
 # Tag keyword in a lookahead, tag skipped possessively (why: airportwebcams._TITLE).
-_CARD_TITLE = re.compile(r"<(?=[^<>]*?card__title)[^<>]*+>([^<]+)<", re.I)
+_CARD_TITLE = re.compile(r"<(?=[^<>]*?card__title)[^<>]*+>([^<]+)<", re.IGNORECASE)
 # The trusts page: each trust's own site is its card's schema.org `url` link.
-_TRUST_SITE = re.compile(r'<a href="(https?://[^"<>]+)"[^<>]*itemprop="url"', re.I)
+_TRUST_SITE = re.compile(
+    r'<a href="(https?://[^"<>]+)"[^<>]*itemprop="url"', re.IGNORECASE
+)
 
 # A trust site's sitemap holds thousands of pages; these are the ones named for a cam
 # or for the osprey/peregrine nests the trusts stream. A page is only a place to look:
 # liveness keeps the cams that are live, so a false positive costs a fetch, never a
 # dead playlist entry.
 _LOC = re.compile(r"<loc>\s*(?:<!\[CDATA\[\s*)?([^<\s\]]+)")
-_ROBOTS_SITEMAP = re.compile(r"^sitemap:\s*(\S+)", re.I | re.M)
+_ROBOTS_SITEMAP = re.compile(r"^sitemap:\s*(\S+)", re.IGNORECASE | re.MULTILINE)
 _CAM_PATH = re.compile(
     r"web-?cam|cams?\d*(?=[/_.-]|$)|camera|live-?stream|(?:^|[/_-])live(?=[/_.-]|$)"
     r"|wildlife-windows|watch-wildlife-online|osprey|peregrine",
-    re.I,
+    re.IGNORECASE,
 )
 # ...minus the article, species, event and how-to pages that mention a cam: they
 # embed recordings, or only the trust's channel link in the site chrome.
@@ -47,7 +49,7 @@ _NOT_CAM_PATH = re.compile(
     r"/(?:blogs?|news|stories|events?|whats-on|our-events|species|wildlife-explorer"
     r"|content_block|resources?|support-us|appeals?|donate|shop|product|jobs|cy)/"
     r"|/\d{4}/\d{2}/|camera-trap|trail-?cam|how-to|competition|faqs?\b",
-    re.I,
+    re.IGNORECASE,
 )
 _MAX_SITEMAPS = 40  # per trust: bounds a runaway sitemap index
 _MAX_PAGES = 100  # per trust: bounds a runaway sitemap
@@ -56,36 +58,43 @@ _MAX_PAGES = 100  # per trust: bounds a runaway sitemap
 # every iframe on a multi-cam page, script embeds, and consent placeholders that hold
 # the real URL in data-src-cmplz. `\bsrc` also matches inside `data-src` and
 # `data-litespeed-src`. `[^<>]` keeps a tag match from running past the next tag.
-_TAG = re.compile(r"<(?:iframe|script)\b[^<>]*>", re.I)
+_TAG = re.compile(r"<(?:iframe|script)\b[^<>]*>", re.IGNORECASE)
 _PLAYER_ATTR = re.compile(
     r"""\b(?:src|data-src-cmplz)=["']((?:https?:)?//(?:www\.)?"""
     r"(?:youtube(?:-nocookie)?\.com/embed|camstreamer\.com/embed|camsecure\.[a-z.]+"
     r"""|live\.streamdays\.com)/[^"'\s<>]+)""",
-    re.I,
+    re.IGNORECASE,
 )
-_TAG_TITLE = re.compile(r"""\btitle=["']([^"'<>]+)""", re.I)
-_GENERIC_TITLE = re.compile(r"^(?:youtube( video player)?|video|webcam|iframe)$", re.I)
-_QUOTED_TITLE = re.compile(r'^youtube video\s*["“](.+)["”]$', re.I)  # one embed plugin
+_TAG_TITLE = re.compile(r"""\btitle=["']([^"'<>]+)""", re.IGNORECASE)
+_GENERIC_TITLE = re.compile(
+    r"^(?:youtube( video player)?|video|webcam|iframe)$", re.IGNORECASE
+)
+_QUOTED_TITLE = re.compile(
+    r'^youtube video\s*["“](.+)["”]$', re.IGNORECASE
+)  # one embed plugin
 # A channel's "current live" embed (Scottish Wildlife Trust's ospreys).
 # The query is matched whole and then searched for `channel=`: an optional `…&` span
 # before a required `channel=` re-scans the rest of the URL from every start in it.
 _YT_LIVE_QUERY = re.compile(
     r"youtube(?:-nocookie)?\.com/embed/live_stream\?([^\"'\s<>]*)",
-    re.I,
+    re.IGNORECASE,
 )
-_CHANNEL_PARAM = re.compile(r"(?:^|[?&])channel=([\w-]+)", re.I)
+_CHANNEL_PARAM = re.compile(r"(?:^|[?&])channel=([\w-]+)", re.IGNORECASE)
 # The index links some cams straight at a channel's /streams or /videos tab.
 _YT_CHANNEL_TAB = re.compile(
     r"^(https://www\.youtube\.com/(?:@[\w.-]+|channel/[\w-]+))/(?:streams|videos)/?$"
 )
-_YT_CHANNEL_LIVE = re.compile(r"youtube\.com/(?:channel/[\w-]+|@[\w.-]+)/live$", re.I)
+_YT_CHANNEL_LIVE = re.compile(
+    r"youtube\.com/(?:channel/[\w-]+|@[\w.-]+)/live$", re.IGNORECASE
+)
 _YT_EMBED_URL = re.compile(r"youtube(?:-nocookie)?\.com/embed/[\w-]+")
 _OEMBED = "https://www.youtube.com/oembed?format=json&url="
 _PAGE_TITLE = re.compile(
-    r'<meta property="og:title" content="([^"<>]+)"|<title>([^<]+)</title>', re.I
+    r'<meta property="og:title" content="([^"<>]+)"|<title>([^<]+)</title>',
+    re.IGNORECASE,
 )
 _TITLE_SUFFIX = re.compile(
-    r"(?<!\s)\s*[|–-](?=[^|–-]*(?:Wildlife|Trust))[^|–-]*$", re.I
+    r"(?<!\s)\s*[|–-](?=[^|–-]*(?:Wildlife|Trust))[^|–-]*$", re.IGNORECASE
 )
 
 # Where a target was found, best first. A cam reached from several places takes its
@@ -246,7 +255,8 @@ class WildlifeTrustsSource:
         untitled = titles.count("")
         n = 0
         out: list[tuple[int, Candidate]] = []
-        for target, title in zip(targets, titles, strict=True):
+        for target, found in zip(targets, titles, strict=True):
+            title = found
             if not title:
                 n += 1
                 title = f"{page_title} {n}" if untitled > 1 else page_title

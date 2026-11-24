@@ -27,9 +27,9 @@ _LD_JSON = re.compile(
 )
 
 # Every cam page's VideoObject description ends with a sentence naming the cam's
-# category: "…(提供: <channel>)。<category>のライブカメラを地図から探せる…". That is the
-# only per-cam category on the page, and unlike the /spots/<slug> listings it covers
-# the international cams too.
+# category, in the shape …(提供: <channel>)。<category>のライブカメラを地図から探せる….
+# That is the only per-cam category on the page, and unlike the /spots/<slug>
+# listings it covers the international cams too.
 _CATEGORY = re.compile(r"。([^」。]{1,8})のライブカメラ")
 
 # The site's categories -> categories._MAP keys (mapped to the unified taxonomy at

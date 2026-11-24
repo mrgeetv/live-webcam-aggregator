@@ -42,17 +42,17 @@ _VIDEO_SRC = re.compile(r'"video_src":"((?:[^"\\]|\\.)*+)"')
 _A, _L = string.ascii_uppercase, string.ascii_lowercase
 _ROT13 = str.maketrans(_A + _L, _A[13:] + _A[:13] + _L[13:] + _L[:13])
 
-_H1 = re.compile(r'<h1 id="cam-description-toggler">([^<]*)', re.I)
+_H1 = re.compile(r'<h1 id="cam-description-toggler">([^<]*)', re.IGNORECASE)
 # Trailing listing badges, not part of the cam's name. There are three badge words,
 # so a chain is at most three long; the cap also keeps each match attempt short,
 # since every gap in a chain is a place one can start.
 _BADGE = re.compile(
-    r"(?<!\s)(?:\s*(?:[-–]\s*)?(?:nowość|nowosc|kup dostęp)){1,3}\s*$", re.I
+    r"(?<!\s)(?:\s*(?:[-–]\s*)?(?:nowość|nowosc|kup dostęp)){1,3}\s*$", re.IGNORECASE
 )
 # Compilation feeds that rotate through other cams' streams (one shared tv_cam
 # feed per playlist) — dups of cams we already carry, and the PREMIUM ones are
 # paywalled besides.
-_SKIP_NAME = re.compile(r"playlist|premium", re.I)
+_SKIP_NAME = re.compile(r"playlist|premium", re.IGNORECASE)
 
 
 def _cam_page(url: str) -> str | None:

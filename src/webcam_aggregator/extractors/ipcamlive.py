@@ -25,7 +25,9 @@ _STREAMID = re.compile(r'var\s+streamid\s*=\s*["\']([^"\']+)["\']')
 # would route here and surface as resolve-failed rather than no-extractor. Accepted:
 # candidates only arrive from scraped embeds, and a denylist of the site's own pages
 # would be guesswork that rots.
-_ALIAS_URL = re.compile(r"^https?://(?:www\.)?ipcamlive\.com/([A-Za-z0-9_-]+)/?$", re.I)
+_ALIAS_URL = re.compile(
+    r"^https?://(?:www\.)?ipcamlive\.com/([A-Za-z0-9_-]+)/?$", re.IGNORECASE
+)
 _PLAYER = "https://g0.ipcamlive.com/player/player.php?alias="
 
 

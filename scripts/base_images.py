@@ -13,6 +13,7 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import NamedTuple
 
 LABEL = "io.github.mrgeetv.base-images"
@@ -112,8 +113,7 @@ def _inspect(ref: str, field: str) -> dict[str, object]:
 
 def _pinned_bases(dockerfile_path: str) -> str:
     """LABEL's value: `<image>@<digest>` per base, space-separated, Dockerfile order."""
-    with open(dockerfile_path, encoding="utf-8") as f:
-        images = base_images(f.read())
+    images = base_images(Path(dockerfile_path).read_text(encoding="utf-8"))
     if not images:
         raise ValueError(f"no base images found in {dockerfile_path}")
     return " ".join(
@@ -125,7 +125,9 @@ def _published_labels(image: str) -> dict[str, str]:
     data = _inspect(image, "Image")
     # A multi-platform image maps platform -> config; a single-platform one is the config.
     config = data.get("linux/amd64", data)
-    assert isinstance(config, dict)
+    if not isinstance(config, dict):
+        msg = f"unexpected image config for {image}: {type(config).__name__}"
+        raise TypeError(msg)
     return config.get("config", {}).get("Labels") or {}
 
 
@@ -150,8 +152,7 @@ def main(argv: list[str]) -> int:
     """
     match argv:
         case ["images", path]:
-            with open(path, encoding="utf-8") as f:
-                print("\n".join(base_images(f.read())))
+            print("\n".join(base_images(Path(path).read_text(encoding="utf-8"))))
         case ["newer-tags", current]:
             print("\n".join(newer_tags(current, sys.stdin.read().split())))
         case ["label", path]:

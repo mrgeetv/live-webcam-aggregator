@@ -32,7 +32,7 @@ _OCCASIONAL = "Live streamers with regular broadcasts"
 # possessively: with `[^<>]*KEY[^<>]*`, every repeat of KEY in one unclosed tag
 # rescans the rest of it.
 _TITLE = re.compile(r'<(?=[^<>]*?rel="bookmark")[^<>]*+>([^<]+)')
-_TITLE_TAIL = re.compile(r"(?<!\s)\s*Webcams?\s*$", re.I)
+_TITLE_TAIL = re.compile(r"(?<!\s)\s*Webcams?\s*$", re.IGNORECASE)
 
 
 class AirportWebcamsSource(HtmlScraperSource[str]):

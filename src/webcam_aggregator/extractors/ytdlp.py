@@ -25,7 +25,7 @@ _TIMEOUT = 60
 # resolve-failure aggregate, so both go: with the id left in, one failure mode
 # across every cam reads as a handful of single-cam buckets. The serve-path warning
 # names the cam through its target URL.
-_ERROR_SUBJECT = re.compile(r"^(ERROR: \[[\w:]+\]) [^\s:]+: ", re.M)
+_ERROR_SUBJECT = re.compile(r"^(ERROR: \[[\w:]+\]) [^\s:]+: ", re.MULTILINE)
 _REPORT_PLEA = re.compile(r";? please report this issue on [^\n]*")
 
 

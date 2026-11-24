@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.cookiejar import DefaultCookiePolicy
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Literal, Protocol
 from urllib.parse import urlencode, urljoin, urlsplit
 
 import requests
@@ -56,13 +56,10 @@ def resolve_scrape_workers() -> int:
 
 SCRAPE_WORKERS = resolve_scrape_workers()
 
-_T = TypeVar("_T")
-_R = TypeVar("_R")
 
-
-def thread_map(
-    fn: Callable[[_T], _R], items: list[_T], *, workers: int = SCRAPE_WORKERS
-) -> list[_R]:
+def thread_map[T, R](
+    fn: Callable[[T], R], items: list[T], *, workers: int = SCRAPE_WORKERS
+) -> list[R]:
     """Map fn over items concurrently, preserving order. Every item is submitted at
     once, so one slow call never holds the rest back — right for small results. A map
     whose results are page bodies goes through `thread_imap` instead, or the whole
@@ -73,9 +70,9 @@ def thread_map(
         return list(ex.map(fn, items))
 
 
-def thread_imap(
-    fn: Callable[[_T], _R], items: list[_T], *, workers: int = SCRAPE_WORKERS
-) -> Iterator[_R]:
+def thread_imap[T, R](
+    fn: Callable[[T], R], items: list[T], *, workers: int = SCRAPE_WORKERS
+) -> Iterator[R]:
     """Map fn over items concurrently, yielding results in input order as the caller
     takes them. About 4 × workers calls are running or waiting to be taken, so a
     caller parsing page bodies holds a bounded number of them rather than every page

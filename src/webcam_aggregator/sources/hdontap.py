@@ -15,13 +15,14 @@ _SITEMAP = "https://hdontap.com/sitemap.xml"
 # The sitemap's locs carry either scheme; the page URL is also the candidate target,
 # so it is rebuilt as https:// rather than left to ride the site's 301.
 _LOC = re.compile(r"<loc>https?://hdontap\.com/(stream/(\d+)/[^<]*)</loc>")
-_TITLE = re.compile(r"<title>([^<]*)</title>", re.I)
+_TITLE = re.compile(r"<title>([^<]*)</title>", re.IGNORECASE)
 # "Carmel-By-The-Sea Live Webcam - HDOnTap" -> "Carmel-By-The-Sea"; the boilerplate
 # tail is stripped once, anchored at the end, so a mid-name "Cam" ("PA Peregrine
 # Falcon Cam Live Webcam") survives.
-_SUFFIX = re.compile(r"(?<!\s)\s*[-|]\s*HDOnTap\s*$", re.I)
+_SUFFIX = re.compile(r"(?<!\s)\s*[-|]\s*HDOnTap\s*$", re.IGNORECASE)
 _BOILER = re.compile(
-    r"(?<!\s)\s*\b(?:live\s+)?(?:streaming\s+|beach\s+)?(?:web\s?cam|cam)\s*$", re.I
+    r"(?<!\s)\s*\b(?:live\s+)?(?:streaming\s+|beach\s+)?(?:web\s?cam|cam)\s*$",
+    re.IGNORECASE,
 )
 
 

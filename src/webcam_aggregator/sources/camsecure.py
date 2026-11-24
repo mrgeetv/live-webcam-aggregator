@@ -36,20 +36,21 @@ _LOC = re.compile(r"<loc>([^<]+)</loc>")
 # token/Referer; the player PAGE serves a decoy without `Referer: camsecure.co.uk`, so the
 # hosts are in `_REFERER_HOSTS`).
 _PLAYER_IFRAME = re.compile(
-    r'<iframe[^<>]+src="(https?://camsecure\.[a-z.]+/httpswebcam/[^"]+)"', re.I
+    r'<iframe[^<>]+src="(https?://camsecure\.[a-z.]+/httpswebcam/[^"]+)"', re.IGNORECASE
 )
 # Each src is read whole and then tested for `.m3u8`: a body before a required
 # `.m3u8` retries every `.m3u8` in an unclosed value (see sources.base._URL_RUN).
-_SOURCE_SRC = re.compile(r'<source[^<>]+src="([^"]+)"', re.I)
-_TITLE = re.compile(r"<title>([^<]+)</title>", re.I)
+_SOURCE_SRC = re.compile(r'<source[^<>]+src="([^"]+)"', re.IGNORECASE)
+_TITLE = re.compile(r"<title>([^<]+)</title>", re.IGNORECASE)
 # "Brixham Harbour Live Streaming Webcam" -> "Brixham Harbour"; titles that LEAD with
 # boilerplate ("Live Coastal Shipping Webcam from Coastwatch Redcar") fall back to the
 # "from <place>" tail, then to the URL filename.
 _BOILER = re.compile(
-    r"(?<!\s)\s*\b(?:live\s+)?(?:streaming\s+)?web\s?cam\b.*$", re.I | re.M
+    r"(?<!\s)\s*\b(?:live\s+)?(?:streaming\s+)?web\s?cam\b.*$",
+    re.IGNORECASE | re.MULTILINE,
 )
-_LEADING_BOILER = re.compile(r"^(?:live|streaming|coastal)\b", re.I)
-_FROM = re.compile(r"\bfrom\s+(.+)", re.I)
+_LEADING_BOILER = re.compile(r"^(?:live|streaming|coastal)\b", re.IGNORECASE)
+_FROM = re.compile(r"\bfrom\s+(.+)", re.IGNORECASE)
 
 
 def player_iframe(html: str) -> str | None:
@@ -66,7 +67,7 @@ def hls_from_player(html: str, player_url: str) -> str | None:
 
 def _name_from_url(url: str) -> str:
     slug = unquote(url.rstrip("/").rsplit("/", 1)[-1])
-    slug = re.sub(r"\.html?$", "", slug, flags=re.I)
+    slug = re.sub(r"\.html?$", "", slug, flags=re.IGNORECASE)
     slug = re.sub(r"(?i)(?<![_\- ])[_\- ]*(?:large|webcam|cam)\d*$", "", slug)
     slug = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", slug)  # camelCase -> spaces
     return re.sub(r"[_\-\s]+", " ", slug).strip().title()

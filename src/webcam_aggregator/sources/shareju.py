@@ -22,7 +22,7 @@ _LD_JSON = re.compile(
 # Every name is wrapped in the same boilerplate:
 # 【ライブカメラ映像再生】<cam name>【Share-Ju】公開カメラ
 _NAME_PREFIX = re.compile(r"^【[^】]*】")
-_NAME_SUFFIX = re.compile(r"【Share-Ju】.*$", re.M)
+_NAME_SUFFIX = re.compile(r"【Share-Ju】.*$", re.MULTILINE)
 # The cam's tags sit in the description as このカメラに付されているタグ（tag tag …）.
 # The tags run to the first ）; the span also stops at the next tag block, so an
 # unclosed one isn't rescanned from every block after it.
