@@ -44,7 +44,50 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
-  # Docker base images - Weekly on Friday
+  # pre-commit hooks - Weekly on Friday: each hook's rev, and the additional_dependencies
+  # of python hooks (basedpyright's stubs, vulture). hadolint's pinned entry image is
+  # not touched: check-hadolint-pin fails that PR until the tag is moved to match.
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "08:00"
+      timezone: "Etc/UTC"
+    groups:
+      pre-commit-hooks:
+        patterns:
+          - "*"
+    # chore: lint tooling ships nothing in the image (see the actions block).
+    commit-message:
+      prefix: "chore(deps)"
+
+  # semantic-release and its plugins - Weekly on Friday. release.yml reads the
+  # versions from this package.json; nothing installs it. Majors are held: they track
+  # the Node version semantic-release-action runs on, and CI never runs a release, so
+  # a major that needs a newer Node would merge green and fail the next release.
+  - package-ecosystem: "npm"
+    directory: "/.github/release"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "08:00"
+      timezone: "Etc/UTC"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      release-tooling:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Docker base images - Weekly on Friday. Only deno is visible here: the DHI python
+  # images sit behind ARGs (compose swaps them for local builds), so their patches
+  # are picked up by .github/workflows/base-images.yml and their version bumps are
+  # manual. A deno major is held back: it can break yt-dlp-ejs's n-challenge solver,
+  # which the offline test suite can't see.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -52,5 +95,8 @@ updates:
       day: "friday"
       time: "08:00"
       timezone: "Etc/UTC"
+    ignore:
+      - dependency-name: "denoland/deno"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "fix(deps)"

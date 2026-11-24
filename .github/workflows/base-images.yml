@@ -1,0 +1,163 @@
+name: Base Image Refresh
+
+# DHI republishes patched images under the same tag, and nothing rebuilds ours when
+# it does. Daily: rebuild the latest release when its published image was built on
+# other base digests (or from another commit), and keep one issue open while dhi.io
+# carries a newer python/alpine tag than the Dockerfile uses (Dependabot can't see
+# those bases behind their ARGs).
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+# Not shared with release.yml: a queued run cancels the pending one in its group, so
+# sharing could drop a release's build. A refresh that races a release instead
+# pushes the older release's code, and the next run's revision check rebuilds it.
+concurrency:
+  group: base-images
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash # pipefail: a failed registry call must fail the step
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  ISSUE_TITLE: Newer DHI base image tags available
+
+jobs:
+  check:
+    name: Check Base Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      stale: ${{ steps.compare.outputs.stale }}
+      ref: ${{ steps.release.outputs.tag }}
+      tags: ${{ steps.release.outputs.tags }}
+    steps:
+      - name: Find the latest release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          version=${tag#v}
+          major=${version%%.*}
+          minor=${version#*.}
+          minor=${minor%%.*}
+          {
+            echo "tag=$tag"
+            echo "tags<<EOF"
+            echo "$IMAGE:latest"
+            echo "$IMAGE:v$major"
+            echo "$IMAGE:v$major.$minor"
+            echo "$IMAGE:$tag"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the release
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Log in to Docker Hub (for DHI access)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compare with the published image
+        id: compare
+        env:
+          COMMIT: ${{ steps.checkout.outputs.commit }}
+        run: |
+          reason=$(python3 scripts/base_images.py stale Dockerfile "$IMAGE:latest" "$COMMIT")
+          if [[ -z "$reason" ]]; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "Up to date: same release, same base digests." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            printf 'Rebuilding: %s\n' "$reason" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+  rebuild:
+    name: Rebuild on Patched Bases
+    needs: check
+    if: needs.check.outputs.stale == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      ref: ${{ needs.check.outputs.ref }}
+      tags: ${{ needs.check.outputs.tags }}
+    secrets: inherit
+
+  # Separate from the rebuild, so a registry that won't list tags fails this job
+  # without holding back a security rebuild. Reads main's Dockerfile: that is the
+  # one a bump edits.
+  newer-tags:
+    name: Flag Newer Python/Alpine Tags
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to Docker Hub (for DHI access)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          images=$(python3 scripts/base_images.py images Dockerfile)
+          report=""
+          while read -r image; do
+            [[ "$image" == dhi.io/* ]] || continue
+            tags=$(skopeo list-tags --authfile "$HOME/.docker/config.json" "docker://${image%:*}" | jq -r '.Tags[]')
+            newer=$(python3 scripts/base_images.py newer-tags "${image##*:}" <<< "$tags")
+            if [[ -n "$newer" ]]; then
+              mapfile -t newer_list <<< "$newer"
+              report+="- \`$image\` → $(printf "\`%s\` " "${newer_list[@]}")"$'\n'
+            fi
+          done <<< "$images"
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title \"$ISSUE_TITLE\"" --json number,title \
+            --jq "map(select(.title == \"$ISSUE_TITLE\")) | .[0].number // empty")
+          if [[ -z "$report" ]]; then
+            if [[ -n "$issue" ]]; then
+              gh issue close "$issue" --repo "$GITHUB_REPOSITORY" \
+                --comment "The Dockerfile is on the newest python/alpine tags dhi.io carries."
+            fi
+            exit 0
+          fi
+          body="dhi.io carries newer tags than the Dockerfile uses:
+
+          ${report}
+          Bump them by hand, following *Python Version Synchronization* in \`AGENTS.md\`. This issue closes itself once nothing newer is left."
+          if [[ -n "$issue" ]]; then
+            gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body "$body"
+          fi
