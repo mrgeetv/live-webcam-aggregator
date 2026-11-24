@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.12](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.11...v2.14.12) (2026-11-24)
+
+### Bug Fixes
+
+* **scraper:** bump yt-dlp past youtube's n-challenge solver break ([#189](https://github.com/mrgeetv/live-webcam-aggregator/issues/189)) ([2f4ba44](https://github.com/mrgeetv/live-webcam-aggregator/commit/2f4ba44681af1466e4f4024fcf8ce4f2fffd2505)), closes [#184](https://github.com/mrgeetv/live-webcam-aggregator/issues/184)
+
 ## [2.14.11](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.10...v2.14.11) (2026-11-24)
 
 ### Bug Fixes
