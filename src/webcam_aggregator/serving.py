@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+import time
 from collections.abc import Callable, Mapping
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit
 
 from .cache import ResolveCache
 from .models import CatalogueEntry
@@ -12,6 +14,71 @@ from .signing import sign, verify
 log = logging.getLogger("webcam-aggregator.serving")
 
 _HLS_CT = "application/vnd.apple.mpegurl"
+
+
+class RepeatLimiter:
+    """Admits a serve-path log line once per `window` seconds per key. The serve
+    path logs per player request, and a failing cam repeats itself: an IP-bound 403
+    hits every segment, every few seconds, for every viewer, and a restart turns
+    every URL a player holds into a bad signature.
+
+    Keys can carry an id taken from the request path, which a client can make up, so
+    past `cap` keys the expired ones go, and if that isn't enough, all of them."""
+
+    _clock: Callable[[], float]
+    _window: float
+    _cap: int
+    _seen: dict[tuple[str, ...], tuple[float, int]]  # key -> (logged at, suppressed)
+    _lock: threading.Lock
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        window: float = 60.0,
+        cap: int = 4096,
+    ) -> None:
+        self._clock = clock
+        self._window = window
+        self._cap = cap
+        self._seen = {}
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        return len(self._seen)
+
+    def admit(self, key: tuple[str, ...]) -> int | None:
+        """None to suppress this line, else how many repeats of it were suppressed
+        since it last logged."""
+        now = self._clock()
+        with self._lock:
+            seen = self._seen.get(key)
+            if seen is not None and now - seen[0] < self._window:
+                self._seen[key] = (seen[0], seen[1] + 1)
+                return None
+            self._seen[key] = (now, 0)
+            if len(self._seen) > self._cap:
+                self._seen = {
+                    k: v for k, v in self._seen.items() if now - v[0] < self._window
+                }
+                if len(self._seen) > self._cap:
+                    self._seen = {key: (now, 0)}
+            return 0 if seen is None else seen[1]
+
+
+repeats = RepeatLimiter()
+
+
+def _log(level: int, entry_id: str, reason: str, msg: str, *args: object) -> None:
+    """Log a serve-path line unless the same line for the same stream and reason
+    logged within the last minute (`RepeatLimiter`); the next one that logs says
+    how many it stood for."""
+    suppressed = repeats.admit((msg, entry_id, reason))
+    if suppressed is None:
+        return
+    if suppressed:
+        msg += " (+%d repeat%s suppressed)"
+        args = (*args, suppressed, "" if suppressed == 1 else "s")
+    log.log(level, msg, *args)
 
 
 def is_playable_manifest(text: str | None) -> bool:
@@ -49,20 +116,64 @@ def first_variant(master: str, url: str) -> str | None:
     return None
 
 
+# Query params that name a cam rather than authorise a fetch, each kept only on the
+# domain where it does (elsewhere a `uid=` could be a CDN session). For these targets
+# the query IS the cam's identity, so a line without it can't say which cam failed.
+_ID_PARAMS = {
+    "v": "youtube.com",
+    "cam": "feratel.com",  # webtv.feratel.com/webtv/?cam=<id>
+    "alias": "ipcamlive.com",  # player.php?alias=<alias>
+    "uid": "wetmet.net",  # widgets/stream/frame.php?uid=<id>
+    "uuid": "joada.net",  # viewsurf's embeded.html?uuid=<id>
+}
+
+
 def loggable(url: str) -> str:
-    """An upstream URL trimmed to scheme://host/path for logging.
+    """An upstream URL trimmed for logging to scheme://host/path, plus any query
+    params that only identify the cam (`_ID_PARAMS`).
 
     Resolved CDN URLs carry live session credentials in the query string —
-    skyline's `?a=<token>`, baltic's session URL, and with PROXY_YOUTUBE on a
-    googlevideo URL with its ~6h playback token. These warnings fire at the INFO
-    default and land in a log kept for weeks, so the query goes.
+    skyline's `?a=<token>`, baltic's session URL, a beachcam target's
+    `wmsAuthSign` — and googlevideo carries its ~6h playback token in the PATH
+    (`_googlevideo_path`). These warnings fire at the INFO default and land in a
+    log kept for weeks, so the credentials go, and so does any userinfo.
 
     At DEBUG the full URL is kept: when you are actually debugging one stream, the
     token is the point, and DEBUG is opt-in and short-lived."""
     if log.isEnabledFor(logging.DEBUG):
         return url
     parts = urlsplit(url)
-    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+    host = parts.netloc.rpartition("@")[2]
+    name = parts.hostname or ""
+    path = parts.path
+    if name.endswith(".googlevideo.com"):
+        path = _googlevideo_path(path)
+    ids = [
+        (k, v)
+        for k, v in parse_qsl(parts.query)
+        if k in _ID_PARAMS
+        and (name == _ID_PARAMS[k] or name.endswith("." + _ID_PARAMS[k]))
+    ]
+    query = f"?{urlencode(ids)}" if ids else ""
+    return f"{parts.scheme}://{host}{path}{query}"
+
+
+def _googlevideo_path(path: str) -> str:
+    """A googlevideo path cut to its route and video id. After the route the path
+    is key/value pairs carrying the playback credentials (`ip/<our egress IP>`,
+    `sig/…`), so of those only `id/<video>.<n>` is kept, whatever their order. A
+    route other than a manifest's or `videoplayback` keeps nothing but the id."""
+    segs = path.split("/")
+    if segs[1:3] == ["api", "manifest"]:
+        kept = segs[:4]  # /api/manifest/<kind>
+    elif segs[1:2] == ["videoplayback"]:
+        kept = segs[:2]
+    else:
+        kept = [""]
+    if "id" in segs[len(kept) :]:
+        i = segs.index("id", len(kept))
+        kept += segs[i : i + 2]
+    return "/".join(kept) or "/"
 
 
 _NONCOMMENT = re.compile(r"^(?!#)(\S+)\s*$", re.M)
@@ -356,14 +467,20 @@ def serve_stream(
     *,
     catalogue: Mapping[str, CatalogueEntry],
     cache: ResolveCache,
-    fetch: Callable[[str], str | None],
+    fetch: Callable[[str], tuple[str | None, str]],
     base_url: str,
     proxy_youtube: bool = False,
 ) -> Response:
+    """Answer a player's `/stream/<id>`. `fetch` returns a body (None on failure)
+    and its outcome label, as `Fetcher.get_with_outcome` does."""
     entry = catalogue.get(entry_id)
     if entry is None:
+        # a player holding a playlist older than the catalogue (a cam since dropped)
+        _log(logging.INFO, entry_id, "", "unknown stream: %s", entry_id)
         return (404, "text/plain", b"unknown stream")
-    resolved = cache.get(entry_id, entry.target_url)
+    target = entry.target_url
+    lookup = cache.get(entry_id, target)
+    resolved = lookup.resolved
     if (
         resolved is not None
         and _redirects_youtube(resolved.url, proxy_youtube)
@@ -372,14 +489,40 @@ def serve_stream(
         # googlevideo can stop serving a cached URL's segments hours before its
         # token expires, while a fresh resolve of the same broadcast plays.
         log.info("player retry, re-resolving: %s", entry_id)
-        resolved = cache.get(entry_id, entry.target_url, fresh=True)
+        lookup = cache.get(entry_id, target, fresh=True)
+        resolved = lookup.resolved
+        if resolved is not None and lookup.error is not None:
+            _log(
+                logging.WARNING,
+                entry_id,
+                lookup.error,
+                "re-resolve failed, keeping the cached URL: %s -> %s: %s",
+                entry_id,
+                loggable(target),
+                lookup.error,
+            )
     if resolved is None:
-        log.warning("resolve failed: %s -> %s", entry_id, loggable(entry.target_url))
+        _log(
+            logging.WARNING,
+            entry_id,
+            str(lookup.error),
+            "resolve failed: %s -> %s: %s",
+            entry_id,
+            loggable(target),
+            lookup.error,
+        )
         return (502, "text/plain", b"resolve failed")
     if not _safe_redirect_target(resolved.url):
         # a scraped og:video / iframe src that isn't a clean http(s) URL — reject
         # rather than reflect it into a redirect (see _safe_redirect_target)
-        log.warning("unsafe resolved URL: %s -> %s", entry_id, loggable(resolved.url))
+        _log(
+            logging.WARNING,
+            entry_id,
+            "",
+            "unsafe resolved URL: %s -> %s",
+            entry_id,
+            loggable(resolved.url),
+        )
         return (502, "text/plain", b"unsafe upstream URL")
     if resolved.stream_type == "mp4":
         return (302, resolved.url, b"")  # redirect; 2nd field is the Location
@@ -402,10 +545,19 @@ def serve_child_manifest(
     upstream_url: str,
     sig: str,
     *,
-    fetch: Callable[[str], str | None],
+    fetch: Callable[[str], tuple[str | None, str]],
     base_url: str,
 ) -> Response:
     if not verify(upstream_url, sig):
+        # the signing key is per-process: after a restart, a player still holding
+        # the old URLs lands here until it reloads /stream/<id>
+        _log(
+            logging.WARNING,
+            entry_id,
+            "",
+            "bad signature on a child manifest: %s",
+            entry_id,
+        )
         return (403, "text/plain", b"bad signature")
     return _proxy_manifest(
         entry_id, upstream_url, fetch=fetch, base_url=base_url, kind="child manifest"
@@ -416,22 +568,41 @@ def _proxy_manifest(
     entry_id: str,
     upstream_url: str,
     *,
-    fetch: Callable[[str], str | None],
+    fetch: Callable[[str], tuple[str | None, str]],
     base_url: str,
     kind: str,
 ) -> Response:
     """Fetch an upstream playlist and relay it trimmed and rewritten through us, or
     refuse it with a 502. `kind` names the playlist in the log."""
-    manifest = fetch(upstream_url)
+    manifest, outcome = fetch(upstream_url)
     if manifest is None:
-        log.warning("%s fetch failed: %s -> %s", kind, entry_id, loggable(upstream_url))
+        _log(
+            logging.WARNING,
+            entry_id,
+            f"{kind} {outcome}",
+            "%s fetch failed (%s): %s -> %s",
+            kind,
+            outcome,
+            entry_id,
+            loggable(upstream_url),
+        )
         return (502, "text/plain", b"upstream manifest fetch failed")
     if not is_playable_manifest(manifest):
         # Not HLS (a DASH .mpd, an error page), or HLS with nothing in it: the empty
         # playlist a CDN returns for an expired token, or a variant dead behind a
         # master that still answers 200. Refusing beats handing the player a
         # playlist it cannot start.
-        log.warning("unplayable %s: %s -> %s", kind, entry_id, loggable(upstream_url))
+        why = "no segments or variants" if "#EXTM3U" in manifest else "not HLS"
+        _log(
+            logging.WARNING,
+            entry_id,
+            f"{kind} {why}",
+            "unplayable %s (%s): %s -> %s",
+            kind,
+            why,
+            entry_id,
+            loggable(upstream_url),
+        )
         return (502, "text/plain", b"not a playable HLS stream")
     manifest = truncate_to_live_edge(manifest)
     body = rewrite_manifest(
@@ -449,15 +620,37 @@ def serve_segment(
     upstream_url: str,
     sig: str,
     *,
-    fetch_segment: Callable[
-        [str, str | None], tuple[int, str, str | None, bytes] | None
-    ],
+    fetch_segment: Callable[[str, str | None], tuple[SegmentResponse | None, str]],
     range_header: str | None = None,
 ) -> SegmentResponse:
+    """Relay one segment. `fetch_segment` returns the upstream response (None on
+    failure) and its outcome label, as `Fetcher.get_segment` does."""
     if not verify(upstream_url, sig):
+        # see child manifest
+        _log(logging.WARNING, entry_id, "", "bad signature on a segment: %s", entry_id)
         return (403, "text/plain", None, b"bad signature")
-    result = fetch_segment(upstream_url, range_header)
+    result, outcome = fetch_segment(upstream_url, range_header)
     if result is None:
-        log.warning("segment fetch failed: %s -> %s", entry_id, loggable(upstream_url))
+        _log(
+            logging.WARNING,
+            entry_id,
+            outcome,
+            "segment fetch failed (%s): %s -> %s",
+            outcome,
+            entry_id,
+            loggable(upstream_url),
+        )
         return (502, "text/plain", None, b"segment fetch failed")
+    if result[0] >= 400:
+        # relayed as-is, so the player sees it too; an IP-bound or lapsed token
+        # usually shows up here, as a 401/403/404 on every segment
+        _log(
+            logging.WARNING,
+            entry_id,
+            str(result[0]),
+            "segment upstream http-%d: %s -> %s",
+            result[0],
+            entry_id,
+            loggable(upstream_url),
+        )
     return result

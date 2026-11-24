@@ -1,3 +1,4 @@
+import subprocess
 import time
 from pathlib import Path
 
@@ -87,6 +88,22 @@ def test_ytdlp_rejects_a_split_format():
         YtDlpExtractor(run=lambda argv: split).resolve(
             "https://www.youtube.com/watch?v=abc"
         )
+
+
+def test_ytdlp_timeout_says_so_without_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout's own message is the whole argv, target URL included: cut to the
+    aggregated detail's width it reads `Command '['yt-dlp', '-q', ...` and nothing
+    else."""
+
+    def hang(argv: list[str], *, timeout: float, **_kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(argv, timeout)
+
+    monkeypatch.setattr(subprocess, "run", hang)
+    with pytest.raises(ValueError) as exc:
+        YtDlpExtractor().resolve("https://www.youtube.com/watch?v=abc")
+    assert str(exc.value) == "yt-dlp timed out after 60s"
 
 
 def test_wetmet_extracts_the_player_script_url() -> None:

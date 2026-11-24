@@ -41,6 +41,23 @@ def test_origin_of_no_trailing_slash_duplication() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_resolver_fetch_failures_carry_the_outcome_but_no_url() -> None:
+    """The message feeds the aggregated resolve-failure detail and the serve-time
+    resolve-failed line: the outcome says why, and a URL would leak its query."""
+    import webcam_aggregator.app as _app
+    from webcam_aggregator.fetch import Fetcher
+
+    resolver_get = _app._resolver_get  # pyright: ignore[reportPrivateUsage]
+    baltic_post = _app._baltic_post  # pyright: ignore[reportPrivateUsage]
+    f = Fetcher(delay=0.0, retries=1)  # loopback: refused before any request
+    with pytest.raises(ValueError) as got:
+        resolver_get(f)("http://127.0.0.1/cam?tok=SECRET")
+    assert str(got.value) == "resolver fetch failed: blocked-ip"
+    with pytest.raises(ValueError) as posted:
+        baltic_post(f)("http://127.0.0.1/ajax", {"a": "b"})
+    assert str(posted.value) == "resolver post failed: blocked-ip"
+
+
 def test_baltic_post_sends_xhr_and_site_origin_referer() -> None:
     import webcam_aggregator.app as _app
 
@@ -49,17 +66,17 @@ def test_baltic_post_sends_xhr_and_site_origin_referer() -> None:
     captured: dict[str, Any] = {}
 
     class _FakeFetcher:
-        def post(
+        def post_with_outcome(
             self,
             _url: str,
             _data: dict[str, str],
             *,
             headers: dict[str, str] | None = None,
             timeout: float = 20.0,
-        ) -> str:
+        ) -> tuple[str, str]:
             del timeout  # unused; present to satisfy FetcherPostProtocol signature
             captured["headers"] = headers
-            return "ok"
+            return "ok", "ok"
 
     out = _baltic_post(_FakeFetcher())(
         "https://balticlivecam.com/wp-admin/admin-ajax.php", {"action": "auth_token"}

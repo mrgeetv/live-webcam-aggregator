@@ -3,7 +3,13 @@ from __future__ import annotations
 import time
 import threading
 
-from webcam_aggregator.cache import ResolveCache, DEFAULT_TTL, TTL_FACTOR, NEGATIVE_TTL
+from webcam_aggregator.cache import (
+    DEFAULT_TTL,
+    NEGATIVE_TTL,
+    TTL_FACTOR,
+    Lookup,
+    ResolveCache,
+)
 from webcam_aggregator.extractors.base import Resolved
 
 
@@ -46,7 +52,7 @@ def test_single_flight_concurrent() -> None:
 
     def worker(idx: int) -> None:
         barrier.wait()  # all threads start at the same instant
-        results[idx] = cache.get("cam1", "http://t")
+        results[idx] = cache.get("cam1", "http://t").resolved
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
     for t in threads:
@@ -74,8 +80,8 @@ def test_cache_hit_no_second_resolve() -> None:
         return _resolved(ttl=100)
 
     cache = ResolveCache(counting_resolve, clock=clock)
-    r1 = cache.get("cam1", "http://t")
-    r2 = cache.get("cam1", "http://t")
+    r1 = cache.get("cam1", "http://t").resolved
+    r2 = cache.get("cam1", "http://t").resolved
 
     assert call_count == 1
     assert r1 == r2
@@ -122,12 +128,12 @@ def test_negative_cache() -> None:
         raise RuntimeError("stream unavailable")
 
     cache = ResolveCache(failing_resolve, clock=clock)
-    r1 = cache.get("cam1", "http://t")
+    r1 = cache.get("cam1", "http://t").resolved
     assert r1 is None
     assert call_count == 1
 
     # Immediate second call — still within negative TTL
-    r2 = cache.get("cam1", "http://t")
+    r2 = cache.get("cam1", "http://t").resolved
     assert r2 is None
     assert call_count == 1, "resolver should NOT be called again within negative TTL"
 
@@ -151,6 +157,42 @@ def test_negative_cache_expires() -> None:
     assert call_count == 2
 
 
+def test_negative_entry_keeps_the_failure_reason() -> None:
+    """Every request a negative entry answers says why, with any URL the error
+    quotes cut at its query (a token can ride there)."""
+    clock = _Clock()
+
+    def failing_resolve(_entry_id: str, _target_url: str) -> Resolved:
+        raise ValueError("yt-dlp failed: Private video https://x.example/p?tok=s3cret")
+
+    cache = ResolveCache(failing_resolve, clock=clock)
+    expected = Lookup(
+        None, "ValueError: yt-dlp failed: Private video https://x.example/p"
+    )
+    assert cache.get("cam1", "http://t") == expected
+    assert cache.get("cam1", "http://t") == expected  # the negative-cache hit
+
+
+def test_failed_fresh_resolve_keeps_the_cached_one_and_says_why() -> None:
+    clock = _Clock()
+    fail = False
+
+    def resolve(_entry_id: str, _target_url: str) -> Resolved:
+        if fail:
+            raise RuntimeError("bot check")
+        return _resolved()
+
+    cache = ResolveCache(resolve, clock=clock)
+    first = cache.get("cam1", "http://t").resolved
+    assert first is not None
+    fail = True
+    assert cache.get("cam1", "http://t", fresh=True) == Lookup(
+        first, "RuntimeError: bot check"
+    )
+    # the failure belongs to that attempt, not to the cached resolve it kept
+    assert cache.get("cam1", "http://t") == Lookup(first, None)
+
+
 # ---------------------------------------------------------------------------
 # 5. LRU eviction: cap=2; insert 3 ids; first is evicted; its get re-resolves
 # ---------------------------------------------------------------------------
@@ -168,7 +210,7 @@ def test_lru_eviction() -> None:
 
     cache.get("cam1", "http://t")
     cache.get("cam2", "http://t")
-    cache.get("cam3", "http://t")  # cam1 should be evicted (LRU)
+    cache.get("cam3", "http://t").resolved  # cam1 should be evicted (LRU)
 
     # cam1 was evicted — its get should trigger a fresh resolve
     cache.get("cam1", "http://t")
@@ -197,12 +239,12 @@ def test_target_url_hash_invalidation() -> None:
 
     cache = ResolveCache(counting_resolve, clock=clock)
 
-    r1 = cache.get("cam1", "http://t1")
+    r1 = cache.get("cam1", "http://t1").resolved
     assert call_count == 1
     assert r1 is not None and r1.url == "http://t1"
 
     # Different target_url → stale entry, must re-resolve
-    r2 = cache.get("cam1", "http://t2")
+    r2 = cache.get("cam1", "http://t2").resolved
     assert call_count == 2
     assert r2 is not None and r2.url == "http://t2"
 
@@ -248,5 +290,5 @@ def test_non_positive_ttl_not_cached() -> None:
 
     cache = ResolveCache(resolve, clock=clock)
     cache.get("cam", "http://t")
-    cache.get("cam", "http://t")  # ttl<=0 → not cached → resolves again
+    cache.get("cam", "http://t").resolved  # ttl<=0 → not cached → resolves again
     assert calls == 2

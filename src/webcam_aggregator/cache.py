@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TypeIs
 
 from .extractors.base import Resolved
+from .logging_redaction import describe_error
 
 TTL_FACTOR = 0.8
 NEGATIVE_TTL = 60.0
@@ -31,6 +32,16 @@ RETRY_MIN_AGE = 30.0
 RETRY_MAX_AGE = 600.0
 
 
+@dataclass(frozen=True)
+class Lookup:
+    """What `ResolveCache.get` answers: the resolve to serve (None when there is
+    none) and why the resolve attempt behind this answer failed (None when it
+    didn't). Both are set when a fresh resolve failed and the cached one stands."""
+
+    resolved: Resolved | None
+    error: str | None = None
+
+
 @dataclass
 class _Entry:
     resolved: Resolved | None  # None = negative (a failed resolve)
@@ -43,6 +54,8 @@ class _Entry:
     redirected_at: float | None = None
     # retry-triggered resolves in the current run of retries (see RETRY_MIN_AGE)
     retry_streak: int = 0
+    # a negative entry's failure, safe to log at INFO (describe_error)
+    error: str | None = None
 
 
 class ResolveCache:
@@ -94,13 +107,12 @@ class ResolveCache:
             e.retry_streak += 1
             return True
 
-    def get(
-        self, entry_id: str, target_url: str, *, fresh: bool = False
-    ) -> Resolved | None:
+    def get(self, entry_id: str, target_url: str, *, fresh: bool = False) -> Lookup:
         """The cached resolve for `entry_id`, resolving on a miss. A caller arriving
         while a resolve for the id is in flight waits for its result. `fresh` forces
         a new resolve; if it fails, the cached resolve is kept rather than replaced
-        by a negative entry."""
+        by a negative entry. A failure's reason is kept with its negative entry, so
+        every request it answers can say why, not just the one that resolved."""
         start = self._clock()
         thash = str(hash(target_url))
 
@@ -118,13 +130,14 @@ class ResolveCache:
                 e = self._data.get(entry_id)
                 if usable(e, start):
                     self._data.move_to_end(entry_id)
-                    return e.resolved
+                    return Lookup(e.resolved, e.error)
         with lock:  # single-flight per id
             now = self._clock()
             with self._guard:
                 e = self._data.get(entry_id)
                 if usable(e, now):
-                    return e.resolved
+                    return Lookup(e.resolved, e.error)
+            error = None
             try:
                 resolved = self._resolve(entry_id, target_url)
                 raw = resolved.ttl_seconds
@@ -134,8 +147,9 @@ class ResolveCache:
                     ttl = raw * TTL_FACTOR
                 else:
                     ttl = 0.0  # already-expired token → don't serve stale, re-resolve
-            except Exception:
+            except Exception as exc:
                 resolved, ttl = None, NEGATIVE_TTL
+                error = describe_error(exc)
             with self._guard:
                 if (
                     resolved is None
@@ -146,8 +160,8 @@ class ResolveCache:
                     and e.target_hash == thash
                 ):
                     e.refreshed_at = now
-                    return e.resolved
-                entry = _Entry(resolved, thash, now, now + ttl)
+                    return Lookup(e.resolved, error)
+                entry = _Entry(resolved, thash, now, now + ttl, error=error)
                 if e is not None:
                     # retry detection spans re-resolves
                     entry.redirected_at = e.redirected_at
@@ -157,4 +171,4 @@ class ResolveCache:
                 while len(self._data) > self._cap:
                     old_id, _ = self._data.popitem(last=False)
                     self._locks.pop(old_id, None)  # bound _locks alongside _data
-            return entry.resolved
+            return Lookup(entry.resolved, error)

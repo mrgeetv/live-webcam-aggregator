@@ -424,7 +424,8 @@ def test_get_segment_bypasses_the_pacer(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr("requests.Session.get", lambda _self, _url, **_k: _Seg())
     f = Fetcher(delay=0.0, retries=1, pacer=p)
-    got = f.get_segment("https://cdn.example/seg.ts")
+    got, outcome = f.get_segment("https://cdn.example/seg.ts")
+    assert outcome == "ok"
     assert got is not None and got[3] == b"seg"
 
 
@@ -435,7 +436,10 @@ def test_post_is_paced_and_penalised(monkeypatch: pytest.MonkeyPatch) -> None:
     s = FetchStats()
     f = Fetcher(delay=0.0, retries=1, stats=s, pacer=p)
     with patch("webcam_aggregator.fetch.time.sleep"):
-        assert f.post("https://shed.example/ajax", {"a": "b"}) is None
+        assert f.post_with_outcome("https://shed.example/ajax", {"a": "b"}) == (
+            None,
+            "http-503",
+        )
     assert s.drain() == {"shed.example": {"http-503": 1}}
     assert p.drain()["shed.example"]["penalties"] == 1
     # Breaker open → refused before the request is built.
@@ -445,7 +449,10 @@ def test_post_is_paced_and_penalised(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _self, _url, **_k: (_ for _ in ()).throw(AssertionError("no call")),
     )
     with patch("webcam_aggregator.fetch.time.sleep"):
-        assert f.post("https://shed.example/ajax", {"a": "b"}) is None
+        assert f.post_with_outcome("https://shed.example/ajax", {"a": "b"}) == (
+            None,
+            "host-backoff",
+        )
     assert s.drain() == {"shed.example": {"host-backoff": 1}}
 
 
@@ -500,7 +507,7 @@ def test_post_honours_retry_only_shedding(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("requests.Session.post", _post_500)
     f = Fetcher(delay=0.0, retries=2, retry_only_shedding=True)
     with patch("webcam_aggregator.fetch.time.sleep"):
-        assert f.post("https://x.example/ajax", {"a": "b"}) is None
+        assert f.post_with_outcome("https://x.example/ajax", {"a": "b"})[0] is None
     assert calls[0] == 1  # a 500 is not shedding: no second attempt
 
 

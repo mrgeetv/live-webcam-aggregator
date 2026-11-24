@@ -193,15 +193,29 @@ The app is two phases, decoupled by a catalogue snapshot:
   which returns a **reason** (`models.NO_EXTRACTOR` / `RESOLVE_FAILED` /
   `DEAD_MANIFEST` / `YT_OFFLINE`, optionally `":<detail>"`) that `filter_source`
   counts. Log **hostnames** in aggregates; full URLs only via `serving.loggable()`,
-  which keeps the query string at DEBUG only — and the `resolve-failed:<detail>`
-  strings have embedded URL query strings stripped (`app._URL_QUERY`) before they
-  reach the INFO aggregate, since an extractor error often quotes its target URL,
-  token and all — and the shared resolver error messages (`app._resolver_get` /
-  `_baltic_post`) deliberately carry NO URL, so one failure mode aggregates as one
-  detail bucket instead of thousands of URL-prefix ones. A third seam covers what
+  which keeps the query string at DEBUG only (at INFO it keeps just the params that
+  name a cam on the site they name it on, `_ID_PARAMS` — YouTube's `v=`, feratel's
+  `cam=` — and cuts googlevideo's path, which carries our egress IP and the
+  signature) — and the `resolve-failed:<detail>` strings have embedded URL query
+  strings stripped (`logging_redaction.strip_url_queries`) before they reach the INFO
+  aggregate, since an extractor error often quotes its target URL, token and all —
+  and the shared
+  resolver error messages (`app._resolver_get` / `_baltic_post`) carry the fetch
+  outcome label but deliberately NO URL, so one failure mode aggregates as one detail
+  bucket instead of thousands of URL-prefix ones. A third seam covers what
   the per-source stats can't see: the cross-source liveness fetchers (resolver +
   probe) carry their own named `FetchStats`, and the pacer counts per-host
-  penalties/backoff — both drained per rebuild into one INFO line each. All of this
+  penalties/backoff — both drained per rebuild into one INFO line each. The fourth
+  seam is the serve path: every request it refuses or relays as an upstream error
+  logs a WARNING naming the entry id, the `loggable()` target or upstream, and why —
+  the resolve error (`logging_redaction.describe_error`, kept on the negative cache
+  entry so each request it answers carries it: `ResolveCache.get` returns a
+  `Lookup`), the fetch outcome label, the upstream segment status, or a bad
+  signature (the signing key is per-process, so a restart produces a burst of them).
+  A failed retry re-resolve, which still serves the cached URL, logs its error the
+  same way. These lines fire per player request, and a failing cam repeats itself
+  every few seconds per viewer, so `serving.RepeatLimiter` admits each (line, entry,
+  reason) once a minute and the next one to log counts what it stood for. All of this
   detail is LOG-ONLY: `/health` stays a compact WHAT summary (per-source
   `kept`/`discovered`/`crashed`/`status`, plus `last_build_seconds`).
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and
@@ -652,9 +666,8 @@ The app is two phases, decoupled by a catalogue snapshot:
   stats/status seam is what will say so.
 
 **Security model:** every outbound fetch is validated by `fetch._validate_ip`
-(rejects non-http(s) and private/loopback/link-local/reserved IPs; `_resolve_validated_ip`
-is a thin wrapper for callers that don't need the rejection reason), an 8 MB cap, and
-**per-hop redirect re-validation** in the `requests` `Fetcher`; proxied `/m` and `/s`
+(rejects non-http(s) and private/loopback/link-local/reserved IPs, and says which),
+an 8 MB cap, and **per-hop redirect re-validation** in the `requests` `Fetcher`; proxied `/m` and `/s`
 URLs are HMAC-signed (`signing.py`) so only server-emitted URLs are fetched.
 Titles and categories are scraped text, so `render_playlist` neutralises line breaks and
 `"` before writing `#EXTINF` — a newline in a title would otherwise inject a playlist line.

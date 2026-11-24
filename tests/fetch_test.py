@@ -26,7 +26,6 @@ from webcam_aggregator.fetch import (
     _pin,  # pyright: ignore[reportPrivateUsage]
     _PinDNS,  # pyright: ignore[reportPrivateUsage]
     _referer_for,  # pyright: ignore[reportPrivateUsage]
-    _resolve_validated_ip,  # pyright: ignore[reportPrivateUsage]
     _validate_ip,  # pyright: ignore[reportPrivateUsage]
     resolve_scrape_workers,
     thread_imap,
@@ -45,11 +44,11 @@ def _mock_getaddrinfo(ip: str):
 def _url_is_safe(url: str) -> bool:
     """Test predicate over the real gate: True iff the URL resolves to a non-private
     IP (i.e. the Fetcher would be allowed to fetch it)."""
-    return _resolve_validated_ip(url) is not None
+    return _validate_ip(url)[0] is not None
 
 
 # ---------------------------------------------------------------------------
-# URL safety (_resolve_validated_ip) — private/reserved addresses must be blocked
+# URL safety (_validate_ip) — private/reserved addresses must be blocked
 # ---------------------------------------------------------------------------
 
 
@@ -176,13 +175,13 @@ def test_fetcher_does_not_follow_redirect_to_private(
 
 
 def test_get_segment_blocks_unsafe_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    """get_segment must return None for private/unsafe URLs without making a request."""
+    """get_segment refuses private/unsafe URLs, saying why, without a request."""
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("127.0.0.1"),
     )
     f = Fetcher(delay=0.0, retries=1)
-    assert f.get_segment("http://127.0.0.1/seg.ts") is None
+    assert f.get_segment("http://127.0.0.1/seg.ts") == (None, "blocked-ip")
 
 
 def test_get_segment_happy_relay(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,9 +211,10 @@ def test_get_segment_happy_relay(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("requests.Session.get", fake_get)
 
     f = Fetcher(delay=0.0, retries=1)
-    result = f.get_segment(
+    result, outcome = f.get_segment(
         "https://cdn.balticlivecam.com/seg.ts", range_header="bytes=0-65535"
     )
+    assert outcome == "ok"
     assert result is not None
     status, ct, cr, body = result
     assert status == 206
@@ -224,7 +224,7 @@ def test_get_segment_happy_relay(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_segment_refuses_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
-    """get_segment must return None when the segment URL redirects."""
+    """get_segment refuses a segment URL that redirects."""
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -242,7 +242,10 @@ def test_get_segment_refuses_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     f = Fetcher(delay=0.0, retries=1)
-    assert f.get_segment("https://cdn.balticlivecam.com/seg.ts") is None
+    assert f.get_segment("https://cdn.balticlivecam.com/seg.ts") == (
+        None,
+        "unexpected-redirect",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -328,10 +331,10 @@ def test_get_redirect_no_location_returns_none(
     assert f.get("https://cdn.example/playlist.m3u8") is None
 
 
-def test_get_segment_request_exception_returns_none(
+def test_get_segment_labels_a_request_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """RequestException in get_segment → None."""
+    """A RequestException in get_segment is a failure labelled as get() labels it."""
     import requests
 
     monkeypatch.setattr(
@@ -341,11 +344,11 @@ def test_get_segment_request_exception_returns_none(
     monkeypatch.setattr(
         "requests.Session.get",
         lambda _self, _url, **_k: (_ for _ in ()).throw(
-            requests.RequestException("timeout")
+            requests.ConnectTimeout("timed out")
         ),
     )
     f = Fetcher(delay=0.0, retries=1)
-    assert f.get_segment("https://cdn.example/seg.ts") is None
+    assert f.get_segment("https://cdn.example/seg.ts") == (None, "timeout")
 
 
 def test_get_oversized_body_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -408,8 +411,8 @@ def test_get_respects_custom_byte_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_get_segment_oversized_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Segment exceeding SEGMENT_MAX_BYTES ceiling → get_segment returns None."""
+def test_get_segment_refuses_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A segment exceeding the SEGMENT_MAX_BYTES ceiling is refused as too-large."""
     from webcam_aggregator.fetch import SEGMENT_MAX_BYTES
 
     monkeypatch.setattr(
@@ -430,7 +433,7 @@ def test_get_segment_oversized_returns_none(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr("requests.Session.get", lambda _self, _url, **_k: _BigSegResp())
     f = Fetcher(delay=0.0, retries=1)
-    assert f.get_segment("https://cdn.example/seg.ts") is None
+    assert f.get_segment("https://cdn.example/seg.ts") == (None, "too-large")
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +454,9 @@ def test_post_blocks_unsafe_url(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("requests.Session.post", fake_post)
     f = Fetcher(delay=0.0, retries=1)
-    assert f.post("http://127.0.0.1/admin-ajax.php", {"action": "auth_token"}) is None
+    assert f.post_with_outcome(
+        "http://127.0.0.1/admin-ajax.php", {"action": "auth_token"}
+    ) == (None, "blocked-ip")
     assert not called[0]
 
 
@@ -506,12 +511,12 @@ def test_post_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("requests.Session.post", fake_post)
     f = Fetcher(delay=0.0, retries=1)
-    result = f.post(
+    result = f.post_with_outcome(
         "https://example.com/wp-admin/admin-ajax.php",
         {"action": "auth_token", "id": "42"},
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
-    assert result == "response body"
+    assert result == ("response body", "ok")
     assert captured_url[0] == "https://example.com/wp-admin/admin-ajax.php"
     # data must be url-encoded bytes
     decoded = urllib.parse.parse_qs(captured_data[0].decode())
@@ -553,7 +558,7 @@ def test_post_caller_can_override_content_type(
 
     monkeypatch.setattr("requests.Session.post", fake_post)
     f = Fetcher(delay=0.0, retries=1)
-    f.post(
+    f.post_with_outcome(
         "https://example.com/x",
         {"a": "b"},
         headers={"Content-Type": "application/json"},
@@ -580,7 +585,10 @@ def test_post_refuses_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     f = Fetcher(delay=0.0, retries=1)
     assert (
-        f.post("https://example.com/wp-admin/admin-ajax.php", {"action": "x"}) is None
+        f.post_with_outcome(
+            "https://example.com/wp-admin/admin-ajax.php", {"action": "x"}
+        )[0]
+        is None
     )
 
 
@@ -619,22 +627,22 @@ def test_scrape_workers_valid_value_no_warning(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_validated_ip_rejects_private(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_ip_rejects_private(monkeypatch: pytest.MonkeyPatch) -> None:
     """Any private/loopback resolved IP poisons the host → no IP returned."""
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("10.0.0.1"),
     )
-    assert _resolve_validated_ip("http://internal.example/") is None
+    assert _validate_ip("http://internal.example/") == (None, "blocked-ip")
 
 
-def test_resolve_validated_ip_returns_public(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_ip_returns_public(monkeypatch: pytest.MonkeyPatch) -> None:
     """A safe public host resolves to a concrete IP that the caller will pin to."""
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
     )
-    assert _resolve_validated_ip("https://example.com/x") == "93.184.216.34"
+    assert _validate_ip("https://example.com/x") == ("93.184.216.34", "ok")
 
 
 def test_pin_dns_pins_getaddrinfo_then_clears() -> None:
@@ -814,7 +822,7 @@ def test_fetcher_tls_verified_against_hostname_while_connecting_to_ip(
         monkeypatch.setattr(
             "webcam_aggregator.fetch.socket.getaddrinfo", _loopback_addrinfo
         )
-        # _resolve_validated_ip would normally reject loopback; bypass ONLY the IP-safety
+        # _validate_ip would normally reject loopback; bypass ONLY the IP-safety
         # gate for this connectivity test (we are deliberately dialing loopback)
         # while leaving the pin + TLS path fully real.
         monkeypatch.setattr("webcam_aggregator.fetch._ip_is_unsafe", lambda _ip: False)
@@ -1016,7 +1024,10 @@ def test_post_is_instrumented() -> None:
         "webcam_aggregator.fetch.socket.getaddrinfo",
         return_value=_mock_getaddrinfo("127.0.0.1"),
     ):
-        assert f.post("https://internal.example/ajax", {"a": "b"}) is None
+        assert f.post_with_outcome("https://internal.example/ajax", {"a": "b"}) == (
+            None,
+            "blocked-ip",
+        )
     assert s.drain() == {"internal.example": {"blocked-ip": 1}}
 
 
@@ -1396,7 +1407,10 @@ def test_impersonating_fetcher_posts(
 ) -> None:
     port, seen = pinned_server
     f = Fetcher(delay=0.0, retries=1, impersonate=True)
-    assert f.post(f"http://pinned.test:{port}/form", {"a": "b"}) == "posted a=b"
+    assert f.post_with_outcome(f"http://pinned.test:{port}/form", {"a": "b"}) == (
+        "posted a=b",
+        "ok",
+    )
     assert seen[-1]["content-type"] == "application/x-www-form-urlencoded"
 
 
@@ -1414,7 +1428,7 @@ def test_impersonating_get_segment_survives_a_pin_failure(
 
     monkeypatch.setattr(curl_requests.Session, "request", elsewhere)
     f = Fetcher(delay=0.0, retries=1, impersonate=True)
-    assert f.get_segment(f"http://pinned.test:{port}/page") is None
+    assert f.get_segment(f"http://pinned.test:{port}/page") == (None, "blocked-ip")
 
 
 def test_impersonating_session_refuses_an_unpinned_host() -> None:

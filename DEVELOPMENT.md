@@ -299,6 +299,27 @@ lines. The per-source counts stay raw even when the empty-guard is still serving
 failed source's last good set, so a failure surfaces immediately. See the
 *Monitoring* section in the README for the payload shape and the state table.
 
+### Playback failures
+
+A player request the server refuses, or answers with an upstream error, logs one
+`WARNING` naming the stream id, the cam's target or the upstream URL (trimmed as in
+*Secrets in logs*), and why:
+
+```text
+resolve failed: a6e644c9b47f215b -> https://www.youtube.com/watch?v=<id>: ValueError: yt-dlp failed: ERROR: [youtube] <id>: Private video
+re-resolve failed, keeping the cached URL: a6e644c9b47f215b -> https://www.youtube.com/watch?v=<id>: ValueError: yt-dlp timed out after 60s
+manifest fetch failed (http-403): 1f0c... -> https://cdn.example/live/playlist.m3u8
+unplayable child manifest (no segments or variants): 1f0c... -> https://cdn.example/live/chunklist.m3u8
+segment upstream http-403: 1f0c... -> https://cdn.example/live/seg_1042.ts
+bad signature on a segment: 1f0c...
+```
+
+Each line logs at most once a minute per stream and reason; the next one after that
+ends `(+N repeats suppressed)`, counting the requests it stood for. Bad signatures
+come in a burst after a restart: the signing key is per-process, so the URLs players
+still hold stop verifying until they reload the stream. An id the catalogue doesn't
+know logs `unknown stream: <id>` at `INFO`.
+
 ### YouTube cams that play briefly, then stop
 
 Nothing in the logs will show this one — it is worth knowing by hand. If **many**
@@ -373,7 +394,11 @@ Data API failure writes the key to disk (a traceback ends in `str(exc)`). Log
 `RedactingFilter` on the root handler is the backstop, not the primary defence.
 
 Third-party CDN tokens are treated differently: `serving.loggable()` trims resolved
-upstream URLs to `scheme://host/path` at `INFO`, and keeps the full URL at `DEBUG`,
+upstream URLs to `scheme://host/path` at `INFO`, keeping only the query params that
+name a cam, each on its own site (YouTube's `v=`, feratel's `cam=`, ipcamlive's
+`alias=`, wetmet's `uid=`, viewsurf's `uuid=`); a googlevideo URL carries its token
+and our egress IP in the path, so that is cut to the route and video id. At `DEBUG`
+it keeps the full URL,
 where the token is usually the thing you're debugging. The same rule covers the
 aggregated `top resolve failures` details: any URL an extractor error quotes has its
 query string stripped before the detail is counted.

@@ -22,6 +22,23 @@ def scrub(text: str) -> str:
     return _KEY_PARAM.sub(r"\1REDACTED", text)
 
 
+# An extractor error often quotes its target URL, query string and all, and a query
+# string can carry a session token. Error text logged at INFO keeps hostnames and
+# paths only, so every embedded URL is cut at its query.
+_URL_QUERY = re.compile(r"(https?://[^\s?\"']+)(?:\?\S*)?")
+
+
+def strip_url_queries(text: str) -> str:
+    """Trim every URL embedded in `text` to scheme://host/path."""
+    return _URL_QUERY.sub(r"\1", text)
+
+
+def describe_error(exc: BaseException) -> str:
+    """`Type: message` for an INFO log line: credentials scrubbed and every URL the
+    message quotes cut at its query."""
+    return f"{type(exc).__name__}: {strip_url_queries(scrub(str(exc)))}"
+
+
 def _scrub_arg(value: Any) -> Any:
     """Pre-scrub a log arg's string form. Non-str args are %s-formatted later, and the
     usual leak shape is `log.warning("…: %s", exc)` where the exception's str carries the

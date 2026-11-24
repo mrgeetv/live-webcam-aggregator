@@ -176,7 +176,8 @@ Fields:
 
 The payload answers *what happened*; the *why* — per-host fetch outcomes, drop
 reasons, hosts with no extractor, pacing/backoff counters — is on the log lines each
-rebuild writes (see `DEVELOPMENT.md`, *Catalogue & resolve logging*).
+rebuild writes (see `DEVELOPMENT.md`, *Catalogue & resolve logging*), and a stream that
+fails to play logs which cam and why (*Playback failures*).
 
 `/health` carries operational detail, so keep it off the public internet — expose only
 `/playlist.m3u8` and `/stream/*` at your reverse proxy.

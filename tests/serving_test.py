@@ -10,6 +10,7 @@ import pytest
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import CatalogueEntry
+from webcam_aggregator import serving
 from webcam_aggregator.serving import (
     _proxy_segments_for,  # pyright: ignore[reportPrivateUsage]
     is_playable_manifest,
@@ -310,7 +311,7 @@ def test_serve_stream_unknown_id_returns_404() -> None:
         "unknown",
         catalogue={},
         cache=cache,
-        fetch=lambda u: None,
+        fetch=lambda u: (None, "timeout"),
         base_url=BASE,
     )
     assert status == 404
@@ -323,7 +324,7 @@ def test_serve_stream_cache_miss_returns_502() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: None,
+        fetch=lambda u: (None, "timeout"),
         base_url=BASE,
     )
     assert status == 502
@@ -367,7 +368,7 @@ def test_serve_stream_empty_playlist_returns_502() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: _entry()},
         cache=_make_cache(resolved),
-        fetch=lambda _u: _EMPTY_STUB,
+        fetch=lambda _u: (_EMPTY_STUB, "ok"),
         base_url=BASE,
     )
     assert status == 502
@@ -384,7 +385,7 @@ def test_serve_stream_serves_a_master_playlist() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: _entry()},
         cache=_make_cache(resolved),
-        fetch=lambda _u: _MASTER,
+        fetch=lambda _u: (_MASTER, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -401,7 +402,7 @@ def test_serve_stream_non_hls_manifest_returns_502() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: "<?xml version='1.0'?><MPD></MPD>",
+        fetch=lambda u: ("<?xml version='1.0'?><MPD></MPD>", "ok"),
         base_url=BASE,
     )
     assert status == 502
@@ -415,7 +416,7 @@ def test_serve_stream_youtube_redirects_when_not_proxied() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: _entry()},
         cache=cache,
-        fetch=lambda _u: "should-not-be-fetched",
+        fetch=lambda _u: ("should-not-be-fetched", "ok"),
         base_url=BASE,
     )  # proxy_youtube defaults to False → 302 direct, no fetch
     assert status == 302
@@ -429,7 +430,10 @@ def test_serve_stream_youtube_proxied_when_enabled() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: _entry()},
         cache=cache,
-        fetch=lambda _u: "#EXTM3U\n#EXTINF:5.0,\nhttps://x.googlevideo.com/seg.ts\n",
+        fetch=lambda _u: (
+            "#EXTM3U\n#EXTINF:5.0,\nhttps://x.googlevideo.com/seg.ts\n",
+            "ok",
+        ),
         base_url=BASE,
         proxy_youtube=True,
     )
@@ -485,7 +489,7 @@ def _play(
     cache: ResolveCache,
     *,
     proxy_youtube: bool = False,
-    fetch: Callable[[str], str | None] = lambda _u: _YT_MANIFEST,
+    fetch: Callable[[str], tuple[str | None, str]] = lambda _u: (_YT_MANIFEST, "ok"),
 ) -> str:
     _status, loc, _ = serve_stream(
         ENTRY_ID,
@@ -626,9 +630,9 @@ def test_serve_stream_youtube_proxied_refreshes_keep_resolve() -> None:
     cache = _youtube_cache(clock)
     fetched: list[str] = []
 
-    def _fetch(u: str) -> str:
+    def _fetch(u: str) -> tuple[str, str]:
         fetched.append(u)
-        return _YT_MANIFEST
+        return _YT_MANIFEST, "ok"
 
     for t in (0.0, 40.0, 80.0):
         clock.t = t
@@ -649,7 +653,7 @@ def test_serve_stream_hls_returns_200_rewritten_body() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: manifest,
+        fetch=lambda u: (manifest, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -668,7 +672,7 @@ def test_serve_stream_mp4_returns_302_with_location() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: None,
+        fetch=lambda u: (None, "timeout"),
         base_url=BASE,
     )
     assert status == 302
@@ -683,7 +687,7 @@ def test_serve_stream_pixelcaster_hls_passthrough_302_no_proxy() -> None:
     cache = _make_cache(resolved)
     entry = _entry()
 
-    def _fail_fetch(_u: str) -> str | None:
+    def _fail_fetch(_u: str) -> tuple[str | None, str]:
         raise AssertionError("a direct-playback host must not be proxied/fetched")
 
     status, location, body = serve_stream(
@@ -712,7 +716,7 @@ def test_serve_stream_rejects_unsafe_resolved_url() -> None:
             ENTRY_ID,
             catalogue={ENTRY_ID: _entry()},
             cache=cache,
-            fetch=lambda _u: None,
+            fetch=lambda _u: (None, "timeout"),
             base_url=BASE,
         )
         assert status == 502
@@ -750,7 +754,7 @@ def test_serve_child_manifest_fetch_failure_returns_502(
             ENTRY_ID,
             url,
             sign(url),
-            fetch=lambda u: None,
+            fetch=lambda u: (None, "timeout"),
             base_url=BASE,
         )
     assert status == 502
@@ -766,7 +770,11 @@ def test_serve_child_manifest_refuses_an_unplayable_child(
     url = "https://cdn.x/cam/media_0.m3u8"
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.serving"):
         status, _, _ = serve_child_manifest(
-            ENTRY_ID, url, sign(url), fetch=lambda _u: "#EXT-X-ENDLIST\n", base_url=BASE
+            ENTRY_ID,
+            url,
+            sign(url),
+            fetch=lambda _u: ("#EXT-X-ENDLIST\n", "ok"),
+            base_url=BASE,
         )
     assert status == 502
     assert ENTRY_ID in caplog.text and "cdn.x/cam/media_0.m3u8" in caplog.text
@@ -779,7 +787,7 @@ def test_serve_child_manifest_returns_200_rewritten_body() -> None:
         ENTRY_ID,
         upstream_url,
         sign(upstream_url),
-        fetch=lambda u: media_manifest,
+        fetch=lambda u: (media_manifest, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -802,7 +810,7 @@ def test_serve_child_manifest_valid_sig_returns_200() -> None:
         ENTRY_ID,
         url,
         sign(url),
-        fetch=lambda u: media_manifest,
+        fetch=lambda u: (media_manifest, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -815,7 +823,7 @@ def test_serve_child_manifest_bad_sig_returns_403() -> None:
         ENTRY_ID,
         url,
         "0" * 32,  # wrong sig
-        fetch=lambda u: "#EXTM3U\n",
+        fetch=lambda u: ("#EXTM3U\n", "ok"),
         base_url=BASE,
     )
     assert status == 403
@@ -828,7 +836,7 @@ def test_serve_child_manifest_empty_sig_returns_403() -> None:
         ENTRY_ID,
         url,
         "",  # missing/empty sig
-        fetch=lambda u: "#EXTM3U\n",
+        fetch=lambda u: ("#EXTM3U\n", "ok"),
         base_url=BASE,
     )
     assert status == 403
@@ -928,7 +936,7 @@ def test_serve_stream_baltic_segments_proxied_via_s() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: BALTIC_MANIFEST,
+        fetch=lambda u: (BALTIC_MANIFEST, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -957,7 +965,7 @@ def test_serve_stream_enhd_es_segments_proxied_via_s() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda u: manifest,
+        fetch=lambda u: (manifest, "ok"),
         base_url=BASE,
     )
     assert status == 200
@@ -977,9 +985,11 @@ def test_serve_segment_valid_sig_relays_result() -> None:
     url = "https://edge01.balticlivecam.com/stream/cam/seg_001.ts"
     sig = sign(url)
 
-    def fake_fetch(u: str, _r: str | None) -> tuple[int, str, str | None, bytes] | None:
+    def fake_fetch(
+        u: str, _r: str | None
+    ) -> tuple[tuple[int, str, str | None, bytes] | None, str]:
         assert u == url
-        return (206, "video/mp2t", "bytes 0-10/100", b"data")
+        return (206, "video/mp2t", "bytes 0-10/100", b"data"), "ok"
 
     status, ct, cr, body = serve_segment(
         ENTRY_ID, url, sig, fetch_segment=fake_fetch, range_header="bytes=0-10"
@@ -996,7 +1006,7 @@ def test_serve_segment_bad_sig_returns_403() -> None:
         ENTRY_ID,
         url,
         "0" * 32,
-        fetch_segment=lambda u, r: (200, "video/mp2t", None, b"data"),
+        fetch_segment=lambda u, r: ((200, "video/mp2t", None, b"data"), "ok"),
     )
     assert status == 403
     assert b"bad signature" in body
@@ -1009,7 +1019,7 @@ def test_serve_segment_empty_sig_returns_403() -> None:
         ENTRY_ID,
         url,
         "",
-        fetch_segment=lambda u, r: (200, "video/mp2t", None, b"data"),
+        fetch_segment=lambda u, r: ((200, "video/mp2t", None, b"data"), "ok"),
     )
     assert status == 403
     assert b"bad signature" in body
@@ -1022,7 +1032,7 @@ def test_serve_segment_fetch_failure_returns_502() -> None:
         ENTRY_ID,
         url,
         sig,
-        fetch_segment=lambda u, r: None,
+        fetch_segment=lambda u, r: (None, "timeout"),
     )
     assert status == 502
     assert b"segment fetch failed" in body
@@ -1199,7 +1209,11 @@ def test_serve_child_manifest_rewrites_the_carried_map_and_key() -> None:
         + _segs(0, 300)
     )
     status, _ct, body = serve_child_manifest(
-        ENTRY_ID, upstream_url, sign(upstream_url), fetch=lambda _u: dvr, base_url=BASE
+        ENTRY_ID,
+        upstream_url,
+        sign(upstream_url),
+        fetch=lambda _u: (dvr, "ok"),
+        base_url=BASE,
     )
     assert status == 200
     out = body.decode().splitlines()
@@ -1218,12 +1232,218 @@ def test_serve_stream_truncates_dvr() -> None:
         ENTRY_ID,
         catalogue={ENTRY_ID: entry},
         cache=cache,
-        fetch=lambda _u: _dvr_playlist(500, target=1),
+        fetch=lambda _u: (_dvr_playlist(500, target=1), "ok"),
         base_url=BASE,
     )
     assert status == 200
     segs = [ln for ln in body.decode().splitlines() if ln.endswith(".ts")]
     assert len(segs) == 120  # truncated from 500 to the live edge
+
+
+# ---------------------------------------------------------------------------
+# Serve-time failures say which cam and why, at the INFO default
+# ---------------------------------------------------------------------------
+
+_SERVING = "webcam-aggregator.serving"
+
+
+def test_serve_stream_resolve_failure_logs_why_and_which_cam(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def resolve(_id: str, _url: str) -> Resolved:
+        raise ValueError("yt-dlp failed: ERROR: [youtube] abcdefghijk: Private video")
+
+    entry = _entry(target_url="https://www.youtube.com/watch?v=abcdefghijk")
+    cache = ResolveCache(resolve, clock=lambda: 0.0)
+    with caplog.at_level(logging.INFO, logger=_SERVING):
+        for _ in range(2):  # the second, a negative-cache hit, repeats the first
+            status, _, _ = serve_stream(
+                ENTRY_ID,
+                catalogue={ENTRY_ID: entry},
+                cache=cache,
+                fetch=lambda _u: (None, "timeout"),
+                base_url=BASE,
+            )
+            assert status == 502
+    assert [r.getMessage() for r in caplog.records] == [
+        f"resolve failed: {ENTRY_ID} -> https://www.youtube.com/watch?v=abcdefghijk:"
+        " ValueError: yt-dlp failed: ERROR: [youtube] abcdefghijk: Private video"
+    ]
+
+
+def test_a_repeated_failure_logs_once_a_minute_with_a_count(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An IP-bound 403 hits every segment, every few seconds, for every viewer:
+    one line a minute per cam and reason says the same thing."""
+    clock = _Clock()
+    monkeypatch.setattr(serving, "repeats", serving.RepeatLimiter(clock=clock))
+    denied = (403, "text/html", None, b"denied")
+    gone = (404, "text/html", None, b"gone")
+
+    def relay(n: int, upstream: tuple[int, str, str | None, bytes]) -> None:
+        url = f"https://cdn.x/cam/seg_{n}.ts"
+        serve_segment(
+            ENTRY_ID, url, sign(url), fetch_segment=lambda _u, _r: (upstream, "ok")
+        )
+
+    with caplog.at_level(logging.WARNING, logger=_SERVING):
+        relay(1, denied)
+        clock.t = 10.0
+        relay(2, denied)  # same cam, same reason: suppressed
+        relay(3, gone)  # a different reason still logs
+        clock.t = 61.0
+        relay(4, denied)
+    assert [r.getMessage() for r in caplog.records] == [
+        f"segment upstream http-403: {ENTRY_ID} -> https://cdn.x/cam/seg_1.ts",
+        f"segment upstream http-404: {ENTRY_ID} -> https://cdn.x/cam/seg_3.ts",
+        f"segment upstream http-403: {ENTRY_ID} -> https://cdn.x/cam/seg_4.ts"
+        " (+1 repeat suppressed)",
+    ]
+
+
+def test_repeat_limiter_stays_bounded_under_made_up_ids() -> None:
+    """A bad-signature or unknown-id line is keyed on an id taken from the request
+    path, so a client inventing ids must not grow the limiter without bound."""
+    limiter = serving.RepeatLimiter(clock=lambda: 0.0, cap=10)
+    for n in range(1000):
+        assert limiter.admit(("bad signature", f"id{n}")) == 0
+    assert len(limiter) <= 10
+
+
+def test_serve_stream_failed_retry_resolve_logs_why(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed fresh resolve keeps the cached URL, so the player gets a 302 and
+    nothing else would say the re-resolve it asked for didn't happen."""
+    clock = _Clock()
+    cache = _youtube_cache(clock, _YtResolver(fail=(2,)))
+    _play(cache)
+    clock.t = 40.0
+    with caplog.at_level(logging.WARNING, logger=_SERVING):
+        _play(cache)
+    assert [r.getMessage() for r in caplog.records] == [
+        f"re-resolve failed, keeping the cached URL: {ENTRY_ID} ->"
+        " https://origin.example/cam/playlist.m3u8: RuntimeError: yt-dlp failed"
+    ]
+
+
+def test_serve_stream_logs_an_unknown_id(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=_SERVING):
+        serve_stream(
+            "gone1",
+            catalogue={},
+            cache=_make_cache(None),
+            fetch=lambda _u: (None, "timeout"),
+            base_url=BASE,
+        )
+    assert [r.getMessage() for r in caplog.records] == ["unknown stream: gone1"]
+
+
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        ("#EXTM3U\n#EXT-X-ENDLIST\n", "no segments or variants"),
+        ("<?xml version='1.0'?><MPD></MPD>", "not HLS"),
+    ],
+)
+def test_serve_stream_says_why_a_manifest_is_unplayable(
+    caplog: pytest.LogCaptureFixture, body: str, why: str
+) -> None:
+    resolved = Resolved(
+        url="https://cdn.x/live.m3u8", stream_type="hls", ttl_seconds=60
+    )
+    with caplog.at_level(logging.WARNING, logger=_SERVING):
+        serve_stream(
+            ENTRY_ID,
+            catalogue={ENTRY_ID: _entry()},
+            cache=_make_cache(resolved),
+            fetch=lambda _u: (body, "ok"),
+            base_url=BASE,
+        )
+    assert [r.getMessage() for r in caplog.records] == [
+        f"unplayable manifest ({why}): {ENTRY_ID} -> https://cdn.x/live.m3u8"
+    ]
+
+
+def test_manifest_fetch_failure_logs_the_outcome(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    url = "https://cdn.x/cam/chunklist.m3u8"
+    with caplog.at_level(logging.WARNING, logger=_SERVING):
+        serve_child_manifest(
+            ENTRY_ID, url, sign(url), fetch=lambda _u: (None, "http-403"), base_url=BASE
+        )
+    assert [r.getMessage() for r in caplog.records] == [
+        f"child manifest fetch failed (http-403): {ENTRY_ID} -> {url}"
+    ]
+
+
+def test_segment_fetch_failure_logs_the_outcome(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    url = "https://cdn.x/cam/seg_1.ts"
+    with caplog.at_level(logging.WARNING, logger=_SERVING):
+        serve_segment(
+            ENTRY_ID, url, sign(url), fetch_segment=lambda _u, _r: (None, "too-large")
+        )
+    assert [r.getMessage() for r in caplog.records] == [
+        f"segment fetch failed (too-large): {ENTRY_ID} -> {url}"
+    ]
+
+
+def test_segment_upstream_error_is_relayed_and_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An IP-bound or lapsed token shows up as a CDN 403 on every segment, relayed
+    to the player as-is; without this line nothing on our side records it."""
+    url = "https://cdn.x/cam/seg_1.ts?token=SECRET"
+    upstream = (403, "text/html", None, b"denied")
+    with caplog.at_level(logging.WARNING, logger=_SERVING):
+        got = serve_segment(
+            ENTRY_ID, url, sign(url), fetch_segment=lambda _u, _r: (upstream, "ok")
+        )
+    assert got == upstream
+    assert [r.getMessage() for r in caplog.records] == [
+        f"segment upstream http-403: {ENTRY_ID} -> https://cdn.x/cam/seg_1.ts"
+    ]
+
+
+def test_a_relayed_segment_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    url = "https://cdn.x/cam/seg_1.ts"
+    ok = (206, "video/mp2t", "bytes 0-1/2", b"ab")
+    with caplog.at_level(logging.INFO, logger=_SERVING):
+        serve_segment(ENTRY_ID, url, sign(url), fetch_segment=lambda _u, _r: (ok, "ok"))
+    assert caplog.records == []
+
+
+def test_a_non_ascii_signature_is_a_bad_signature(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    url = "https://cdn.x/cam/seg_1.ts"
+    with caplog.at_level(logging.WARNING, logger=_SERVING):
+        got = serve_segment(
+            ENTRY_ID, url, "\u00e9", fetch_segment=lambda _u, _r: (None, "ok")
+        )
+    assert got[0] == 403
+    assert [r.getMessage() for r in caplog.records] == [
+        f"bad signature on a segment: {ENTRY_ID}"
+    ]
+
+
+def test_bad_signatures_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """The signing key is per-process, so a restart turns every URL a player holds
+    into a 403 here; the log has to show it."""
+    url = "https://cdn.x/cam/seg_1.ts"
+    with caplog.at_level(logging.WARNING, logger=_SERVING):
+        serve_child_manifest(
+            ENTRY_ID, url, "bogus", fetch=lambda _u: (None, "ok"), base_url=BASE
+        )
+        serve_segment(ENTRY_ID, url, "", fetch_segment=lambda _u, _r: (None, "ok"))
+    assert [r.getMessage() for r in caplog.records] == [
+        f"bad signature on a child manifest: {ENTRY_ID}",
+        f"bad signature on a segment: {ENTRY_ID}",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1241,6 +1461,81 @@ def test_loggable_strips_the_query_by_default() -> None:
 def test_loggable_keeps_host_and_path_for_diagnosis() -> None:
     assert loggable("https://cdn.example/a/b/c.m3u8?tok=x") == (
         "https://cdn.example/a/b/c.m3u8"
+    )
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        # the query is the cam's identity on these targets, and a credential is not
+        (
+            "https://www.youtube.com/watch?v=abcdefghijk&t=5",
+            "https://www.youtube.com/watch?v=abcdefghijk",
+        ),
+        (
+            "https://webtv.feratel.com/webtv/?cam=5132&design=v5",
+            "https://webtv.feratel.com/webtv/?cam=5132",
+        ),
+        (
+            "https://g0.ipcamlive.com/player/player.php?alias=harbour1",
+            "https://g0.ipcamlive.com/player/player.php?alias=harbour1",
+        ),
+        (
+            "https://api.wetmet.net/widgets/stream/frame.php?uid=ab12",
+            "https://api.wetmet.net/widgets/stream/frame.php?uid=ab12",
+        ),
+        (
+            "https://platforms5.joada.net/embeded/embeded.html?uuid=u-1&type=live",
+            "https://platforms5.joada.net/embeded/embeded.html?uuid=u-1",
+        ),
+        # a beachcam target carries its token beside nothing worth keeping
+        (
+            "https://video-auth1.iol.pt/beachcam/x/playlist.m3u8?wmsAuthSign=SECRET",
+            "https://video-auth1.iol.pt/beachcam/x/playlist.m3u8",
+        ),
+    ],
+)
+def test_loggable_keeps_only_the_params_that_name_the_cam(
+    url: str, expected: str
+) -> None:
+    assert loggable(url) == expected
+
+
+def test_loggable_drops_userinfo() -> None:
+    assert loggable("https://user:hunter2@cdn.example:8443/a.m3u8") == (
+        "https://cdn.example:8443/a.m3u8"
+    )
+
+
+def test_loggable_cuts_googlevideo_credentials_out_of_the_path() -> None:
+    """googlevideo signs its manifest URLs in the PATH, with our egress IP beside
+    the signature; only the route and the video id are worth a log line."""
+    url = (
+        "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/1795572147"
+        "/ei/EIVALUE/ip/203.0.113.7/id/abcdefghijk.2/itag/96/source/yt_live_broadcast"
+        "/sparams/expire,ei,ip,id/sig/SIGVALUE/lsparams/mh/lsig/LSIGVALUE"
+        "/file/index.m3u8"
+    )
+    assert loggable(url) == (
+        "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/abcdefghijk.2"
+    )
+
+
+def test_loggable_keeps_only_the_route_and_id_of_any_googlevideo_path() -> None:
+    """Whatever order the key/value pairs come in: nothing but the route and the
+    video id survives, so an `ip/` or `sig/` ahead of `expire/` can't leak."""
+    url = "https://rr1.googlevideo.com/videoplayback/id/abc.1/ip/203.0.113.7/sig/S/x"
+    assert loggable(url) == "https://rr1.googlevideo.com/videoplayback/id/abc.1"
+    assert loggable("https://rr1.googlevideo.com/other/ip/203.0.113.7") == (
+        "https://rr1.googlevideo.com/"
+    )
+
+
+def test_loggable_keeps_an_id_param_only_on_the_host_it_names_a_cam_on() -> None:
+    """A CDN could use `uid=` or `v=` as a session id: off the hosts where the
+    param names a cam, it goes with the rest of the query."""
+    assert loggable("https://cdn.example/seg.ts?uid=SESSION&v=7") == (
+        "https://cdn.example/seg.ts"
     )
 
 
@@ -1279,7 +1574,8 @@ def test_serve_stream_does_not_log_the_token(
             "e1",
             catalogue={"e1": entry},
             cache=cache,
-            fetch=lambda _u: None,  # force the manifest-fetch-failed warning
+            # force the manifest-fetch-failed warning
+            fetch=lambda _u: (None, "timeout"),
             base_url="http://x",
         )
     assert status == 502
