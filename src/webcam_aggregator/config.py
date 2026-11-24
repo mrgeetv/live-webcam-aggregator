@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from .categories import unknown_categories
+from webcam_aggregator.categories import unknown_categories
 
 _DEFAULT_SEARCH_QUERY = (
     "cam|webcam|live|beach|wildlife|aquarium|space|harbor|park|mountain|coast|city"

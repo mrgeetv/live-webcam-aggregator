@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 from urllib.parse import quote
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     predisc_key,
     with_location_parts,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _INDEX = "https://beachcam.meo.pt/livecams/"
 # Index links are absolute; the bare /livecams/ index itself has an empty slug and

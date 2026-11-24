@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
-from ..fetch import FetcherProtocol
-from ..models import Candidate
-from .base import predisc_key
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import predisc_key
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from webcam_aggregator.fetch import FetcherProtocol
 
 # Share-Ju (its-i.com) lists every cam on the ONE /camera index as a schema.org
 # ItemList of VideoObjects (name, YouTube embedUrl, per-cam page url, address, and

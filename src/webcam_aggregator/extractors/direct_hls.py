@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import unquote
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
 
 
 def unwrap(url: str) -> str:

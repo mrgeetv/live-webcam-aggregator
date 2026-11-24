@@ -3,12 +3,18 @@ from __future__ import annotations
 import json
 import re
 import string
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 from urllib.parse import urlsplit
 
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, predisc_key
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    predisc_key,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _BASE = "https://www.webcamera.pl"
 

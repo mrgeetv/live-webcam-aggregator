@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeIs
+from typing import TYPE_CHECKING, TypeIs
 
-from .extractors.base import Resolved
-from .logging_redaction import describe_error
+from webcam_aggregator.logging_redaction import describe_error
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from webcam_aggregator.extractors.base import Resolved
 
 TTL_FACTOR = 0.8
 NEGATIVE_TTL = 60.0

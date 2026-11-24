@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
-from .base import predisc_key, with_location_parts
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import predisc_key, with_location_parts
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _BASE = "https://www.livespotting.tv"
 # The consumer directory's server-rendered country pages. Hardcoded rather than

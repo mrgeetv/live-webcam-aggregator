@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # The property is checked by a lookahead, so attribute order doesn't matter and one
 # unclosed tag repeating it isn't rescanned from every repeat.

@@ -4,8 +4,8 @@ import logging
 import re
 from typing import override
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     predisc_key,

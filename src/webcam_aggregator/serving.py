@@ -4,13 +4,17 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urljoin, urlsplit
 
-from .cache import ResolveCache
-from .logging_redaction import trim_url
-from .models import CatalogueEntry
-from .signing import sign, verify
+from webcam_aggregator.logging_redaction import trim_url
+from webcam_aggregator.signing import sign, verify
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from webcam_aggregator.cache import ResolveCache
+    from webcam_aggregator.models import CatalogueEntry
 
 log = logging.getLogger("webcam-aggregator.serving")
 

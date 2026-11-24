@@ -3,14 +3,16 @@ from __future__ import annotations
 import html as htmllib
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator
 from dataclasses import replace
 from html.entities import html5
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import unquote, urljoin, urlsplit
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.models import Candidate
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 # `embed/videoseries?list=` (a playlist) and `embed/live_stream?channel=` (a channel's
 # current live) are 11 characters long, exactly like a video id: the lookahead keeps

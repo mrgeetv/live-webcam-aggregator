@@ -3,9 +3,12 @@ from __future__ import annotations
 import re
 import subprocess
 import time
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # We hand the player ONE url, so we need a *muxed* rendition (youtube's live
 # itags 91-96, video and audio in a single HLS ladder). Only some player clients

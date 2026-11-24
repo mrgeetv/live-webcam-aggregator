@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
-from .base import decode_entities, predisc_key, with_location_parts
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    decode_entities,
+    predisc_key,
+    with_location_parts,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _SITEMAP_INDEX = "https://www.whatsupcams.com/en/sitemap_index.xml"
 _LOC = re.compile(r"<loc>([^<]+)</loc>")

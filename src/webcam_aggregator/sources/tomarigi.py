@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
-from .base import decode_entities, predisc_key
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import decode_entities, predisc_key
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # The /world/spots/<region> listings (paginated /<n>) are the complete index: together
 # they link every cam, Japanese ones included (under asia). Both map views are

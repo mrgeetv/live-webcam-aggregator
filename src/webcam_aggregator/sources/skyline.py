@@ -5,10 +5,14 @@ import logging
 import re
 from typing import override
 
-from ..extractors.skyline import stream_token
-from ..fetch import thread_imap
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, with_location_parts
+from webcam_aggregator.extractors.skyline import stream_token
+from webcam_aggregator.fetch import thread_imap
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    with_location_parts,
+)
 
 log = logging.getLogger("webcam-aggregator.skyline")
 

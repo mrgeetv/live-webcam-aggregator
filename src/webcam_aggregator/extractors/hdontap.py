@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # HDOnTap cam pages ship the player config in the static HTML:
 #   <script id="player-data" type="application/json">

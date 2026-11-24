@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import json
 import re
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     extract_candidates,
     with_location,
     with_location_parts,
 )
+
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 _BASE = "https://www.cxtvlive.com/live-camera/"
 _SITEMAP = "https://www.cxtvlive.com/sitemap.php"

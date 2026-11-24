@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # balticlivecam is a WordPress site. The embed page carries the numeric camera id in
 # `var data = { action: 'auth_token', id: <N>, embed: 1 }`. POSTing

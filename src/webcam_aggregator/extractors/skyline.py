@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Skyline cam pages embed a Clappr player whose source is `livee.m3u8?a=<token>`, and
 # the real manifest lives at hd-auth.skylinewebcams.com/live.m3u8. The player config

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
-from .models import Candidate
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 _CAT_RANK = {"cxtvlive": 2, "worldcams": 1, "youtube-api": 0}
 

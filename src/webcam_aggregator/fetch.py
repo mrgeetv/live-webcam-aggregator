@@ -7,11 +7,10 @@ import os
 import socket
 import threading
 import time
-from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.cookiejar import DefaultCookiePolicy
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from urllib.parse import urlencode, urljoin, urlsplit
 
 import requests
@@ -21,6 +20,9 @@ from curl_cffi.const import CurlOpt
 from curl_cffi.curl import CURL_WRITEFUNC_ERROR
 from requests.adapters import HTTPAdapter
 from requests.structures import CaseInsensitiveDict
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 log = logging.getLogger("webcam-aggregator.fetch")
 

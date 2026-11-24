@@ -4,13 +4,20 @@ import html as htmllib
 import json
 import logging
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urljoin, urlsplit
 
-from ..fetch import FetcherProtocol, thread_imap, thread_map
-from ..models import Candidate
-from .base import decode_entities, extract_candidates, predisc_key
-from .camsecure import hls_from_player
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap, thread_map
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    decode_entities,
+    extract_candidates,
+    predisc_key,
+)
+from webcam_aggregator.sources.camsecure import hls_from_player
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 log = logging.getLogger("webcam-aggregator.wildlife-trusts")
 

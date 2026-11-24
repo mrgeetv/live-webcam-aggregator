@@ -6,9 +6,13 @@ import re
 from typing import override
 from urllib.parse import urlsplit
 
-from ..models import Candidate
-from .base import HtmlScraperSource, predisc_key, with_location_parts
-from .camsecure import hls_from_player, player_iframe
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    predisc_key,
+    with_location_parts,
+)
+from webcam_aggregator.sources.camsecure import hls_from_player, player_iframe
 
 log = logging.getLogger("webcam-aggregator.camscape")
 

@@ -2,21 +2,24 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from .categories import category_from_title, map_category
-from .dedup import dedupe
-from .fetch import OK, thread_map
-from .models import (
+from webcam_aggregator.categories import category_from_title, map_category
+from webcam_aggregator.dedup import dedupe
+from webcam_aggregator.fetch import OK, thread_map
+from webcam_aggregator.models import (
     NO_EXTRACTOR,
     YT_OFFLINE,
     Candidate,
     CatalogueEntry,
     stable_id,
 )
-from .sources.base import Source, decode_entities
+from webcam_aggregator.sources.base import Source, decode_entities
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Mapping
 
 log = logging.getLogger("webcam-aggregator.catalogue")
 

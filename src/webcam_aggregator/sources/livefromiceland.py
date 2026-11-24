@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, with_location_parts
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    with_location_parts,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # The site serves no sitemap, so the `webcam` post type's WP REST collection is
 # the cam index: ~32 cams, well inside WP's per_page ceiling of 100, so one call

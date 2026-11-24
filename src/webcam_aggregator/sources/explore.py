@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
-from ..fetch import FetcherProtocol
-from ..models import Candidate
-from .base import predisc_key
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import predisc_key
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from webcam_aggregator.fetch import FetcherProtocol
 
 # explore.org's livecams app pulls every stream from this CloudFront JSON (the `id_in`
 # filter is ignored — one call returns them all). Each live stream's `playlistUrl` is a

@@ -1,3 +1,3 @@
-from .app import main
+from webcam_aggregator.app import main
 
 main()

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     predisc_key,
     with_location_parts,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # feratel.com's own portal lists every public cam: the sitemap carries the
 # /en/webcams/<country>/<region>/<slug>-<cam id> detail pages (the one- and

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # EarthCam pages embed the live HLS in a JSON config (forward-slashes \/-escaped):
 #   https:\/\/videos-N.earthcam.com\/<path>\/playlist.m3u8?t=<token>&td=<ts>

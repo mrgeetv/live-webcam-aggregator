@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     extract_candidates,
     predisc_key,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # The "by webcam speed" index is the enumeration seam: its <strong>Streaming</strong>
 # section lists exactly the ~700 pages with a live stream, so we never fetch the

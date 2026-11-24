@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities
+from webcam_aggregator.sources.base import HtmlScraperSource, decode_entities
+
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 # WordPress sitemap for the `webcams` post type — the complete cam list. The bare
 # /webcams/ index has nothing after the slash and never matches.

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # ipcamlive embeds: g*.ipcamlive.com/player/player.php?alias=<id>. The player page exposes
 # `var address` + `var streamid`, which build <address>streams/<streamid>/stream.m3u8.

@@ -7,44 +7,47 @@ import sys
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, override
 
 import psutil
 
-from . import config
-from .cache import ResolveCache
-from .catalogue import Hist, build_catalogue, failure_counts, top_counts
-from .extractors.baltic import BalticResolver
-from .extractors.base import Extractor, Resolved
-from .extractors.direct_hls import DirectHls
-from .extractors.earthcam import EarthcamResolver
-from .extractors.hdontap import HdontapResolver
-from .extractors.ipcamlive import IpcamliveResolver, is_alias_page
-from .extractors.metatag import MetaTagExtractor
-from .extractors.ozolio import OzolioResolver
-from .extractors.skyline import SkylineResolver
-from .extractors.viewsurf import ViewsurfResolver
-from .extractors.wetmet import WetmetResolver
-from .extractors.ytdlp import YtDlpExtractor
-from .fetch import (
+from webcam_aggregator import config
+from webcam_aggregator.cache import ResolveCache
+from webcam_aggregator.catalogue import (
+    Hist,
+    build_catalogue,
+    failure_counts,
+    top_counts,
+)
+from webcam_aggregator.extractors.baltic import BalticResolver
+from webcam_aggregator.extractors.direct_hls import DirectHls
+from webcam_aggregator.extractors.earthcam import EarthcamResolver
+from webcam_aggregator.extractors.hdontap import HdontapResolver
+from webcam_aggregator.extractors.ipcamlive import IpcamliveResolver, is_alias_page
+from webcam_aggregator.extractors.metatag import MetaTagExtractor
+from webcam_aggregator.extractors.ozolio import OzolioResolver
+from webcam_aggregator.extractors.skyline import SkylineResolver
+from webcam_aggregator.extractors.viewsurf import ViewsurfResolver
+from webcam_aggregator.extractors.wetmet import WetmetResolver
+from webcam_aggregator.extractors.ytdlp import YtDlpExtractor
+from webcam_aggregator.fetch import (
     MANIFEST_MAX_BYTES,
     Fetcher,
     FetcherPostProtocol,
     FetchStats,
     HostPacer,
 )
-from .logging_redaction import RedactingFilter, scrub, trim_urls
-from .models import (
+from webcam_aggregator.logging_redaction import RedactingFilter, scrub, trim_urls
+from webcam_aggregator.models import (
     DEAD_MANIFEST,
     NO_EXTRACTOR,
     RESOLVE_FAILED,
     Candidate,
     CatalogueEntry,
 )
-from .registry import Registry
-from .serving import (
+from webcam_aggregator.registry import Registry
+from webcam_aggregator.serving import (
     SegmentResponse,
     first_variant,
     is_playable_manifest,
@@ -53,29 +56,34 @@ from .serving import (
     serve_segment,
     serve_stream,
 )
-from .sources.airportwebcams import AirportWebcamsSource
-from .sources.beachcam import BeachcamSource
-from .sources.camscape import CamscapeSource
-from .sources.camsecure import CamSecureSource
-from .sources.cxtvlive import CxtvliveSource
-from .sources.earthcam import EarthCamSource
-from .sources.explore import ExploreOrgSource
-from .sources.feratel import FeratelSource
-from .sources.hdontap import HdOnTapSource
-from .sources.livefromiceland import LiveFromIcelandSource
-from .sources.livespotting import LivespottingSource
-from .sources.ozolio import OzolioSource
-from .sources.resortcams import ResortCamsSource
-from .sources.shareju import SharejuSource
-from .sources.skyline import SkylineSource
-from .sources.tomarigi import TomarigiSource
-from .sources.viewsurf import ViewsurfSource
-from .sources.webcamerapl import WebcameraPlSource
-from .sources.whatsupcams import WhatsupcamsSource
-from .sources.wildlife_trusts import WildlifeTrustsSource
-from .sources.windy import WindySource
-from .sources.worldcams import WorldcamsSource
-from .sources.youtube_api import YoutubeApiSource
+from webcam_aggregator.sources.airportwebcams import AirportWebcamsSource
+from webcam_aggregator.sources.beachcam import BeachcamSource
+from webcam_aggregator.sources.camscape import CamscapeSource
+from webcam_aggregator.sources.camsecure import CamSecureSource
+from webcam_aggregator.sources.cxtvlive import CxtvliveSource
+from webcam_aggregator.sources.earthcam import EarthCamSource
+from webcam_aggregator.sources.explore import ExploreOrgSource
+from webcam_aggregator.sources.feratel import FeratelSource
+from webcam_aggregator.sources.hdontap import HdOnTapSource
+from webcam_aggregator.sources.livefromiceland import LiveFromIcelandSource
+from webcam_aggregator.sources.livespotting import LivespottingSource
+from webcam_aggregator.sources.ozolio import OzolioSource
+from webcam_aggregator.sources.resortcams import ResortCamsSource
+from webcam_aggregator.sources.shareju import SharejuSource
+from webcam_aggregator.sources.skyline import SkylineSource
+from webcam_aggregator.sources.tomarigi import TomarigiSource
+from webcam_aggregator.sources.viewsurf import ViewsurfSource
+from webcam_aggregator.sources.webcamerapl import WebcameraPlSource
+from webcam_aggregator.sources.whatsupcams import WhatsupcamsSource
+from webcam_aggregator.sources.wildlife_trusts import WildlifeTrustsSource
+from webcam_aggregator.sources.windy import WindySource
+from webcam_aggregator.sources.worldcams import WorldcamsSource
+from webcam_aggregator.sources.youtube_api import YoutubeApiSource
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from webcam_aggregator.extractors.base import Extractor, Resolved
 
 log = logging.getLogger("webcam-aggregator")
 _HLS_CT = "application/vnd.apple.mpegurl"

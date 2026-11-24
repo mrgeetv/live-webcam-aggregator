@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # WetMet publishes cams as a widget iframe, api.wetmet.net/widgets/stream/frame.php?uid=…,
 # whose inline player script assigns the HLS master playlist outright:

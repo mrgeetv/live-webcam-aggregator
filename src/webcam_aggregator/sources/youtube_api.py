@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable, Iterable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..logging_redaction import scrub
-from ..models import Candidate
+from webcam_aggregator.logging_redaction import scrub
+from webcam_aggregator.models import Candidate
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
 
 log = logging.getLogger("webcam-aggregator.sources.youtube")
 

@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Iterator
 from dataclasses import replace
 from html import unescape
+from typing import TYPE_CHECKING
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
-from .base import extract_candidates, with_location_parts
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.sources.base import extract_candidates, with_location_parts
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from webcam_aggregator.models import Candidate
 
 # Windy's webcams platform hosts no video itself, but a live cam's stream page
 # (webcams.windy.com/webcams/stream/<id>) is a tiny static HTML wrapper around the

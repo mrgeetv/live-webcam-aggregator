@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Ozolio cams live behind relay.ozolio.com's two-call session API (the same exchange
 # the /explore page's player makes):

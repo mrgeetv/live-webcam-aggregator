@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..extractors.hdontap import stream_src
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, extract_candidates
+from webcam_aggregator.extractors.hdontap import stream_src
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    extract_candidates,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _SITEMAP = "https://hdontap.com/sitemap.xml"
 # Cam pages are /stream/<id>/<slug>/. Their /embed/ twins sit in the sitemap's
