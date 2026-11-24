@@ -9,9 +9,9 @@ from .base import Resolved
 
 # We hand the player ONE url, so we need a *muxed* rendition (youtube's live
 # itags 91-96, video and audio in a single HLS ladder). Only some player clients
-# offer those: youtube's own default rotates, and the current default (visionos)
-# serves video-only + audio-only formats, which this extractor cannot use.
-# mweb and web_embedded both still carry the muxed ladder at full quality; the
+# offer those: yt-dlp's default clients rotate, and can serve only video-only +
+# audio-only formats, which this extractor cannot use.
+# mweb and web_embedded both carry the muxed ladder at full quality; the
 # second is a fallback for mweb being withdrawn, and costs ~1s per resolve.
 # Revisit whenever yt-dlp changes its default clients — this pin exists to buy a
 # muxed format, not because mweb is special.
@@ -19,6 +19,14 @@ _MUXED_CLIENTS = "youtube:player_client=mweb,web_embedded"
 
 
 _TIMEOUT = 60
+
+# yt-dlp names the video or channel in every error (`ERROR: [youtube] <id>: …`) and
+# tacks a bug-report plea onto many. The error is the bucket key of the build's
+# resolve-failure aggregate, so both go: with the id left in, one failure mode
+# across every cam reads as a handful of single-cam buckets. The serve-path warning
+# names the cam through its target URL.
+_ERROR_SUBJECT = re.compile(r"^(ERROR: \[[\w:]+\]) [^\s:]+: ", re.M)
+_REPORT_PLEA = re.compile(r";? please report this issue on [^\n]*")
 
 
 def _default_run(argv: list[str]) -> str:
@@ -29,7 +37,8 @@ def _default_run(argv: list[str]) -> str:
         # truncated resolve-failure detail
         raise ValueError(f"yt-dlp timed out after {_TIMEOUT}s") from None
     if r.returncode != 0 or not r.stdout.strip():
-        raise ValueError(f"yt-dlp failed: {r.stderr.strip()[:200]}")
+        reason = _REPORT_PLEA.sub("", _ERROR_SUBJECT.sub(r"\1 ", r.stderr)).strip()
+        raise ValueError(f"yt-dlp failed: {reason[:200]}")
     return r.stdout.strip()
 
 

@@ -245,7 +245,7 @@ the drop breakdown:
 ```text
 skyline: 1668 kept / 2566 discovered — dropped 898 (612x dead-manifest, 210x resolve-failed)
 skyline: no extractor for 76 candidate(s) — top hosts: 40x rtsp.me, 20x ivideon.com
-skyline: top resolve failures — 214x yt-dlp failed: Sign in to confirm you're not a bot
+skyline: top resolve failures — 214x yt-dlp failed: ERROR: [youtube] Sign in to confirm you're not a bot
 ```
 
 A source that comes back empty says **why**, at `WARNING`, in one of two shapes:
@@ -306,7 +306,7 @@ A player request the server refuses, or answers with an upstream error, logs one
 *Secrets in logs*), and why:
 
 ```text
-resolve failed: a6e644c9b47f215b -> https://www.youtube.com/watch?v=<id>: ValueError: yt-dlp failed: ERROR: [youtube] <id>: Private video
+resolve failed: a6e644c9b47f215b -> https://www.youtube.com/watch?v=<id>: ValueError: yt-dlp failed: ERROR: [youtube] Private video
 re-resolve failed, keeping the cached URL: a6e644c9b47f215b -> https://www.youtube.com/watch?v=<id>: ValueError: yt-dlp timed out after 60s
 manifest fetch failed (http-403): 1f0c... -> https://cdn.example/live/playlist.m3u8
 unplayable child manifest (no segments or variants): 1f0c... -> https://cdn.example/live/chunklist.m3u8
@@ -322,6 +322,21 @@ verifying until they reload the stream. An id the catalogue doesn't know logs
 once a minute across all ids, and an id not shaped like ours shows as
 `<malformed id>`.
 
+### Every YouTube cam fails to play
+
+If YouTube cams answer `502` on play while the scraped ones work, and the serve
+warnings say `No video formats found!`, yt-dlp's n-challenge solver (deno plus
+`yt-dlp-ejs`) can't handle YouTube's current player. The build-time counts barely
+move: YouTube cams' liveness comes from the Data API, which never resolves them, so
+only `airportwebcams` drops to near zero. Run `yt-dlp -v` on one cam inside the
+container and look for `n challenge solving failed`. The fix is a `yt-dlp` (or
+`yt-dlp-ejs`) bump. To try a candidate version in the container first, install it
+to a scratch dir and put that dir **ahead of** the image's path
+(`PYTHONPATH=/tmp/ytnew:/deps`): replacing `PYTHONPATH` outright drops `yt-dlp-ejs`,
+and every resolve then fails the same way whatever the version. An Android
+`player_client` still resolves, because those skip the challenge, but it is no fix
+until it has passed the leash check below.
+
 ### YouTube cams that play briefly, then stop
 
 Nothing in the logs will show this one — it is worth knowing by hand. If **many**
@@ -336,7 +351,8 @@ To confirm: resolve one cam by hand, then fetch a segment straight away and agai
 minute later.
 
 ```bash
-U=$(yt-dlp -q --no-warnings -f 'b[protocol*=m3u8]/b' -g -- "https://www.youtube.com/watch?v=<id>")
+U=$(yt-dlp -q --no-warnings --extractor-args youtube:player_client=mweb,web_embedded \
+  -f 'b[protocol*=m3u8]/b' -g -- "https://www.youtube.com/watch?v=<id>")
 S=$(curl -s "$U" | grep -o 'https://[^ ]*' | sed -n '3p')
 curl -sL -o /dev/null -w '%{http_code}\n' "$S"    # 200 now...
 sleep 60
