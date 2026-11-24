@@ -8,9 +8,32 @@ _BASE = "https://www.camscape.com"
 def _cam_page(
     streams_json: str, tags: str = "beaches", locs: tuple[str, ...] = ()
 ) -> str:
-    tag_html = "".join(f'<a href="/showing/{t}/">x</a>' for t in tags.split())
-    loc_html = "".join(f'<a href="/location/{loc}/">x</a>' for loc in locs)
-    return f'{tag_html}{loc_html}<script>var c={{"streams":{streams_json}}};</script>'
+    # Every page's nav links the seasonal category; only the where-links are the cam's.
+    nav = '<a class="ni" href="/showing/christmas/">Christmas</a>'
+    tag_html = "".join(
+        f'<a class="where-link" href="/showing/{t}/">x</a>' for t in tags.split()
+    )
+    loc_html = "".join(
+        f'<a class="where-link" href="/location/{loc}/">x</a>' for loc in locs
+    )
+    return (
+        f"{nav}{loc_html}{tag_html}"
+        f'<script id="streams-data" type="application/json">{streams_json}</script>'
+    )
+
+
+def _site(
+    cams: dict[str, str], slugs: tuple[str, ...] = ("beaches",)
+) -> dict[str, str]:
+    """The index pages around `cams` (cam url -> page html): the category index, and a
+    sitemap index pointing at one webcam sitemap listing every cam."""
+    sitemap = f"{_BASE}/webcam-sitemap.xml"
+    return {
+        f"{_BASE}/showing/": "".join(f'<a href="/showing/{s}/">x</a>' for s in slugs),
+        f"{_BASE}/sitemap_index.xml": f"<sitemap><loc>{sitemap}</loc></sitemap>",
+        sitemap: "".join(f"<url><loc>{u}</loc></url>" for u in cams),
+        **cams,
+    }
 
 
 class _FakeFetch:
@@ -30,31 +53,57 @@ def test_camscape_discover_multistream_category_location_and_dedup():
         '{"name":"Salty Cottage Cam","url":"https://www.youtube.com/embed/aaaaaaaaaaa"}]'
     )
     pages = {
-        f"{_BASE}/showing/": f'<a href="{_BASE}/showing/beaches/">B</a>',
-        f"{_BASE}/showing/beaches/": f'<a href="{cam}">d</a>',
-        cam: _cam_page(
-            streams, tags="beaches trains-railways", locs=("devon", "england")
+        **_site(
+            {cam: _cam_page(streams, tags="beaches trains-railways", locs=("devon",))},
+            ("beaches",),
         ),
     }
     cands = list(CamscapeSource(_FakeFetch(pages)).discover())
     assert len(cands) == 2  # both angles
     titles = {c.title for c in cands}
-    # names from the JSON, geo from /location tags (specific->general), category dropped
-    assert "Marine Parade Cam — Devon, England" in titles
-    assert "Salty Cottage Cam — Devon, England" in titles
+    # names from the JSON, geo from the location where-link, category dropped
+    assert "Marine Parade Cam — Devon" in titles
+    assert "Salty Cottage Cam — Devon" in titles
     assert all(c.category == "Beaches" for c in cands)  # first mapped tag
     assert all(c.source == "camscape" for c in cands)
     yt = next(c for c in cands if "youtube" in c.target_url)
     assert yt.predisc_key == "yt:aaaaaaaaaaa"  # dedups with youtube-api
 
 
+def test_camscape_ignores_the_nav_category_link():
+    """Every page's nav links /showing/christmas/; an untagged cam must stay
+    uncategorised (-> title fallback), not land in Seasonal."""
+    cam = f"{_BASE}/webcam/x/"
+    streams = '[{"name":"Live","url":"https://www.youtube.com/embed/ccccccccccc"}]'
+    pages = _site({cam: _cam_page(streams, tags="")})
+    (c,) = list(CamscapeSource(_FakeFetch(pages)).discover())
+    assert c.category is None
+
+
+def test_camscape_reads_every_webcam_sitemap_and_only_those():
+    a, b = f"{_BASE}/webcam/a/", f"{_BASE}/webcam/b/"
+    streams = '[{"name":"Live","url":"https://www.youtube.com/embed/ddddddddddd"}]'
+    pages = {
+        f"{_BASE}/sitemap_index.xml": (
+            f"<loc>{_BASE}/webcam-sitemap.xml</loc>"
+            f"<loc>{_BASE}/webcam-sitemap2.xml</loc>"
+            f"<loc>{_BASE}/location-sitemap.xml</loc>"
+        ),
+        f"{_BASE}/webcam-sitemap.xml": f"<loc>{a}</loc>",
+        f"{_BASE}/webcam-sitemap2.xml": f"<loc>{b}</loc>",
+        f"{_BASE}/location-sitemap.xml": f"<loc>{_BASE}/webcam/not-fetched/</loc>",
+        a: _cam_page(streams),
+        b: _cam_page(streams),
+    }
+    cands = list(CamscapeSource(_FakeFetch(pages)).discover())
+    assert {c.source_page_url for c in cands} == {a, b}
+
+
 def test_camscape_normalises_twitch_embed_for_ytdlp():
     cam = f"{_BASE}/webcam/x/"
     streams = '[{"name":"Live","url":"https://player.twitch.tv/?channel=foo&parent=www.camscape.com"}]'
     pages = {
-        f"{_BASE}/showing/": f'<a href="{_BASE}/showing/cityscapes/">C</a>',
-        f"{_BASE}/showing/cityscapes/": f'<a href="{cam}">x</a>',
-        cam: _cam_page(streams, tags="cityscapes"),
+        **_site({cam: _cam_page(streams, tags="cityscapes")}, ("cityscapes",)),
     }
     cands = list(CamscapeSource(_FakeFetch(pages)).discover())
     assert cands[0].target_url == "https://www.twitch.tv/foo"
@@ -67,9 +116,9 @@ def test_camscape_resolves_camsecure_player_embed_to_its_hls():
     cam = f"{_BASE}/webcam/manchester-city-airport-heliport-cams/"
     player = "https://camsecure.co/httpswebcam/cityair/cityair1.html"
     pages = {
-        f"{_BASE}/showing/": f'<a href="{_BASE}/showing/beaches/">B</a>',
-        f"{_BASE}/showing/beaches/": f'<a href="{cam}">d</a>',
-        cam: _cam_page(f'[{{"name":"Apron","url":"{player}"}}]'),
+        **_site(
+            {cam: _cam_page(f'[{{"name":"Apron","url":"{player}"}}]')}, ("beaches",)
+        ),
         player: '<video><source src="/HLS/cityair.m3u8" type="application/x-mpegURL">',
     }
     (c,) = list(CamscapeSource(_FakeFetch(pages)).discover())
@@ -85,9 +134,9 @@ def test_camscape_follows_a_camsecure_cam_page_to_its_player():
     page = "https://www.camsecure.co.uk/sennen_cove_webcam.html"
     player = "https://camsecure.co/httpswebcam/camsecure/sennen.html"
     pages = {
-        f"{_BASE}/showing/": f'<a href="{_BASE}/showing/beaches/">B</a>',
-        f"{_BASE}/showing/beaches/": f'<a href="{cam}">d</a>',
-        cam: _cam_page(f'[{{"name":"Sennen","url":"{page}"}}]'),
+        **_site(
+            {cam: _cam_page(f'[{{"name":"Sennen","url":"{page}"}}]')}, ("beaches",)
+        ),
         page: f'<iframe src="{player}"></iframe>',
         player: '<video><source src="https://camsecure.uk/HLS/sennen.m3u8">',
     }
@@ -101,9 +150,7 @@ def test_camscape_keeps_an_unresolvable_camsecure_embed_visible():
     cam = f"{_BASE}/webcam/x/"
     embed = "https://camsecure.co/httpswebcam/gone/gone.html"
     pages = {
-        f"{_BASE}/showing/": f'<a href="{_BASE}/showing/beaches/">B</a>',
-        f"{_BASE}/showing/beaches/": f'<a href="{cam}">d</a>',
-        cam: _cam_page(f'[{{"name":"Gone","url":"{embed}"}}]'),
+        **_site({cam: _cam_page(f'[{{"name":"Gone","url":"{embed}"}}]')}, ("beaches",)),
         embed: "<h1>404</h1>",
     }
     (c,) = list(CamscapeSource(_FakeFetch(pages)).discover())
@@ -116,9 +163,9 @@ def test_camscape_leaves_a_direct_camsecure_m3u8_alone():
     cam = f"{_BASE}/webcam/newlyn-harbour-webcams/"
     m3u8 = "https://camsecure.co/HLS/newlyn.m3u8"
     pages = {
-        f"{_BASE}/showing/": f'<a href="{_BASE}/showing/beaches/">B</a>',
-        f"{_BASE}/showing/beaches/": f'<a href="{cam}">d</a>',
-        cam: _cam_page(f'[{{"name":"Newlyn","url":"{m3u8}"}}]'),
+        **_site(
+            {cam: _cam_page(f'[{{"name":"Newlyn","url":"{m3u8}"}}]')}, ("beaches",)
+        ),
     }
     (c,) = list(CamscapeSource(_FakeFetch(pages)).discover())
     assert c.target_url == m3u8  # untouched; _FakeFetch has no entry for it
@@ -130,9 +177,9 @@ def test_camscape_unknown_tag_flagged_unmapped(caplog: pytest.LogCaptureFixture)
     cam = f"{_BASE}/webcam/drone-cam/"
     streams = '[{"name":"Drone","url":"https://www.youtube.com/embed/bbbbbbbbbbb"}]'
     pages = {
-        f"{_BASE}/showing/": f'<a href="{_BASE}/showing/drones/">D</a>',
-        f"{_BASE}/showing/drones/": f'<a href="{cam}">x</a>',
-        cam: _cam_page(streams, tags="drones"),  # 'drones' isn't in _CATEGORY
+        **_site(
+            {cam: _cam_page(streams, tags="drones")}, ("drones",)
+        ),  # 'drones' isn't in _CATEGORY
     }
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.camscape"):
         cands = list(CamscapeSource(_FakeFetch(pages)).discover())
