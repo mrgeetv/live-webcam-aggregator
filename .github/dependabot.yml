@@ -1,14 +1,27 @@
 version: 2
 updates:
-  # Python dependencies - Friday morning for weekend review
+  # Python dependencies. yt-dlp breaks whenever YouTube changes its player, and a
+  # release is the only fix, so it is checked every weekday and exempt from the
+  # cooldown (without one, dependabot applies its own default). Everything else
+  # waits out a 7-day cooldown. One pip block only: GitHub rejects a second block that
+  # overlaps this one's directory.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "friday"
+      interval: "daily"
       time: "08:00"
       timezone: "Etc/UTC"
+    cooldown:
+      default-days: 7
+      exclude:
+        - "yt-dlp"
+        - "yt-dlp-ejs"
     groups:
+      # first matching group wins, so this must stay above the catch-all
+      youtube-extraction:
+        patterns:
+          - "yt-dlp"
+          - "yt-dlp-ejs"
       python-dependencies:
         patterns:
           - "*"

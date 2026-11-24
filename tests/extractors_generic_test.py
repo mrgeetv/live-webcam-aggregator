@@ -106,6 +106,45 @@ def test_ytdlp_timeout_says_so_without_the_command(
     assert str(exc.value) == "yt-dlp timed out after 60s"
 
 
+@pytest.mark.parametrize(
+    ("stderr_by_target", "expected"),
+    [
+        (
+            {
+                "https://www.youtube.com/watch?v=T_QsY01tIK0": "ERROR: [youtube] T_QsY01tIK0: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using  yt-dlp -U\n",
+                "https://www.youtube.com/watch?v=3PQQIMKVxKU": "ERROR: [youtube] 3PQQIMKVxKU: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using  yt-dlp -U\n",
+            },
+            "yt-dlp failed: ERROR: [youtube] No video formats found!",
+        ),
+        (
+            {
+                "https://www.youtube.com/@SDTVLiveAviation/live": "ERROR: [youtube:tab] @SDTVLiveAviation: The channel is not currently live\n",
+                "https://www.youtube.com/channel/UCFBLgN9dJFwU9qF_Ju8QAAg/live": "ERROR: [youtube:tab] UCFBLgN9dJFwU9qF_Ju8QAAg: The channel is not currently live\n",
+            },
+            "yt-dlp failed: ERROR: [youtube:tab] The channel is not currently live",
+        ),
+    ],
+)
+def test_ytdlp_failure_names_the_reason_not_the_video(
+    monkeypatch: pytest.MonkeyPatch,
+    stderr_by_target: dict[str, str],
+    expected: str,
+) -> None:
+    """The resolve error is the bucket key of the build's `top resolve failures`
+    line, so one failure mode must read the same for every cam. Left in, the video
+    or channel id splits a total outage into one small bucket per cam, which reads
+    as a few dead streams."""
+
+    def fail(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 1, "", stderr_by_target[argv[-1]])
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    for target in stderr_by_target:
+        with pytest.raises(ValueError) as exc:
+            YtDlpExtractor().resolve(target)
+        assert str(exc.value) == expected
+
+
 def test_wetmet_extracts_the_player_script_url() -> None:
     """The widget's inline script assigns the master playlist to `vurl` (plain, not
     JSON-escaped — the fixture mirrors the real page)."""

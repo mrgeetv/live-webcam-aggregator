@@ -5,5 +5,5 @@ google-auth-httplib2==0.4.4
 google-auth-oauthlib==1.5.0
 psutil==7.2.2
 requests==2.34.2
-yt-dlp==2026.10.26
+yt-dlp==2026.11.23
 yt-dlp-ejs==0.8.0

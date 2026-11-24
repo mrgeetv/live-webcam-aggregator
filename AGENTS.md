@@ -140,9 +140,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   If the CDN's tokens are IP-bound, ALSO add its host to `_DIRECT_PLAYBACK_HOSTS`
   (passthrough) or `_PROXY_SEGMENT_HOSTS` (segment relay) in `serving.py`, or
   segments will 403. Three rules for the extractor body: raised error messages
-  carry NO URL (they feed the aggregated `resolve-failed` detail at INFO — a URL
-  leaks paths/tokens and shatters one failure mode into per-prefix buckets when the
-  detail truncates; liveness already logs the URL at DEBUG); `ttl_seconds` must sit
+  carry NO URL and no per-cam id (they feed the aggregated `resolve-failed` detail
+  at INFO — a URL leaks paths/tokens, and a URL or id shatters one failure mode into
+  per-cam buckets; liveness already logs the URL at DEBUG, and `ytdlp.py` strips the
+  video/channel id yt-dlp puts in every error); `ttl_seconds` must sit
   BELOW the upstream token's real lifetime (`ResolveCache` serves the entry for
   ttl × 0.8, and `None` means ~8 min — a too-long TTL hands players a token that
   lapsed while nobody watched; short is cheap, a re-resolve is one fetch on the
@@ -341,6 +342,15 @@ The app is two phases, decoupled by a catalogue snapshot:
   the ajax URL — wrong Referer 403s silently.
 - YouTube extraction needs the deno/yt-dlp-ejs stack (the n-challenge); the Dockerfile
   patches deno's ELF interpreter so it runs on the hardened Alpine runtime — leave it.
+  When the solver can't handle a new YouTube player, yt-dlp drops every format whose
+  n it couldn't solve, and **every** YouTube resolve fails `No video formats found!`:
+  a 502 on play for every YouTube cam. The build barely shows it — YouTube liveness
+  is the Data API, so those cams all ship; only airportwebcams, whose channel `/live`
+  candidates are resolved at liveness, collapses. `yt-dlp -v` names the cause
+  (`n challenge solving failed`), and the fix is a yt-dlp / yt-dlp-ejs bump
+  (`.github/dependabot.yml` proposes those outside its cooldown). A client
+  that skips the challenge (Android ones such as `android_vr`) still resolves, but
+  that is no fix until it has passed the leash check below.
 - Liveness is a **build-time** probe (the playlist must not list dead cams); the
   serve-time resolve is separate and fresh (tokens expire). Don't merge them.
 - yt-dlp is forced to an **HLS** format (`-f b[protocol*=m3u8]`) — some live streams
