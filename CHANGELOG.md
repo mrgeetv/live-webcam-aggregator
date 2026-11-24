@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.14](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.13...v2.14.14) (2026-11-24)
+
+### Bug Fixes
+
+* **deps:** bump denoland/deno from alpine-2.8.3 to alpine-2.9.8 ([#193](https://github.com/mrgeetv/live-webcam-aggregator/issues/193)) ([6488366](https://github.com/mrgeetv/live-webcam-aggregator/commit/6488366385d3259d1953df95109474621dc76705))
+
+### Maintenance
+
+* **deps:** bump the pre-commit-hooks group with 9 updates ([#194](https://github.com/mrgeetv/live-webcam-aggregator/issues/194)) ([7ca1a6c](https://github.com/mrgeetv/live-webcam-aggregator/commit/7ca1a6cb1bc357396f99314c0f77e967b9d7ecb6))
+* **deps:** bump the release-tooling group ([#196](https://github.com/mrgeetv/live-webcam-aggregator/issues/196)) ([694975a](https://github.com/mrgeetv/live-webcam-aggregator/commit/694975a796ed6d582889d54feffa44120d824ace))
+
 ## [2.14.13](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.12...v2.14.13) (2026-11-24)
 
 ### Bug Fixes
