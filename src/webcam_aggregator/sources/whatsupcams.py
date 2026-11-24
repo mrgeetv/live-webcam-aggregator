@@ -61,7 +61,9 @@ class WhatsupcamsSource:
         page_list = sorted(pages)
         # hop 1: cam pages -> (page, title, cam id)
         found: list[tuple[str, str, str]] = []
-        for page, html in zip(page_list, thread_imap(self._fetch.get, page_list)):
+        for page, html in zip(
+            page_list, thread_imap(self._fetch.get, page_list), strict=True
+        ):
             m = _WGT_ID.search(html or "")
             if not m:
                 continue
@@ -71,7 +73,7 @@ class WhatsupcamsSource:
         # hop 2: per-id CDN API -> the cam's HLS URL (concurrent)
         seen: set[str] = set()
         raws = thread_imap(self._fetch.get, [_API + f[2] for f in found])
-        for (page, title, _cam_id), raw in zip(found, raws):
+        for (page, title, _cam_id), raw in zip(found, raws, strict=True):
             try:
                 data = json.loads(raw or "")
             except ValueError:

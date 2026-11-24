@@ -151,7 +151,9 @@ class WildlifeTrustsSource:
         for trust_pages in thread_map(self._cam_pages, origins):
             pages.update(trust_pages)
         ordered = sorted(pages)
-        for url, html in zip(ordered, thread_imap(self._fetch.get, ordered)):
+        for url, html in zip(
+            ordered, thread_imap(self._fetch.get, ordered), strict=True
+        ):
             if html:
                 found.extend(self._page(url, html, card_titles.get(url)))
         best: dict[str, tuple[int, Candidate]] = {}
@@ -239,12 +241,12 @@ class WildlifeTrustsSource:
             # Several cams on one page, often other projects' (the Derby blog embeds
             # Rutland's and Holkham's): an untitled YouTube one takes the video's own
             # title, and any still untitled are numbered after the page.
-            titles = thread_map(self._yt_title, list(zip(targets, titles)))
+            titles = thread_map(self._yt_title, list(zip(targets, titles, strict=True)))
         page_title = card_title or self._page_title(html)
         untitled = titles.count("")
         n = 0
         out: list[tuple[int, Candidate]] = []
-        for target, title in zip(targets, titles):
+        for target, title in zip(targets, titles, strict=True):
             if not title:
                 n += 1
                 title = f"{page_title} {n}" if untitled > 1 else page_title

@@ -277,7 +277,7 @@ def build_catalogue(
             reasons: dict[str, int] = {}
             no_ext_hosts: dict[str, int] = {}
             details: dict[str, int] = {}
-            for c, reason in zip(cands, thread_map(drop_reason, cands)):
+            for c, reason in zip(cands, thread_map(drop_reason, cands), strict=True):
                 if reason is None:
                     kept.append(_apply_yt_category(c, live))
                     continue

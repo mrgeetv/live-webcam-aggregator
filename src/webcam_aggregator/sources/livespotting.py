@@ -47,7 +47,7 @@ class LivespottingSource:
         ids = sorted(page_for)
         raws = thread_imap(self._fetch.get, [_API.format(cam_id=i) for i in ids])
         seen: set[str] = set()
-        for cam_id, raw in zip(ids, raws):
+        for cam_id, raw in zip(ids, raws, strict=True):
             try:
                 data = json.loads(raw or "")
             except ValueError:

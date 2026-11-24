@@ -287,7 +287,7 @@ class HtmlScraperSource(ABC, Generic[Ctx]):
 
     def discover(self) -> Iterator[Candidate]:
         urls = self._page_urls()
-        for url, html in zip(urls, thread_imap(self._fetch.get, urls)):
+        for url, html in zip(urls, thread_imap(self._fetch.get, urls), strict=True):
             if not html:
                 continue
             category, ctx = self._page_meta(html, url)

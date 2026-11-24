@@ -97,7 +97,7 @@ class TomarigiSource:
                 listings.update(_LISTING_HREF.findall(html or ""))
         pages = sorted(_SITE + path for path in spots)
         seen: set[str] = set()
-        for page, html in zip(pages, thread_imap(self._fetch.get, pages)):
+        for page, html in zip(pages, thread_imap(self._fetch.get, pages), strict=True):
             item = _video_object(html or "")
             if item is None:
                 continue

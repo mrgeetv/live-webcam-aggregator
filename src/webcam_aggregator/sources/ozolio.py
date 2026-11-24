@@ -36,7 +36,7 @@ class OzolioSource:
         pages = sorted(
             {loc.strip() for loc in _LOC.findall(sm) if _EXPLORE.match(loc.strip())}
         )
-        for page, html in zip(pages, thread_imap(self._fetch.get, pages)):
+        for page, html in zip(pages, thread_imap(self._fetch.get, pages), strict=True):
             m = _TITLE.search(html or "")
             if not m:
                 continue  # fetch failed, or the page isn't a rendered cam page

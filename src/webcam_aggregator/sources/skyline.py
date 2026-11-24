@@ -113,7 +113,9 @@ class SkylineSource(HtmlScraperSource[_Ctx]):
         # passes through as the raw slug, which maps to "Unmapped Category"). A cam on
         # several category pages takes the first in the index's order; one on none
         # stays uncategorised.
-        for slug, html in zip(slugs, thread_imap(self._fetch.get, cat_urls)):
+        for slug, html in zip(
+            slugs, thread_imap(self._fetch.get, cat_urls), strict=True
+        ):
             cat = _CATEGORY.get(slug, slug)
             for rel in _CAM_LINK.findall(html or ""):
                 u = f"{_BASE}{rel}"
