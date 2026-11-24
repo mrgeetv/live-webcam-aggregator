@@ -60,8 +60,8 @@ def _make_cache() -> ResolveCache:
     return ResolveCache(resolve, clock=time.monotonic)
 
 
-def _manifest_fetch(_url: str) -> str | None:
-    return _SMALL_MANIFEST
+def _manifest_fetch(_url: str) -> tuple[str | None, str]:
+    return _SMALL_MANIFEST, "ok"
 
 
 def _youtube_live(ids: Iterable[str]) -> dict[str, str]:
@@ -100,7 +100,7 @@ def test_end_to_end_server() -> None:
             "unhealthy": [],
             "last_build_seconds": None,
         },
-        segment_fetch=lambda u, r: (200, "video/mp2t", None, b"seg"),
+        segment_fetch=lambda u, r: ((200, "video/mp2t", None, b"seg"), "ok"),
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
     port = server.server_address[1]

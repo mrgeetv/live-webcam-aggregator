@@ -18,8 +18,16 @@ from .base import Resolved
 _MUXED_CLIENTS = "youtube:player_client=mweb,web_embedded"
 
 
+_TIMEOUT = 60
+
+
 def _default_run(argv: list[str]) -> str:
-    r = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # its own message is the whole argv, which buries the reason in the
+        # truncated resolve-failure detail
+        raise ValueError(f"yt-dlp timed out after {_TIMEOUT}s") from None
     if r.returncode != 0 or not r.stdout.strip():
         raise ValueError(f"yt-dlp failed: {r.stderr.strip()[:200]}")
     return r.stdout.strip()

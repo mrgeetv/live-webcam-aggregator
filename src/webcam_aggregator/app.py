@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import sys
 import threading
 import time
@@ -35,7 +34,7 @@ from .fetch import (
     FetchStats,
     HostPacer,
 )
-from .logging_redaction import RedactingFilter, scrub
+from .logging_redaction import RedactingFilter, scrub, trim_urls
 from .models import (
     DEAD_MANIFEST,
     NO_EXTRACTOR,
@@ -45,6 +44,7 @@ from .models import (
 )
 from .registry import Registry
 from .serving import (
+    SegmentResponse,
     first_variant,
     is_playable_manifest,
     render_playlist,
@@ -103,13 +103,14 @@ def origin_of(url: str) -> str:
 
 def _resolver_get(fetcher: Fetcher) -> Callable[[str], str]:
     def get_text(url: str) -> str:
-        body = fetcher.get(url)
+        body, outcome = fetcher.get_with_outcome(url)
         if body is None:
-            # No URL in the message: it feeds the aggregated resolve-failure detail
-            # at INFO, where a URL would leak query tokens AND split one failure
-            # mode into per-URL-prefix buckets (the detail is truncated), making
-            # the count unreadable. The URL is already logged at DEBUG by liveness.
-            raise ValueError("resolver fetch failed")
+            # The outcome label, but no URL: the message feeds the aggregated
+            # resolve-failure detail at INFO, where a URL would leak query tokens
+            # AND split one failure mode into per-URL-prefix buckets (the detail is
+            # truncated), making the count unreadable. The URL is already logged at
+            # DEBUG by liveness, and serve-time failures log the cam's target.
+            raise ValueError(f"resolver fetch failed: {outcome}")
         return body
 
     return get_text
@@ -119,7 +120,7 @@ def _baltic_post(fetcher: FetcherPostProtocol) -> Callable[[str, dict[str, str]]
     def post(url: str, data: dict[str, str]) -> str:
         # baltic's admin-ajax POST needs an XHR header and Referer = the SITE
         # ORIGIN (not the ajax URL) or it 403s silently.
-        body = fetcher.post(
+        body, outcome = fetcher.post_with_outcome(
             url,
             data,
             headers={"X-Requested-With": "XMLHttpRequest", "Referer": origin_of(url)},
@@ -127,7 +128,7 @@ def _baltic_post(fetcher: FetcherPostProtocol) -> Callable[[str, dict[str, str]]
         if body is None:
             # No URL for the same reason as _resolver_get: the message becomes an
             # aggregated INFO detail.
-            raise ValueError("resolver post failed")
+            raise ValueError(f"resolver post failed: {outcome}")
         return body
 
     return post
@@ -232,12 +233,6 @@ class CatalogueStore:
 # only in a per-cam DEBUG line, which meant nothing at all once DEBUG was off.
 _DETAIL_CHARS = 80
 
-# An extractor error often embeds its target URL, query string and all — and a query
-# string can carry a session token. The details are aggregated at INFO, where the rule
-# is hostnames/paths only (full URLs live at DEBUG), so trim every embedded URL to
-# scheme://host/path before the detail is counted.
-_URL_QUERY = re.compile(r"(https?://[^\s?\"']+)(?:\?\S*)?")
-
 
 # A first variant that fails with one of these is gone, or its origin can't produce
 # it. Any other failure gets the benefit of the doubt: a 401/403 is a session or gate
@@ -266,7 +261,9 @@ def make_liveness_check(
         except Exception as exc:
             log.debug("liveness resolve failed for %s: %s", c.target_url, exc)
             # The detail separates "yt-dlp is broken" from "this cam is off air".
-            detail = _URL_QUERY.sub(r"\1", str(exc))[:_DETAIL_CHARS]
+            # It is aggregated at INFO, so any URL it quotes is trimmed, query and
+            # all: a cam's id would split one failure mode into a bucket per cam.
+            detail = trim_urls(str(exc), keep_ids=False)[:_DETAIL_CHARS]
             return f"{RESOLVE_FAILED}:{detail}"
         if r.stream_type != "hls":
             return None  # mp4/other: trust the resolve
@@ -301,11 +298,9 @@ def make_handler(
     store: CatalogueStore,
     cache: ResolveCache,
     base_url: str,
-    manifest_fetch: Callable[[str], str | None],
+    manifest_fetch: Callable[[str], tuple[str | None, str]],
     source_status: Callable[[], dict[str, Any]],
-    segment_fetch: Callable[
-        [str, str | None], tuple[int, str, str | None, bytes] | None
-    ],
+    segment_fetch: Callable[[str, str | None], tuple[SegmentResponse | None, str]],
     proxy_youtube: bool = False,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
@@ -331,14 +326,10 @@ def make_handler(
                 if not u_list:
                     self._respond(400, "text/plain", b"missing u= param")
                     return
-                sig_list = qs.get("sig", [])
-                if not sig_list:
-                    self._respond(403, "text/plain", b"bad signature")
-                    return
                 status, ct, body = serve_child_manifest(
                     entry_id,
                     u_list[0],
-                    sig_list[0],
+                    qs.get("sig", [""])[0],  # a missing sig fails verify, logged
                     fetch=manifest_fetch,
                     base_url=base_url,
                 )
@@ -352,15 +343,11 @@ def make_handler(
                 if not u_list:
                     self._respond(400, "text/plain", b"missing u= param")
                     return
-                sig_list = qs.get("sig", [])
-                if not sig_list:
-                    self._respond(403, "text/plain", b"bad signature")
-                    return
                 range_header = self.headers.get("Range")
                 seg_status, seg_ct, seg_cr, seg_body = serve_segment(
                     entry_id,
                     u_list[0],
-                    sig_list[0],
+                    qs.get("sig", [""])[0],  # a missing sig fails verify, logged
                     fetch_segment=segment_fetch,
                     range_header=range_header,
                 )
@@ -769,7 +756,7 @@ def main() -> None:
         store,
         cache,
         cfg.public_base_url,
-        manifest_fetch=manifest_fetcher.get,
+        manifest_fetch=manifest_fetcher.get_with_outcome,
         source_status=source_status,
         segment_fetch=manifest_fetcher.get_segment,
         proxy_youtube=cfg.proxy_youtube,

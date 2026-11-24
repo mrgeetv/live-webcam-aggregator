@@ -73,19 +73,19 @@ def _make_cache() -> ResolveCache:
     return ResolveCache(resolve, clock=time.monotonic)
 
 
-def _manifest_fetch(url: str) -> str | None:
+def _manifest_fetch(url: str) -> tuple[str | None, str]:
     if url == _RESOLVED_URL:
-        return _CDN_MANIFEST
+        return _CDN_MANIFEST, "ok"
     # Child manifest fetch
     if "chunk.m3u8" in url:
-        return _CHILD_MANIFEST
-    return None
+        return _CHILD_MANIFEST, "ok"
+    return None, "http-404"
 
 
 def _segment_fetch(
     _url: str, _range_header: str | None
-) -> tuple[int, str, str | None, bytes] | None:
-    return (200, "video/mp2t", None, b"fakesegment")
+) -> tuple[tuple[int, str, str | None, bytes] | None, str]:
+    return (200, "video/mp2t", None, b"fakesegment"), "ok"
 
 
 def _healthy_status(name: str = "fake", kept: int = 1) -> dict[str, Any]:

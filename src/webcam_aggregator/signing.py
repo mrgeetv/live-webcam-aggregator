@@ -12,4 +12,6 @@ def sign(value: str) -> str:
 
 
 def verify(value: str, sig: str) -> bool:
-    return hmac.compare_digest(sign(value), sig)
+    # as bytes: compare_digest refuses a str holding non-ASCII, and `sig` is
+    # whatever the request carried
+    return hmac.compare_digest(sign(value).encode(), sig.encode())

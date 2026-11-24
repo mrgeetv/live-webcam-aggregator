@@ -158,11 +158,6 @@ def _validate_ip(url: str) -> tuple[str | None, str]:
     return chosen, OK
 
 
-def _resolve_validated_ip(url: str) -> str | None:
-    """Back-compat wrapper for callers that don't need the rejection reason."""
-    return _validate_ip(url)[0]
-
-
 # --- validate-then-pin DNS (the "curl --resolve" approach) -------------------
 # We let urllib3 connect to the HOSTNAME normally, so SNI, the Host header, and
 # certificate validation are all done against the hostname exactly as usual; we
@@ -403,7 +398,7 @@ class FetcherProtocol(Protocol):
 
 
 class FetcherPostProtocol(Protocol):
-    def post(
+    def post_with_outcome(
         self,
         url: str,
         data: dict[str, str],
@@ -411,7 +406,7 @@ class FetcherPostProtocol(Protocol):
         *,
         headers: dict[str, str] | None = None,
         timeout: float = ...,
-    ) -> str | None: ...
+    ) -> tuple[str | None, str]: ...
 
 
 # Hosts that gate on a Referer: EarthCam's CDN 403s the manifest/segments without it;
@@ -845,7 +840,7 @@ class Fetcher:
 
     def _fetch_following(self, url: str, timeout: float) -> str:
         # Follow redirects manually so EVERY hop is re-resolved, re-validated, and
-        # re-pinned by _resolve_validated_ip. requests' own redirect following would
+        # re-pinned by _validate_ip. requests' own redirect following would
         # skip the guard and let an upstream 302 us at an internal host (SSRF).
         current = url
         for _hop in range(_MAX_REDIRECTS):
@@ -931,11 +926,14 @@ class Fetcher:
 
     def get_segment(
         self, url: str, range_header: str | None = None
-    ) -> tuple[int, str, str | None, bytes] | None:
-        """Fetch a media segment as bytes, relaying status + Range. None on failure."""
-        ip = _resolve_validated_ip(url)
+    ) -> tuple[tuple[int, str, str | None, bytes] | None, str]:
+        """Fetch a media segment as bytes, relaying status + Range: the
+        (status, content type, Content-Range, body) result, or None on failure, plus
+        the outcome label, as `get_with_outcome` returns them. An upstream error
+        status is a result, relayed to the player as-is, not a failure."""
+        ip, reason = _validate_ip(url)
         if ip is None:
-            return None
+            return None, reason
         host = urlsplit(url).hostname or ""
         headers = {"Range": range_header} if range_header else {}
         headers.update(_referer_for(url))
@@ -950,32 +948,37 @@ class Fetcher:
                 )
                 if resp.is_redirect or resp.is_permanent_redirect:
                     resp.close()
-                    return None  # signed segment URLs shouldn't redirect; refuse
+                    # signed segment URLs shouldn't redirect; refuse
+                    return None, UNEXPECTED_REDIRECT
                 chunks: list[bytes] = []
                 total = 0
                 for chunk in resp.iter_content(65536):
                     total += len(chunk)
                     if total > SEGMENT_MAX_BYTES:
                         resp.close()
-                        return None
+                        return None, TOO_LARGE
                     chunks.append(chunk)
                 return (
                     resp.status_code,
                     resp.headers.get("Content-Type", "video/mp2t"),
                     resp.headers.get("Content-Range"),
                     b"".join(chunks),
-                )
-        except (requests.RequestException, _FetchFailure):
-            return None
+                ), OK
+        except _FetchFailure as exc:
+            return None, exc.reason
+        except requests.RequestException as exc:
+            return None, _classify(exc)
 
-    def post(
+    def post_with_outcome(
         self,
         url: str,
         data: dict[str, str],
         *,
         headers: dict[str, str] | None = None,
         timeout: float = 20.0,
-    ) -> str | None:
+    ) -> tuple[str | None, str]:
+        """A form POST: the body (None on failure) and its outcome label, as
+        `get_with_outcome` returns them."""
         host = urlsplit(url).hostname or ""
         body = urlencode(data).encode()
         # Sending pre-encoded bytes means requests won't auto-set the form Content-Type,
@@ -1028,7 +1031,7 @@ class Fetcher:
                     # Politeness delay AFTER the body, like get() — it used to run
                     # mid-response, which held the connection through the sleep.
                     time.sleep(self._delay)
-                    return b"".join(chunks).decode("utf-8", "replace")
+                    return b"".join(chunks).decode("utf-8", "replace"), OK
             except _FetchFailure as exc:
                 outcome = exc.reason
                 time.sleep(self._delay)  # failures pay the politeness delay too
@@ -1042,4 +1045,4 @@ class Fetcher:
                     break  # same contract as get(): the flag is Fetcher-wide
                 time.sleep(2**attempt)
         self._stats.record(host, outcome)
-        return None
+        return None, outcome
