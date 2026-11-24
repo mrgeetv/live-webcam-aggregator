@@ -67,7 +67,7 @@ updates:
   # the Node version semantic-release-action runs on, and CI never runs a release, so
   # a major that needs a newer Node would merge green and fail the next release.
   - package-ecosystem: "npm"
-    directory: "/.github/release"
+    directory: "/tools/release"
     schedule:
       interval: "weekly"
       day: "friday"
