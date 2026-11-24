@@ -297,18 +297,22 @@ def make_liveness_check(
         # A master can answer 200 while the variant behind it is gone (an empty
         # body, a header-only stub, a 404 chunklist), so judge the variant a player
         # starts on as well.
-        if "#EXT-X-STREAM-INF" in manifest:
-            variant = first_variant(manifest, r.url)
-            if variant is None:
-                log.debug("liveness: master names no variant %s", c.target_url)
-                return DEAD_MANIFEST
-            body, outcome = fetch(variant)
-            if (
-                body is not None and not is_playable_manifest(body)
-            ) or outcome in _VARIANT_GONE:
-                log.debug("liveness: dead variant %s -> %s", c.target_url, variant)
-                return DEAD_MANIFEST
+        if "#EXT-X-STREAM-INF" in manifest and not variant_alive(c, manifest, r.url):
+            return DEAD_MANIFEST
         return None
+
+    def variant_alive(c: Candidate, master: str, url: str) -> bool:
+        variant = first_variant(master, url)
+        if variant is None:
+            log.debug("liveness: master names no variant %s", c.target_url)
+            return False
+        body, outcome = fetch(variant)
+        if (body is not None and not is_playable_manifest(body)) or (
+            outcome in _VARIANT_GONE
+        ):
+            log.debug("liveness: dead variant %s -> %s", c.target_url, variant)
+            return False
+        return True
 
     return check
 

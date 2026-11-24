@@ -290,6 +290,14 @@ class WildlifeTrustsSource:
             return ""
         return found.strip() if isinstance(found, str) else ""
 
+    def _camstreamer_target(self, embed: str) -> str:
+        """The YouTube video a camstreamer player wraps, else the player itself."""
+        m = _YT_EMBED_URL.search(self._fetch.get(embed) or "")
+        video = (predisc_key(m.group(0)) or "") if m else ""
+        if video.startswith("yt:"):
+            return f"https://www.youtube.com/watch?v={video[3:]}"
+        return embed
+
     def _resolve_embed(self, embed: str) -> list[str]:
         """An embed URL -> the target(s) the extractors serve."""
         for query in _YT_LIVE_QUERY.finditer(embed):
@@ -303,11 +311,7 @@ class WildlifeTrustsSource:
         if "youtube" in host:
             return []  # a playlist: recordings, never a live cam
         if host.endswith("camstreamer.com"):
-            m = _YT_EMBED_URL.search(self._fetch.get(embed) or "")
-            video = (predisc_key(m.group(0)) or "") if m else ""
-            if video.startswith("yt:"):
-                return [f"https://www.youtube.com/watch?v={video[3:]}"]
-            return [embed]
+            return [self._camstreamer_target(embed)]
         if "camsecure." in host:
             # The m3u8 is the key the camsecure source shares; it is not derivable
             # from the player URL, so read it from the player page.

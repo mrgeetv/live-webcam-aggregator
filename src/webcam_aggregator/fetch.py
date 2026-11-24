@@ -130,32 +130,32 @@ def _validate_ip(url: str) -> tuple[str | None, str]:
     failure would not just be slow on the dead-domain long tail — on flaky or
     round-robin DNS it could report a genuine unsafe-IP block as a transient
     "dns-error", quietly downgrading the only signal that says the guard fired."""
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https"):
+    host = _fetchable_host(url)
+    if host is None:
         return None, BAD_SCHEME
-    host = parts.hostname
-    if not host:
-        return None, BAD_SCHEME
-    try:
-        port = parts.port  # raises on a malformed or out-of-range port
-    except ValueError:
-        return None, BAD_SCHEME
-    if port == 0:
-        return None, BAD_SCHEME  # libcurl and urlsplit disagree on what :0 means
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
         return None, DNS_ERROR
-    chosen: str | None = None
-    for info in infos:
-        ip_str = str(info[4][0])  # sockaddr[0] is the IP literal
-        if _ip_is_unsafe(ip_str):
-            return None, BLOCKED_IP  # any unsafe IP poisons the whole host — refuse
-        if chosen is None:
-            chosen = ip_str
-    if chosen is None:
+    ips = [str(info[4][0]) for info in infos]  # sockaddr[0] is the IP literal
+    if any(_ip_is_unsafe(ip) for ip in ips):
+        return None, BLOCKED_IP  # any unsafe IP poisons the whole host — refuse
+    if not ips:
         return None, DNS_ERROR  # resolved to nothing at all
-    return chosen, OK
+    return ips[0], OK
+
+
+def _fetchable_host(url: str) -> str | None:
+    """The host of an http(s) URL with a usable port, or None for anything else."""
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    try:
+        port = parts.port  # raises on a malformed or out-of-range port
+    except ValueError:
+        return None
+    # libcurl and urlsplit disagree on what :0 means
+    return None if port == 0 else parts.hostname
 
 
 # --- validate-then-pin DNS (the "curl --resolve" approach) -------------------
