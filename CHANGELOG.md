@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.13](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.12...v2.14.13) (2026-11-24)
+
+### Bug Fixes
+
+* **docker:** rebuild the published image when a base image is patched ([#191](https://github.com/mrgeetv/live-webcam-aggregator/issues/191)) ([72f3931](https://github.com/mrgeetv/live-webcam-aggregator/commit/72f3931159cd9c29b6293e36dae6f866d85fbf99))
+
 ## [2.14.12](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.11...v2.14.12) (2026-11-24)
 
 ### Bug Fixes
