@@ -1,3 +1,5 @@
+"""Ozolio source: cameras sitemap -> explore pages, resolved at serve time."""
+
 from __future__ import annotations
 
 import re
@@ -23,18 +25,23 @@ _TITLE = re.compile(r"<title>([^<]+?)-\s*Webcam\s*-\s*Ozolio\s*</title>", re.IGN
 
 
 class OzolioSource:
-    """Ozolio's cameras sitemap -> per-cam /explore/<CID> pages. The candidate target
-    is the explore page itself: the stream URL only exists inside a per-session relay
-    exchange, so OzolioResolver mints it fresh from the CID at resolve time and there
-    is no stable stream URL to merge on (predisc_key None). No category -> "Other"."""
+    """Ozolio: cameras sitemap -> per-cam /explore/<CID> pages.
+
+    The candidate target is the explore page itself: the stream URL only exists inside a
+    per-session relay exchange, so OzolioResolver mints it fresh from the CID at resolve
+    time and there is no stable stream URL to merge on (predisc_key None). No category
+    -> "Other".
+    """
 
     name: str = "ozolio"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each explore page that renders a title."""
         sm = self._fetch.get(_SITEMAP) or ""
         pages = sorted(
             {loc.strip() for loc in _LOC.findall(sm) if _EXPLORE.match(loc.strip())}

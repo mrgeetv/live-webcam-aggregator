@@ -75,8 +75,10 @@ class _CountingFetch(_FakeFetch):
 
 
 def test_html_scraper_base_parses_pages_before_the_crawl_ends():
-    """A page is parsed while later ones are still to be fetched, so a big sitemap's
-    bodies are never all held in memory at once."""
+    """A page is parsed while later ones are still to be fetched.
+
+    A big sitemap's bodies are then never all held in memory at once.
+    """
     urls = [f"https://s/{i}" for i in range(200)]
     embed = '<iframe src="https://www.youtube.com/embed/{:011d}"></iframe>'
     fetch = _CountingFetch({u: embed.format(i) for i, u in enumerate(urls)})
@@ -246,9 +248,11 @@ def test_channel_has_no_predisc_key():
 
 
 def test_relative_embed_is_resolved_against_the_page() -> None:
-    """worldcams' streams[] array mixes absolute iframes with site-relative paths.
-    A target with no host is useless to every extractor and shows up in the
-    diagnostics as an unattributable '?', so resolve it rather than emitting it raw."""
+    """Worldcams' streams[] array mixes absolute iframes with site-relative paths.
+
+    A target with no host is useless to every extractor and shows up in the diagnostics
+    as an unattributable '?', so resolve it rather than emitting it raw.
+    """
     html = (
         "streams[0] = '<iframe src=\"https://www.youtube.com/embed/3nyPER2kzqk\">';"
         "streams[7] = '<iframe src=\"/player/live?id=9\">';"
@@ -264,9 +268,12 @@ def test_relative_embed_is_resolved_against_the_page() -> None:
 
 
 def test_still_image_entries_are_not_candidates() -> None:
-    """worldcams lists JPEG stills in streams[] beside real embeds. They can never be
-    a stream, so they must not become candidates — otherwise they inflate the
-    'no extractor' counts that are supposed to say which extractor to write next."""
+    """Worldcams lists JPEG stills in streams[] beside real embeds.
+
+    They can never be a stream, so they must not become candidates — otherwise they
+    inflate the 'no extractor' counts that are supposed to say which extractor to write
+    next.
+    """
     html = (
         "streams[0] = '<iframe src=\"https://www.youtube.com/embed/3nyPER2kzqk\">';"
         "streams[449] = '<iframe src=\"/images/live/big/227.jpg\">';"
@@ -291,8 +298,10 @@ def test_image_check_uses_the_path_not_the_query() -> None:
 
 
 def test_only_the_gtm_iframe_leaves_no_candidates() -> None:
-    """A page whose only iframe is the tag manager yields nothing at all, rather
-    than one doomed candidate."""
+    """A page whose only iframe is the tag manager yields nothing at all.
+
+    That beats one doomed candidate.
+    """
     html = '<iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"></iframe>'
     cands = list(
         extract_candidates(
@@ -303,9 +312,11 @@ def test_only_the_gtm_iframe_leaves_no_candidates() -> None:
 
 
 def test_unservable_video_embeds_are_still_reported() -> None:
-    """The denylist is for hosts that can never carry video — NOT for embeds we
-    simply have no extractor for. Those must keep surfacing as no-extractor, since
-    each one is a real gap someone could close."""
+    """The denylist is for hosts that can never carry video.
+
+    NOT for embeds we simply have no extractor for. Those must keep surfacing as
+    no-extractor, since each one is a real gap someone could close.
+    """
     for host in ("open.ivideon.com", "rtsp.me", "v.angelcam.com"):
         html = f'<iframe src="https://{host}/embed/abc"></iframe>'
         cands = list(
@@ -315,8 +326,10 @@ def test_unservable_video_embeds_are_still_reported() -> None:
 
 
 def test_a_leading_tag_manager_iframe_does_not_hide_the_player() -> None:
-    """CMS pages open <body> with GTM's <noscript> iframe, ahead of the real
-    player. The player further down is the page's cam and must be read."""
+    """CMS pages open <body> with GTM's <noscript> iframe, ahead of the real player.
+
+    The player further down is the page's cam and must be read.
+    """
     html = (
         '<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"'
         ' height="0" width="0"></iframe></noscript>'
@@ -333,8 +346,10 @@ def test_a_leading_tag_manager_iframe_does_not_hide_the_player() -> None:
 
 
 def test_a_placeholder_iframe_is_skipped_for_the_player_after_it() -> None:
-    """A consent manager parks embeds on about:blank until consent is given. The
-    placeholder can never be a stream; the player after it is the cam."""
+    """A consent manager parks embeds on about:blank until consent is given.
+
+    The placeholder can never be a stream; the player after it is the cam.
+    """
     html = (
         '<iframe src="about:blank" data-src-cmplz="https://x.example/p"></iframe>'
         '<iframe src="https://g1.ipcamlive.com/player/player.php?alias=a"></iframe>'
@@ -351,7 +366,9 @@ def test_a_placeholder_iframe_is_skipped_for_the_player_after_it() -> None:
 
 def test_a_traffic_map_iframe_is_not_a_candidate() -> None:
     """Traffic-cam pages embed a Waze live map beside (or instead of) the player.
-    A map serves no video, so it must not surface as a no-extractor gap."""
+
+    A map serves no video, so it must not surface as a no-extractor gap.
+    """
     html = '<iframe src="https://embed.waze.com/iframe?zoom=14&lat=-23.5&lon=-46.6">'
     cands = list(
         extract_candidates(html, page_url="https://www.cxtvlive.com/x", source="c")
@@ -360,8 +377,10 @@ def test_a_traffic_map_iframe_is_not_a_candidate() -> None:
 
 
 def test_the_fallback_iframe_is_read_as_an_html_attribute() -> None:
-    """The walk skips a leading still image, resolves a relative player path, and
-    decodes entities: `&amp;` in a src is `&` in the URL."""
+    """The walk skips a leading still image and resolves a relative player path.
+
+    It also decodes entities: `&amp;` in a src is `&` in the URL.
+    """
     html = (
         '<iframe src="/img/cam.jpg"></iframe>'
         '<iframe src="/player/embed.php?cam=7&amp;autoplay=1"></iframe>'
@@ -375,8 +394,10 @@ def test_the_fallback_iframe_is_read_as_an_html_attribute() -> None:
 
 
 def test_an_m3u8_url_is_taken_whole_from_the_page() -> None:
-    """A playlist URL keeps its query, a page link without `.m3u8` is not one, and a
-    wrapper URL carrying the playlist in its query is taken whole, wrapper and all."""
+    """A playlist URL keeps its query, and a page link without `.m3u8` is not one.
+
+    A wrapper URL carrying the playlist in its query is taken whole, wrapper and all.
+    """
     html = (
         '<a href="https://cams.example/about">about</a>'
         '<video src="https://cdn.example/live/cam.m3u8?token=abc"></video>'

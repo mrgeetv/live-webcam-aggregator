@@ -1,3 +1,5 @@
+"""explore.org source: live streams from its `streams.json` API (direct HLS)."""
+
 from __future__ import annotations
 
 import json
@@ -19,17 +21,21 @@ _API = "https://d3ll4jl6s7s24a.cloudfront.net/streams.json"
 
 
 class ExploreOrgSource:
-    """explore.org live nature cams via its `streams.json` API. `state == "live"` streams
-    only (skip on-demand/offline); the feed has no content category, so all -> "Other".
+    """explore.org live nature cams via its `streams.json` API.
+
+    Only `state == "live"` streams are kept (on-demand/offline are skipped); the feed
+    has no content category, so all -> "Other".
     """
 
     name: str = "explore"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield each live stream that has an m3u8 playlist URL."""
         raw = self._fetch.get(_API)
         if not raw:
             return

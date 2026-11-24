@@ -1,3 +1,5 @@
+"""windy.com source: keyless API enumeration plus per-cam stream-page probes."""
+
 from __future__ import annotations
 
 import json
@@ -94,12 +96,14 @@ class WindySource:
 
     A meta-aggregator like camscape: the emitted candidates are the ORIGINAL
     providers' embeds (feratel, direct DOT m3u8s, YouTube, …), so the shared
-    predisc keys make dedup against the first-party sources do real work."""
+    predisc keys make dedup against the first-party sources do real work.
+    """
 
     name: str = "windy"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch`; the corpus and the live set persist across rebuilds."""
         self._fetch = fetch
         # id -> (title, city, country); persists across rebuilds
         self._corpus: dict[int, tuple[str, str, str]] = {}
@@ -121,10 +125,12 @@ class WindySource:
             )
 
     def _enumerate(self) -> None:
-        """Grid-scan the list API into the corpus, under a hard request ceiling so a
-        dense-corpus pass can never run away at the third-party API. If the ceiling
-        truncates the scan we do NOT mark enumeration done, so the next build resumes
-        it rather than latching a partial corpus for _ENUM_EVERY builds."""
+        """Grid-scan the list API into the corpus, under a hard request ceiling.
+
+        The ceiling keeps a dense-corpus pass from running away at the third-party API.
+        If it truncates the scan we do NOT mark enumeration done, so the next build
+        resumes it rather than latching a partial corpus for _ENUM_EVERY builds.
+        """
         points = _grid()
         first = [_LIST.format(lat=lat, lon=lon, off=0) for lat, lon in points]
         extras: list[str] = []
@@ -148,6 +154,7 @@ class WindySource:
         self._builds_until_enum = 0 if truncated else _ENUM_EVERY
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield the live cams: known-live probed first, the rest in rotating slices."""
         if not self._corpus or self._builds_until_enum <= 0:
             self._enumerate()
         self._builds_until_enum -= 1

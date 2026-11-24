@@ -37,8 +37,10 @@ def _sitemap(*locs: str) -> str:
 
 
 def _listing(*hrefs: str) -> str:
-    """A region listing page: its cams plus whatever region/pagination links it carries,
-    as the site-relative hrefs the real pages use."""
+    """Build a region listing page: its cams plus any region/pagination links.
+
+    The links are written as the site-relative hrefs the real pages use.
+    """
     links = "".join(
         f'<li><a href="{h.removeprefix("https://tomarigi.me")}">x</a></li>'
         for h in hrefs

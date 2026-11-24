@@ -1,3 +1,5 @@
+"""Cross-source deduplication: merge candidates sharing a predisc key."""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -24,6 +26,7 @@ def _merge(a: Candidate, b: Candidate) -> Candidate:
 
 
 def dedupe(candidates: list[Candidate]) -> list[Candidate]:
+    """Merge candidates sharing a `predisc_key`; those without one never merge."""
     by_key: dict[str, Candidate] = {}
     no_key: list[Candidate] = []
     for c in candidates:

@@ -1,3 +1,5 @@
+"""App wiring: catalogue store, resolve cache, HTTP handler and the rebuild loop."""
+
 from __future__ import annotations
 
 import contextlib
@@ -93,8 +95,11 @@ _HLS_CT = "application/vnd.apple.mpegurl"
 
 
 def _total_rss() -> int:
-    """RSS of this process plus any live child processes (yt-dlp/deno spawned per
-    resolve), so /health reflects the container footprint, not just the parent."""
+    """Return the RSS of this process plus its live child processes.
+
+    Children are the yt-dlp/deno processes spawned per resolve, so /health reflects the
+    container footprint, not just the parent.
+    """
     p = psutil.Process()
     total = p.memory_info().rss
     try:
@@ -108,6 +113,7 @@ def _total_rss() -> int:
 
 
 def origin_of(url: str) -> str:
+    """Return `scheme://host/` for a URL."""
     p = urllib.parse.urlsplit(url)
     return f"{p.scheme}://{p.hostname}/"
 
@@ -164,6 +170,7 @@ def _path(u: str) -> str:
 
 
 def build_registry(extractors: dict[str, Extractor]) -> Registry:
+    """Build the `Registry` that routes a target URL to one of `extractors` by name."""
     # The provider extractors match on the target's HOST (+ a path marker), not a bare
     # substring: a scraped iframe src of `https://evil/?x=hdontap.com/stream/` must NOT
     # route an attacker page into a resolver that then fetches it and reflects its
@@ -212,12 +219,19 @@ class NoExtractorError(ValueError):
     """No registry rule matched the target URL.
 
     Its own type so liveness can tell "we have no code for this site" (a gap to fill)
-    apart from "the extractor ran and failed" (a cam that is probably just off air)."""
+    apart from "the extractor ran and failed" (a cam that is probably just off air).
+    """
 
 
 def make_resolve(
     registry: Registry, extractors: dict[str, Extractor]
 ) -> Callable[[str, str], Resolved]:
+    """Build the resolve callback for `ResolveCache`.
+
+    It routes the target URL through `registry` to its extractor, and raises
+    `NoExtractorError` when none matches.
+    """
+
     def resolve(_entry_id: str, target_url: str) -> Resolved:
         name = registry.match(target_url)
         if name is None:
@@ -230,18 +244,23 @@ def make_resolve(
 
 
 class CatalogueStore:
+    """The current catalogue snapshot, swapped in whole after each rebuild."""
+
     _snapshot: dict[str, CatalogueEntry]
     ready: bool
 
     def __init__(self) -> None:
+        """Start empty and not ready."""
         self._snapshot = {}
         self.ready = False
 
     def swap(self, entries: list[CatalogueEntry]) -> None:
+        """Replace the snapshot with `entries` and mark the store ready."""
         self._snapshot = {e.id: e for e in entries}  # atomic rebind
         self.ready = True
 
     def snapshot(self) -> dict[str, CatalogueEntry]:
+        """Return the current snapshot, keyed by entry id."""
         return self._snapshot
 
 
@@ -263,9 +282,11 @@ def make_liveness_check(
     resolve: Callable[[str, str], Resolved],
     fetch: Callable[[str], tuple[str | None, str]],
 ) -> Callable[[Candidate], str | None]:
-    """Build the build-time liveness probe: None if the cam is live, else the reason
-    it was dropped. `fetch` returns a body (None on failure) and its outcome label,
-    as `Fetcher.get_with_outcome` does."""
+    """Build the liveness probe: None if the cam is live, else the drop reason.
+
+    `fetch` returns a body (None on failure) and its outcome label, as
+    `Fetcher.get_with_outcome` does.
+    """
 
     def check(c: Candidate) -> str | None:
         try:
@@ -327,6 +348,8 @@ def make_handler(
     segment_fetch: Callable[[str, str | None], tuple[SegmentResponse | None, str]],
     proxy_youtube: bool = False,
 ) -> type[BaseHTTPRequestHandler]:
+    """Build the handler class serving the playlist, `/health` and `/stream/<id>`."""
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urllib.parse.urlsplit(self.path)
@@ -462,6 +485,7 @@ class _QuietHTTPServer(ThreadingHTTPServer):
 def run_http_server(
     handler_cls: type[BaseHTTPRequestHandler], port: int = 8000
 ) -> None:
+    """Serve `handler_cls` on `port` from a daemon thread."""
     server = _QuietHTTPServer(("", port), handler_cls)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
@@ -469,8 +493,10 @@ def run_http_server(
 
 
 def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, Any]:
-    """The /health `sources` block: per-source RAW outcome of the last rebuild plus the
-    sources that failed this cycle (crashed, or 0 kept).
+    """Build the /health `sources` block.
+
+    Holds the per-source RAW outcome of the last rebuild plus the sources that failed
+    this cycle (crashed, or 0 kept).
 
     Values are the raw result even when the empty-guard is masking a failure in the
     served playlist, so a dying source surfaces here immediately. Cold start (nothing
@@ -478,7 +504,8 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
     from a real 0. Pure, so the payload shape is testable without building the app.
 
     WHAT-only (kept/discovered/crashed/status): the WHY — per-host fetch outcomes,
-    drop reasons, no-extractor hosts, pacing — lives on the per-cycle log lines."""
+    drop reasons, no-extractor hosts, pacing — lives on the per-cycle log lines.
+    """
     sources: dict[str, Any] = {}
     unhealthy: list[str] = []
     for name in expected:
@@ -512,6 +539,11 @@ def build_app(
     Callable[[], None],
     Callable[[], dict[str, Any]],
 ]:
+    """Wire sources, extractors, resolve cache and store from `cfg`.
+
+    Return the catalogue store, the resolve cache, a function that runs one catalogue
+    rebuild, and a function reporting per-source status for `/health`.
+    """
     # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
     # probe). Reactive: it is a no-op until a host answers 429/503, then that host
     # is spaced and its retries are gated past the shedding window so they succeed
@@ -753,6 +785,7 @@ def build_app(
 
 
 def main() -> None:
+    """Serve HTTP and rebuild the catalogue every `CATALOGUE_INTERVAL_HOURS`."""
     # Root stays at WARNING so third-party libs (googleapiclient, urllib3) never
     # log request URLs at DEBUG — those carry the API key as a query param. Only
     # our own loggers honour LOG_LEVEL.

@@ -1,3 +1,5 @@
+"""Category taxonomy: map a source's raw category to the unified set."""
+
 from __future__ import annotations
 
 import logging
@@ -85,6 +87,11 @@ _seen_unmapped: set[str] = set()
 
 
 def map_category(raw: str | None) -> str:
+    """Map a source's raw category to the unified taxonomy.
+
+    No category gives "Other"; one we don't recognise gives "Unmapped Category" and a
+    once-per-process warning.
+    """
     if not raw:
         return "Other"
     if raw in _MAP:
@@ -266,10 +273,13 @@ _GEO_HINT = re.compile(r" — |,\s+[A-Z]| - [A-Z][a-z]+(?:\s*\.)?\s*$")
 
 
 def category_from_title(title: str) -> str | None:
-    """Best-effort category from a cam's title, for cams a source left uncategorised.
-    Keyword rules first (first match wins), then a geo-suffix fallback (a named place with
-    no content word is a location view -> "Travel & Events"). None = nothing matched, so
-    the cam stays "Other". Never call this when the source DID give a category."""
+    """Return a best-effort category from a cam's title, or None.
+
+    Keyword rules first (first match wins), then a geo-suffix fallback (a named place
+    with no content word is a location view -> "Travel & Events"). None = nothing
+    matched, so the cam stays "Other". Never call this when the source DID give a
+    category.
+    """
     head = title.split(" — ", maxsplit=1)[0]
     for category, rx in _TITLE_COMPILED:
         if rx.search(head):

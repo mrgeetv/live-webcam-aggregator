@@ -273,8 +273,10 @@ def test_health_returns_correct_json() -> None:
 
 
 def test_health_unhealthy_when_source_failed() -> None:
-    """A source that crashed / returned 0 this cycle flips healthy False and is named,
-    even though the store is ready (the empty-guard is still masking it in the playlist).
+    """A source that crashed or returned 0 this cycle flips healthy to False.
+
+    The source is named, even though the store is ready (the empty-guard is still
+    masking it in the playlist).
     """
     store, _ = _make_store()  # ready=True
     status = {
@@ -293,8 +295,11 @@ def test_health_unhealthy_when_source_failed() -> None:
 
 
 def test_health_not_healthy_during_cold_start() -> None:
-    """Before the first build completes (not ready), healthy is False even with no
-    failing sources — guards against a fresh container reporting a false all-clear."""
+    """Before the first build completes (not ready), healthy is False.
+
+    That holds even with no failing sources, which guards against a fresh container
+    reporting a false all-clear.
+    """
     store, _ = _make_store(ready=False)
     server, port = _start_server(store, source_status=_healthy_status())
     try:

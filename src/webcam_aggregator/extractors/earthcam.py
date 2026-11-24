@@ -1,3 +1,5 @@
+"""EarthCam extractor: cam page -> its live, token-bearing m3u8."""
+
 from __future__ import annotations
 
 import re
@@ -18,12 +20,16 @@ _LIVE_RUN = re.compile(r"https:(?:\\?/){2}videos-\d+\.earthcam\.com[^\"'\s]+")
 
 
 class EarthcamResolver:
+    """Resolve an EarthCam page to its live HLS URL."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a page body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to the live HLS URL in its page; raise if offline."""
         body = self._fetch(target_url)
         m = next((r for r in _LIVE_RUN.finditer(body) if ".m3u8" in r.group(0)), None)
         if not m:

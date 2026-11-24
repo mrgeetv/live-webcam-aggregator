@@ -1,3 +1,5 @@
+"""CamSecure source: sitemap -> cam pages -> player iframe -> direct HLS."""
+
 from __future__ import annotations
 
 import re
@@ -57,13 +59,13 @@ _FROM = re.compile(r"\bfrom\s+(.+)", re.IGNORECASE)
 
 
 def player_iframe(html: str) -> str | None:
-    """The camsecure player iframe a cam page embeds, if any."""
+    """Return the camsecure player iframe a cam page embeds, if any."""
     m = _PLAYER_IFRAME.search(html)
     return m.group(1) if m else None
 
 
 def hls_from_player(html: str, player_url: str) -> str | None:
-    """The direct HLS in a camsecure player page's video.js `<source>`, absolute."""
+    """Return the absolute HLS URL in a camsecure player page's video.js `<source>`."""
     src = next((s for s in _SOURCE_SRC.findall(html) if ".m3u8" in s), None)
     return urljoin(player_url, src) if src else None
 
@@ -89,17 +91,21 @@ def _title_of(html: str, url: str) -> str:
 
 
 class CamSecureSource:
-    """CamSecure's sitemap -> per-cam pages -> the player iframe's direct HLS. A page is a
-    cam iff it embeds a camsecure player iframe whose player page has an HLS `<source>`;
-    both hops are fetched concurrently."""
+    """CamSecure: sitemap -> per-cam pages -> the player iframe's direct HLS.
+
+    A page is a cam iff it embeds a camsecure player iframe whose player page has an HLS
+    `<source>`; both hops are fetched concurrently.
+    """
 
     name: str = "camsecure"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each page whose camsecure player has an HLS source."""
         sm = self._fetch.get(_SITEMAP) or ""
         pages = sorted(
             {

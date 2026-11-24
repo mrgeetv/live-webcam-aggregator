@@ -197,8 +197,10 @@ def test_title_rule_categories_are_all_valid():
 
 
 def test_readme_documents_every_category():
-    """Drift guard: every excludable category must be listed in the README, so users
-    always know what they can pass to EXCLUDE_CATEGORIES."""
+    """Drift guard: every excludable category is listed in the README.
+
+    Users then always know what they can pass to EXCLUDE_CATEGORIES.
+    """
     from pathlib import Path
 
     from webcam_aggregator.categories import ALL_CATEGORIES
@@ -209,11 +211,13 @@ def test_readme_documents_every_category():
 
 
 def test_every_youtube_category_maps_to_a_real_group() -> None:
-    """youtube_api._YT_CATEGORIES and categories._MAP/_NATIVE_YT are two tables that
-    have to agree. When they drifted, Gaming / Film & Animation / Howto & Style /
+    """youtube_api._YT_CATEGORIES and categories._MAP/_NATIVE_YT must agree.
+
+    They are two tables. When they drifted, Gaming / Film & Animation / Howto & Style /
     Comedy all fell into the single "Unmapped Category" bucket, so a user could only
     exclude all four together (or none). Every YouTube category must land on a real,
-    individually-excludable group."""
+    individually-excludable group.
+    """
     from webcam_aggregator.categories import ALL_CATEGORIES, UNMAPPED, map_category
     from webcam_aggregator.sources.youtube_api import (
         _YT_CATEGORIES,  # pyright: ignore[reportPrivateUsage]
@@ -228,8 +232,9 @@ def test_every_youtube_category_maps_to_a_real_group() -> None:
 
 
 def test_gaming_is_individually_excludable() -> None:
-    """The specific thing that prompted this: live gaming streams sneak in via the
-    YouTube search and must be droppable without taking cartoons and comedy with them.
+    """Live gaming streams are droppable without taking cartoons and comedy with them.
+
+    They sneak in via the YouTube search.
     """
     from webcam_aggregator.categories import map_category, unknown_categories
 

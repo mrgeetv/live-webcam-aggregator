@@ -1,3 +1,5 @@
+"""Environment configuration: a bad value warns and falls back to its default."""
+
 from __future__ import annotations
 
 import logging
@@ -30,6 +32,8 @@ _LEGACY_VARS: dict[str, str | None] = {
 
 @dataclass(frozen=True)
 class Config:
+    """Validated settings read from the environment by `load`."""
+
     youtube_api_key: str
     public_base_url: str
     catalogue_interval_hours: int
@@ -116,6 +120,10 @@ def _warn_legacy_env(env: dict[str, str]) -> None:
 
 
 def load(env: dict[str, str] | None = None) -> Config:
+    """Read and validate the configuration from `env` (default `os.environ`).
+
+    Raise `ValueError` if `YOUTUBE_API_KEY` is missing.
+    """
     e = env if env is not None else dict(os.environ)
     key = e.get("YOUTUBE_API_KEY", "").strip()
     if not key:

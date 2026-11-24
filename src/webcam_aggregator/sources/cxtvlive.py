@@ -1,3 +1,5 @@
+"""cxtvlive.com source: the map feed unioned with the sitemap, then cam pages."""
+
 from __future__ import annotations
 
 import json
@@ -41,8 +43,10 @@ _Ctx = tuple[str, list[str]]
 
 
 def _primary_category(field: object) -> str | None:
-    """The first real content category in a map entry's "A · B" category field,
-    skipping quality tags like "High Definition". None when nothing's left."""
+    """Return the first real content category in a map entry's "A · B" category field.
+
+    Quality tags like "High Definition" are skipped. None when nothing's left.
+    """
     for raw in str(field).split("·"):
         seg = raw.strip()
         if seg and seg.lower() not in _NOISE_TAGS:
@@ -56,6 +60,8 @@ def _geo_parts(field: object) -> list[str]:
 
 
 class CxtvliveSource(HtmlScraperSource[_Ctx]):
+    """cxtvlive.com cams; the feed carries each cam's category and geo."""
+
     name: str = "cxtvlive"
 
     # slug -> (raw category, cam name, geo parts); populated by _page_urls from the map

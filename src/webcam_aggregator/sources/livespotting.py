@@ -1,3 +1,5 @@
+"""livespotting.tv source: country pages -> cam ids -> player-API JSON -> HLS."""
+
 from __future__ import annotations
 
 import json
@@ -31,18 +33,22 @@ _API = "https://player.livespotting.com/v2/livesource/{cam_id}?type=hub"
 
 
 class LivespottingSource:
-    """livespotting.tv tourist cams (mostly DACH coast/resort towns): country pages
-    list the cam ids, each id's player-API JSON carries a direct open HLS `source`.
-    An offline/missing id just yields no JSON and drops. No category anywhere ->
-    None; the German `name` gets country/city appended when it doesn't name them."""
+    """livespotting.tv tourist cams (mostly DACH coast/resort towns).
+
+    Country pages list the cam ids, each id's player-API JSON carries a direct open HLS
+    `source`. An offline/missing id just yields no JSON and drops. No category anywhere
+    -> None; the German `name` gets country/city appended when it doesn't name them.
+    """
 
     name: str = "livespotting"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each cam id whose player-API JSON has an HLS source."""
         page_for: dict[str, str] = {}
         for html in thread_imap(self._fetch.get, [_BASE + p for p in _COUNTRY_PATHS]):
             for path, cam_id in _CAM_LINK.findall(html or ""):

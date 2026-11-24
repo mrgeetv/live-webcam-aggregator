@@ -2,7 +2,8 @@
 
 The pacer's decisions are exercised against an injected clock whose fake sleep
 ADVANCES it — no real waiting — plus two real-thread tests at the bottom (tiny
-constants, hard wall-clock assertions) for the bugs only concurrency can catch."""
+constants, hard wall-clock assertions) for the bugs only concurrency can catch.
+"""
 
 from __future__ import annotations
 
@@ -89,8 +90,11 @@ def test_one_escalation_per_burst_not_per_failure() -> None:
 
 
 def test_request_that_waited_through_a_window_escalates_on_failure() -> None:
-    """The gen stamp must be read at the final gate pass: a request that slept
-    through the window and then failed is evidence about the CURRENT window."""
+    """The gen stamp must be read at the final gate pass.
+
+    A request that slept through the window and then failed is evidence about the
+    CURRENT window.
+    """
     p, _clock, _sleeps = _make_pacer()
     p.penalise("h.example", 0)
     gen = p.acquire("h.example")  # sleeps out the window, stamped afterwards
@@ -99,9 +103,11 @@ def test_request_that_waited_through_a_window_escalates_on_failure() -> None:
 
 
 def test_stale_gen_failure_on_a_fresh_entry_still_throttles() -> None:
-    """A failure landing after the entry decayed away (or was drained) proves the
-    host shed recently — without a strike, acquire's fast path would ignore the
-    window the penalty just set."""
+    """A failure after the entry decayed away (or was drained) still counts.
+
+    It proves the host shed recently. Without a strike, acquire's fast path would ignore
+    the window the penalty just set.
+    """
     p, _clock, _sleeps = _make_pacer()
     strikes, _window, escalated = p.penalise("h.example", 7)  # stale gen, no entry
     assert (strikes, escalated) == (1, False)
@@ -110,9 +116,11 @@ def test_stale_gen_failure_on_a_fresh_entry_still_throttles() -> None:
 
 
 def test_no_decay_while_gated() -> None:
-    """A cooldown window must not shed its own strikes — with decay anchored on the
-    penalty time, windows >= 32s would out-decay escalation and the breaker could
-    never be reached (the unbounded-build hole)."""
+    """A cooldown window must not shed its own strikes.
+
+    With decay anchored on the penalty time, windows >= 32s would out-decay escalation
+    and the breaker could never be reached (the unbounded-build hole).
+    """
     p, clock, _sleeps = _make_pacer()
     _escalate(p, "h.example", 5)  # strikes 5, window 32s
     s = p._hosts["h.example"]  # pyright: ignore[reportPrivateUsage]
@@ -156,8 +164,10 @@ def test_breaker_refuses_then_recovers_via_decay() -> None:
 
 
 def test_breaker_lets_one_probe_per_decay_period() -> None:
-    """While the breaker is open, one request per decay period still goes out —
-    without it, recovery could only be discovered by the NEXT build."""
+    """While the breaker is open, one request per decay period still goes out.
+
+    Without it, recovery could only be discovered by the NEXT build.
+    """
     p, clock, _sleeps = _make_pacer()
     _escalate(p, "h.example", _PACE_BREAK_AT)
     s = p._hosts["h.example"]  # pyright: ignore[reportPrivateUsage]
@@ -175,8 +185,11 @@ def test_breaker_lets_one_probe_per_decay_period() -> None:
 
 
 def test_long_wait_refuses_without_reserving() -> None:
-    """Refusing must not push next_allowed out — a refused request that still
-    reserved would let the queue run away and slow everyone behind it."""
+    """Refusing must not push next_allowed out.
+
+    A refused request that still reserved would let the queue run away and slow everyone
+    behind it.
+    """
     p, _clock, _sleeps = _make_pacer()
     _escalate(p, "h.example", 5)  # window 32s > _PACE_MAX_WAIT
     s = p._hosts["h.example"]  # pyright: ignore[reportPrivateUsage]
@@ -196,9 +209,11 @@ def test_queue_deeper_than_max_wait_refuses() -> None:
 
 
 def test_waiters_reserve_past_the_window_end() -> None:
-    """A queued waiter's slot lands AT OR AFTER the window end — otherwise every
-    waiter's slot falls inside the window and they all fire the moment it
-    expires, which is exactly the burst that re-trips a limiter."""
+    """A queued waiter's slot lands AT OR AFTER the window end.
+
+    Otherwise every waiter's slot falls inside the window and they all fire the moment
+    it expires, which is exactly the burst that re-trips a limiter.
+    """
     p, _clock, sleeps = _make_pacer()
     p.penalise("h.example", 0)  # window until t+2, interval 0.125
     assert p.acquire("h.example") == 1  # slot at the window end: waits 2.0
@@ -207,9 +222,12 @@ def test_waiters_reserve_past_the_window_end() -> None:
 
 
 def test_new_window_mid_wait_re_reserves_and_rolls_back() -> None:
-    """A window opened mid-wait invalidates our slot: the stale reservation is
-    rolled back (we were last) and a new slot is taken past the new window —
-    leaking it instead would build a phantom queue that refuses the next wave."""
+    """A window opened mid-wait invalidates our slot.
+
+    The stale reservation is rolled back (we were last) and a new slot is taken past the
+    new window; leaking it instead would build a phantom queue that refuses the next
+    wave.
+    """
     clock = _FakeClock()
     sleeps: list[float] = []
     pacer_ref: list[HostPacer] = []
@@ -287,8 +305,10 @@ def test_host_cardinality_is_bounded() -> None:
 def test_prune_frees_drained_and_recovered_hosts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """At the cap, a host that was drained AND has decayed to zero is evicted to
-    make room — a still-throttled or undrained one is not."""
+    """At the cap, a drained host that has decayed to zero is evicted to make room.
+
+    A still-throttled or undrained one is not.
+    """
     monkeypatch.setattr(fetch_mod, "_PACE_MAX_HOSTS", 2)
     p, clock, _sleeps = _make_pacer()
     p.penalise("old.example", 0)
@@ -340,8 +360,11 @@ class _Resp:
 def test_fetcher_503_penalises_then_recovers_on_the_gated_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The whole point of the pacer: the retry waits out the window and SUCCEEDS,
-    instead of firing straight back into the burst and losing the cam."""
+    """The retry waits out the window and SUCCEEDS.
+
+    That is the whole point of the pacer: the alternative is firing straight back into
+    the burst and losing the cam.
+    """
     _addrinfo(monkeypatch)
     p, _clock, sleeps = _make_pacer()
     responses = [_Resp(503), _Resp(200, b"body")]
@@ -459,8 +482,10 @@ def test_post_is_paced_and_penalised(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_breaker_warning_fires_once_per_trip(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The trip (7 -> 8) warns; the failing probes pinned at the cap must not —
-    a host blocked for a whole build would otherwise log one WARNING per probe."""
+    """The trip (7 -> 8) warns; the failing probes pinned at the cap must not.
+
+    A host blocked for a whole build would otherwise log one WARNING per probe.
+    """
     _addrinfo(monkeypatch)
     p, clock, _sleeps = _make_pacer()
     _escalate(p, "shed.example", _PACE_BREAK_AT - 1)
@@ -520,9 +545,12 @@ def test_post_honours_retry_only_shedding(monkeypatch: pytest.MonkeyPatch) -> No
 def test_queued_waiters_release_spaced_not_in_a_burst(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Three real threads queue behind one window; their acquires must return one
-    interval apart, not together at expiry — the release burst is what re-trips
-    a limiter. Generous margins: slots are 0.2s apart, we assert >= 0.1s."""
+    """Three real threads queue behind one window.
+
+    Their acquires must return one interval apart, not together at expiry — the release
+    burst is what re-trips a limiter. Generous margins: slots are 0.2s apart, we assert
+    >= 0.1s.
+    """
     monkeypatch.setattr(fetch_mod, "_PACE_COOLDOWN", 0.3)
     monkeypatch.setattr(fetch_mod, "_PACE_INTERVAL", 0.2)
     p = HostPacer()
@@ -554,10 +582,12 @@ def test_queued_waiters_release_spaced_not_in_a_burst(
 def test_sixteen_workers_against_a_shedding_host_terminate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """50 URLs, 16 real threads, a host that sheds intermittently plus timeouts and
-    a mid-body error — the map must complete promptly with consistent counters.
-    Catches: a wait that never wakes, a penalty that never fires, an exception
-    path that wedges the pacer."""
+    """A map over 50 URLs on 16 real threads completes promptly, counters consistent.
+
+    The host sheds intermittently, plus timeouts and a mid-body error. Catches: a wait
+    that never wakes, a penalty that never fires, an exception path that wedges the
+    pacer.
+    """
     _addrinfo(monkeypatch)
     monkeypatch.setattr(fetch_mod, "_PACE_COOLDOWN", 0.02)
     monkeypatch.setattr(fetch_mod, "_PACE_INTERVAL", 0.005)

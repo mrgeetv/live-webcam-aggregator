@@ -1,3 +1,5 @@
+"""Share-Ju (its-i.com) source: the /camera JSON-LD index of Japanese YouTube lives."""
+
 from __future__ import annotations
 
 import json
@@ -92,18 +94,22 @@ def _category(item: dict[str, object]) -> str | None:
 
 
 class SharejuSource:
-    """Share-Ju (its-i.com) Japanese live-cam directory, via the /camera index's
-    JSON-LD ItemList. Almost every cam is a Japanese-titled YouTube live an English
-    SEARCH_QUERY never surfaces; the few third-party iframes stay visible
-    `no-extractor` drops."""
+    """Share-Ju (its-i.com) Japanese live-cam directory.
+
+    Cams come from the /camera index's JSON-LD ItemList. Almost every cam is a
+    Japanese-titled YouTube live an English SEARCH_QUERY never surfaces; the few
+    third-party iframes stay visible `no-extractor` drops.
+    """
 
     name: str = "shareju"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each entry in the index's JSON-LD ItemList."""
         html = self._fetch.get(_INDEX)
         if not html:
             return

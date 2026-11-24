@@ -1,3 +1,5 @@
+"""Resolve cache: per-entry locking, TTL, LRU eviction and negative caching."""
+
 from __future__ import annotations
 
 import threading
@@ -37,9 +39,12 @@ RETRY_MAX_AGE = 600.0
 
 @dataclass(frozen=True)
 class Lookup:
-    """What `ResolveCache.get` answers: the resolve to serve (None when there is
-    none) and why the resolve attempt behind this answer failed (None when it
-    didn't). Both are set when a fresh resolve failed and the cached one stands."""
+    """The answer `ResolveCache.get` gives.
+
+    Holds the resolve to serve (None when there is none) and why the resolve attempt
+    behind this answer failed (None when it didn't). Both are set when a fresh resolve
+    failed and the cached one stands.
+    """
 
     resolved: Resolved | None
     error: str | None = None
@@ -62,6 +67,8 @@ class _Entry:
 
 
 class ResolveCache:
+    """Cache of resolved stream URLs by catalogue entry id."""
+
     _resolve: Callable[[str, str], Resolved]
     _clock: Callable[[], float]
     _cap: int
@@ -76,6 +83,7 @@ class ResolveCache:
         clock: Callable[[], float],
         cap: int = 500,
     ) -> None:
+        """Set the `resolve` callback, the `clock` and the `cap` on entries kept."""
         self._resolve = resolve
         self._clock = clock
         self._cap = cap
@@ -88,10 +96,12 @@ class ResolveCache:
             return self._locks.setdefault(key, threading.Lock())
 
     def record_redirect(self, entry_id: str) -> bool:
-        """Record that `entry_id`'s resolve is being handed out as a redirect, and
-        return whether this is a player retrying a URL that failed where the server
-        can't see: back RETRY_MIN_GAP to RETRY_WINDOW after the last redirect, for
-        an entry not refreshed within the run's backed-off RETRY_MIN_AGE."""
+        """Record a redirect for `entry_id`; return whether it is a player retrying.
+
+        Return whether this is a player retrying a URL that failed where the server
+        can't see: back RETRY_MIN_GAP to RETRY_WINDOW after the last redirect, for an
+        entry not refreshed within the run's backed-off RETRY_MIN_AGE.
+        """
         now = self._clock()
         with self._guard:
             e = self._data.get(entry_id)
@@ -111,11 +121,13 @@ class ResolveCache:
             return True
 
     def get(self, entry_id: str, target_url: str, *, fresh: bool = False) -> Lookup:
-        """The cached resolve for `entry_id`, resolving on a miss. A caller arriving
-        while a resolve for the id is in flight waits for its result. `fresh` forces
-        a new resolve; if it fails, the cached resolve is kept rather than replaced
-        by a negative entry. A failure's reason is kept with its negative entry, so
-        every request it answers can say why, not just the one that resolved."""
+        """Return the cached resolve for `entry_id`, resolving on a miss.
+
+        A caller arriving while a resolve for the id is in flight waits for its result.
+        `fresh` forces a new resolve; if it fails, the cached resolve is kept rather
+        than replaced by a negative entry. A failure's reason is kept with its negative
+        entry, so every request it answers can say why, not just the one that resolved.
+        """
         start = self._clock()
         thash = str(hash(target_url))
 

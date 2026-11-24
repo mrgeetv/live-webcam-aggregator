@@ -1,3 +1,5 @@
+"""HDOnTap source: sitemap -> cam pages, native HLS or the standard ladder."""
+
 from __future__ import annotations
 
 import re
@@ -42,14 +44,16 @@ def _title_of(html: str, url: str) -> str:
 
 
 class HdOnTapSource(HtmlScraperSource[str]):
-    """HDOnTap's sitemap lists every cam page (/stream/<id>/<slug>/). A page with a
-    `player-data` blob is a native-HLS cam: its candidate is the PAGE URL, resolved
-    fresh at serve time by `HdontapResolver`, because the blob's HLS URL carries a
-    per-page-fetch t/e token (which also means an `hls:` predisc_key could never
-    merge — hence None). Pages without the blob fall back to the standard ladder
+    """HDOnTap: sitemap -> cam pages (/stream/<id>/<slug>/), native HLS or the ladder.
+
+    A page with a `player-data` blob is a native-HLS cam: its candidate is the PAGE URL,
+    resolved fresh at serve time by `HdontapResolver`, because the blob's HLS URL
+    carries a per-page-fetch t/e token (which also means an `hls:` predisc_key could
+    never merge, hence None). Pages without the blob fall back to the standard ladder
     (roughly a quarter are plain YouTube embeds; an offline page carries neither and
     yields nothing). The site has no category taxonomy -> None, so the title-keyword
-    fallback picks up the beaches/wildlife cams."""
+    fallback picks up the beaches/wildlife cams.
+    """
 
     name: str = "hdontap"
 

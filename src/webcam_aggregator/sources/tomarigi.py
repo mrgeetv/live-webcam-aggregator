@@ -1,3 +1,5 @@
+"""tomarigi.me source: region listings -> cam pages -> YouTube embeds."""
+
 from __future__ import annotations
 
 import json
@@ -64,7 +66,7 @@ def _category(description: str) -> str | None:
 
 
 def _video_object(html: str) -> dict[str, object] | None:
-    """The cam page's VideoObject JSON-LD (it also carries a WebSite block)."""
+    """Return the cam page's VideoObject JSON-LD (it also carries a WebSite block)."""
     for block in _LD_JSON.findall(html):
         try:
             data = json.loads(block)
@@ -76,19 +78,23 @@ def _video_object(html: str) -> dict[str, object] | None:
 
 
 class TomarigiSource:
-    """tomarigi.me (とまり木): a curated directory of YouTube live cams —
+    """tomarigi.me (とまり木): a curated directory of YouTube live cams.
+
     Japanese-branded but mostly international. Sitemap -> region listing pages ->
-    per-cam page, whose VideoObject JSON-LD carries the YouTube embed URL, the name
-    and the category, so there is nothing to extract from the player and every cam
-    dedups by its `yt:` key. A page with no VideoObject (a withdrawn cam) drops."""
+    per-cam page, whose VideoObject JSON-LD carries the YouTube embed URL, the name and
+    the category, so there is nothing to extract from the player and every cam dedups by
+    its `yt:` key. A page with no VideoObject (a withdrawn cam) drops.
+    """
 
     name: str = "tomarigi"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each cam page, read from its VideoObject JSON-LD."""
         xml = self._fetch.get(_SITEMAP) or ""
         listings: set[str] = set(_LISTING_LOC.findall(xml))
         read: set[str] = set()

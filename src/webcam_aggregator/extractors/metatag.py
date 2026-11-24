@@ -1,3 +1,5 @@
+"""Meta-tag extractor: a page's `og:video` or `twitter:player` URL is the stream."""
+
 from __future__ import annotations
 
 import re
@@ -18,12 +20,16 @@ _OG = re.compile(
 
 
 class MetaTagExtractor:
+    """Resolve a page to the stream URL named by its `og:video` meta tag."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a page body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to its `og:video` URL (mp4 or hls); raise if absent."""
         html = self._fetch(target_url)
         m = _OG.search(html)
         if not m:

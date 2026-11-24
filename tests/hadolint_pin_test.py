@@ -1,5 +1,7 @@
-"""The pre-commit check that hadolint's pinned image tag follows its rev
-(scripts/check_hadolint_pin.py)."""
+"""Tests for the pre-commit check that hadolint's pinned image tag follows its rev.
+
+The check is scripts/check_hadolint_pin.py.
+"""
 
 from __future__ import annotations
 

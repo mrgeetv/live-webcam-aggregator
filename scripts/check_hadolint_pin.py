@@ -39,6 +39,10 @@ def mismatch(config: str) -> str | None:
 
 
 def main(paths: list[str]) -> int:
+    """Check each pre-commit config in `paths` (default `.pre-commit-config.yaml`).
+
+    Return 1 after printing the first mismatch to stderr, else 0.
+    """
     for path in paths or [".pre-commit-config.yaml"]:
         problem = mismatch(Path(path).read_text(encoding="utf-8"))
         if problem:

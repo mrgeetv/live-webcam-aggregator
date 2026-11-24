@@ -1,3 +1,5 @@
+"""IPCamLive extractor: player page `address` + `streamid` -> the stream's m3u8."""
+
 from __future__ import annotations
 
 import re
@@ -35,7 +37,7 @@ _PLAYER = "https://g0.ipcamlive.com/player/player.php?alias="
 
 
 def is_alias_page(url: str) -> bool:
-    """True for a bare https://www.ipcamlive.com/<alias> landing page."""
+    """Return True for a bare https://www.ipcamlive.com/<alias> landing page."""
     return _ALIAS_URL.match(url) is not None
 
 
@@ -45,12 +47,16 @@ def _player_url(target_url: str) -> str:
 
 
 class IpcamliveResolver:
+    """Resolve an ipcamlive player or share page to its HLS URL."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a page body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to its HLS URL, raising if the cam is offline."""
         player_url = _player_url(target_url)
         body = self._fetch(player_url)
         addr = _ADDRESS.search(body)

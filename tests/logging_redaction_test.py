@@ -123,8 +123,11 @@ def test_filter_handles_dict_args(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_filter_on_handler_covers_child_loggers() -> None:
-    """Filters on a LOGGER only see records logged directly on it. Every module here
-    logs through a child logger, so the filter has to live on the handler."""
+    """Filters on a LOGGER only see records logged directly on it.
+
+    Every module here logs through a child logger, so the filter has to live on the
+    handler.
+    """
     buf = io.StringIO()
     handler = logging.StreamHandler(buf)
     handler.addFilter(RedactingFilter())
@@ -145,8 +148,11 @@ def test_filter_on_handler_covers_child_loggers() -> None:
 
 
 def test_describe_error_trims_a_quoted_url_as_loggable_does() -> None:
-    """An error can quote a googlevideo URL, whose credentials sit in the PATH,
-    or one with userinfo; and a multi-line message must stay one log line."""
+    """An error can quote a googlevideo URL, or one with userinfo.
+
+    The googlevideo credentials sit in the PATH. A multi-line message must stay one log
+    line.
+    """
     exc = ValueError(
         "yt-dlp failed: ERROR: unable to download https://u:pw@manifest.googlevideo"
         ".com/api/manifest/hls_variant/expire/1/ip/203.0.113.7/id/abc.1/sig/SECRET"

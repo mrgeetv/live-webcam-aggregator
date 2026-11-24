@@ -86,7 +86,9 @@ def test_baltic_ttl_derived_from_epoch_ms() -> None:
 
 def test_ipcamlive_alias_page_is_rewritten_to_the_player() -> None:
     """The landing page builds its player client-side, so scraping it yields nothing.
-    The alias in the path is all the player URL needs."""
+
+    The alias in the path is all the player URL needs.
+    """
     fetched: list[str] = []
 
     def fetch(url: str) -> str:
@@ -111,8 +113,11 @@ def test_ipcamlive_player_url_is_passed_through_unchanged() -> None:
 
 
 def test_ipcamlive_offline_alias_error_carries_no_url() -> None:
-    """Errors feed the aggregated resolve-failed detail at INFO; a URL would shatter
-    one failure mode into per-cam buckets (liveness logs the URL at DEBUG)."""
+    """Errors feed the aggregated resolve-failed detail at INFO.
+
+    A URL would shatter one failure mode into per-cam buckets (liveness logs the URL at
+    DEBUG).
+    """
     import pytest
 
     with pytest.raises(ValueError) as exc:

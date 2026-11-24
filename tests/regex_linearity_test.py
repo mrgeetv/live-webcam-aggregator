@@ -1,4 +1,4 @@
-"""Every regex in the package must stay linear on hostile input.
+r"""Every regex in the package must stay linear on hostile input.
 
 `re` holds the GIL for a whole match, so one fetched page, manifest or title that sends
 a pattern into quadratic backtracking stalls the entire process, playback included.
@@ -70,7 +70,7 @@ _MAX_STOPPERS = 6
 
 
 def _re_function(node: ast.AST) -> str | None:
-    """The `re` function a call node calls with a pattern (`search`, `sub`, …), or None."""
+    """Return the `re` function a call node calls with a pattern, or None."""
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -127,8 +127,11 @@ def _flags(node: ast.expr) -> int:
 
 
 def _compiled_patterns() -> dict[tuple[str, int], str]:
-    """Compiled patterns held by a module or class, including any built at runtime
-    (an f-string over a shared path fragment) that no source literal spells out."""
+    """Return the compiled patterns held by a module or class.
+
+    That includes any built at runtime (an f-string over a shared path fragment) that no
+    source literal spells out.
+    """
     found: dict[tuple[str, int], str] = {}
     prefix = webcam_aggregator.__name__ + "."
     for mod_info in pkgutil.walk_packages(webcam_aggregator.__path__, prefix):
@@ -150,8 +153,10 @@ def _compiled_patterns() -> dict[tuple[str, int], str]:
 
 
 def _patterns_in(value: object, depth: int) -> list[re.Pattern[str]]:
-    """Patterns in `value`, looking inside tuples, lists and dict values (a rule table
-    such as categories._TITLE_COMPILED holds its patterns that way)."""
+    """Return the patterns in `value`, looking inside tuples, lists and dict values.
+
+    A rule table such as categories._TITLE_COMPILED holds its patterns that way.
+    """
     if isinstance(value, re.Pattern):
         pattern: object = value.pattern
         return [re.compile(pattern, value.flags)] if isinstance(pattern, str) else []
@@ -177,14 +182,16 @@ def _sample(
     out: list[str],
     runs_at: list[tuple[int, int]],
 ) -> None:
-    """Append to `out` one string the parsed pattern `seq` matches (as near as a
-    lookaround-blind walk gets), taking alternative and class member `variant` (mod
-    their counts). Every literal run, group, alternative and repeated item goes into
-    `pieces`, the material for long runs; the length of `out` after each node (bar the
-    inside of a literal run) into `cuts`, where a prefix can usefully end; and where
-    each repeat starts and ends into `runs_at`, since a long run is absorbed at one
-    and the text between any two (the key in `<[^<>]*KEY[^<>]*>`, even with a small
-    repeat inside it) is worth repeating."""
+    """Append to `out` one string the parsed pattern `seq` matches.
+
+    It is as near as a lookaround-blind walk gets, taking alternative and class member
+    `variant` (mod their counts). Every literal run, group, alternative and repeated
+    item goes into `pieces`, the material for long runs; the length of `out` after each
+    node (bar the inside of a literal run) into `cuts`, where a prefix can usefully end;
+    and where each repeat starts and ends into `runs_at`, since a long run is absorbed
+    at one and the text between any two (the key in `<[^<>]*KEY[^<>]*>`, even with a
+    small repeat inside it) is worth repeating.
+    """
     run_start = None
     for index, (op, av) in enumerate(seq):
         kind = str(op)
@@ -236,8 +243,10 @@ def _sample(
 
 
 def _widest_choice(seq: Any) -> int:
-    """The most alternatives (or class members) any one choice in the pattern offers,
-    so the samples between them visit every one."""
+    """Return the most alternatives (or class members) one choice in the pattern offers.
+
+    The samples between them then visit every one.
+    """
     widest = 1
     for op, av in seq:
         kind = str(op)
@@ -255,9 +264,12 @@ def _widest_choice(seq: Any) -> int:
 
 
 def _keeps_state_per_iteration(seq: Any) -> bool:
-    """True if the pattern has a non-possessive repeat of more than one character at a
-    time: the engine keeps backtracking state for every iteration of one, so a long
-    run through it costs memory in proportion, however fast it is."""
+    """Return True if the pattern has a non-possessive multi-character repeat.
+
+    That is a repeat of more than one character at a time. The engine keeps backtracking
+    state for every iteration of one, so a long run through it costs memory in
+    proportion, however fast it is.
+    """
     for op, av in seq:
         kind = str(op)
         if kind in ("MAX_REPEAT", "MIN_REPEAT") and av[1] > 1:
@@ -290,8 +302,10 @@ def _category_member(category: Any) -> str:
 
 
 def _class_member(items: Any, variant: int) -> str:
-    """A character inside the class `items` (outside it, for a negated one), picked by
-    `variant` so the samples between them try more than one."""
+    """Return a character inside the class `items` (outside it, for a negated one).
+
+    It is picked by `variant` so the samples between them try more than one.
+    """
     if not any(str(op) == "NEGATE" for op, _ in items):
         op, av = items[variant % len(items)]
         if str(op) == "LITERAL":
@@ -305,7 +319,7 @@ def _class_member(items: Any, variant: int) -> str:
 
 
 def _banned(items: Any) -> list[str]:
-    """The characters a negated class `items` excludes, in pattern order."""
+    """Return the characters a negated class `items` excludes, in pattern order."""
     banned: list[str] = []
     for op, av in items:
         kind = str(op)
@@ -325,8 +339,10 @@ def _banned(items: Any) -> list[str]:
 
 
 def _stoppers(seq: Any) -> list[str]:
-    """Characters some negated class in the pattern refuses: ending an input on one
-    can stop a span short of the end, where `$` then fails."""
+    """Return the characters some negated class in the pattern refuses.
+
+    Ending an input on one can stop a span short of the end, where `$` then fails.
+    """
     found: list[str] = []
     for op, av in seq:
         kind = str(op)
@@ -350,10 +366,13 @@ _Shape = tuple[str, str, str]
 
 
 def _hostile_shapes(pattern: str, flags: int) -> dict[str, _Shape]:
-    """Every useful prefix of every sample, repeated or followed by a long run of one
-    piece, then ended by a character `.` eats, by a newline (which `.` and `$` stop at),
-    or by one a class in the pattern refuses. Keyed by a readable label, in a stable
-    order so a failure names the same input every run."""
+    """Return the hostile inputs built from every useful prefix of every sample.
+
+    Each prefix is repeated or followed by a long run of one piece, then ended by a
+    character `.` eats, by a newline (which `.` and `$` stop at), or by one a class in
+    the pattern refuses. Keyed by a readable label, in a stable order so a failure names
+    the same input every run.
+    """
     tree = P.parse(pattern, flags)
     prefixes: set[str] = set()
     before_runs: set[str] = set()
@@ -402,9 +421,12 @@ class _Runaway(Exception):
 
 @contextmanager
 def _cut_off_after(seconds: float) -> Generator[None]:
-    """Interrupt a match still running after `seconds` of CPU. The regex engine checks
-    for signals mid-match, so an exponential pattern fails here instead of hanging the
-    suite; xdist runs each test on its worker's main thread, where signals land."""
+    """Interrupt a match still running after `seconds` of CPU.
+
+    The regex engine checks for signals mid-match, so an exponential pattern fails here
+    instead of hanging the suite; xdist runs each test on its worker's main thread,
+    where signals land.
+    """
 
     def _raise(_signum: int, _frame: object) -> None:
         raise _Runaway
@@ -420,9 +442,11 @@ def _cut_off_after(seconds: float) -> Generator[None]:
 
 def _timed(rx: re.Pattern[str], text: str) -> tuple[float, float]:
     """(CPU, wall) seconds for one full scan; a runaway scan reads as twice the limit.
+
     The limit is checked on CPU, so a worker the scheduler parks doesn't read as a slow
     pattern. Growth is judged on wall time, because CPU time can be counted in whole
-    kernel ticks, far coarser than the smaller sizes take."""
+    kernel ticks, far coarser than the smaller sizes take.
+    """
     try:
         with _cut_off_after(_LIMIT_SECONDS * 2):
             cpu, wall = time.process_time(), time.perf_counter()
@@ -433,14 +457,18 @@ def _timed(rx: re.Pattern[str], text: str) -> tuple[float, float]:
 
 
 def _best_wall(rx: re.Pattern[str], text: str) -> float:
-    """The quickest of a few wall-clock runs, so one scheduler hiccup can't pass for
-    growth."""
+    """Return the quickest of a few wall-clock runs.
+
+    One scheduler hiccup then can't pass for growth.
+    """
     return min(_timed(rx, text)[1] for _ in range(3))
 
 
 def _bytes_per_char(rx: re.Pattern[str], text: str) -> float:
-    """Peak memory for one scan that keeps none of its matches, per character, so
-    only what the engine itself holds counts."""
+    """Return the peak memory per character for one scan that keeps none of its matches.
+
+    Only what the engine itself holds counts.
+    """
     tracemalloc.start()
     try:
         for _match in rx.finditer(text):
@@ -451,13 +479,16 @@ def _bytes_per_char(rx: re.Pattern[str], text: str) -> float:
 
 
 def _first_slow_input(pattern: str, flags: int) -> str | None:
-    """A description of the first hostile input the pattern is too slow (or, for a
-    repeat that keeps state per iteration, too memory-hungry) on, or None.
+    """Describe the first hostile input the pattern is too slow on, or None.
+
+    For a repeat that keeps state per iteration the failure is being too memory-hungry
+    rather than too slow.
 
     Every input runs at the smallest size. The slowest few there, and any over a floor,
     are tried at the middle size, and those that grew like a quadratic at the largest,
     where the verdict is the CPU limit or that same growth measured again on the
-    quickest of three runs at each size."""
+    quickest of three runs at each size.
+    """
     rx = re.compile(pattern, flags)
     small, medium, large = _SIZES
     shapes = _hostile_shapes(pattern, flags)
@@ -525,10 +556,12 @@ def test_the_guard_still_catches_each_known_bad_shape(pattern: str) -> None:
 
 
 def test_every_regex_in_the_package_is_where_the_collector_looks() -> None:
-    """The collector reads literal patterns from the source and compiled ones from
-    module and class attributes; a pattern built inside a function, or imported from
-    `re` by name, would escape both and go untested. So every `re` call with a
-    non-literal pattern must sit at module level, and nothing imports from `re`."""
+    """Every `re` call with a non-literal pattern sits at module level.
+
+    Nothing imports from `re`. The collector reads literal patterns from the source and
+    compiled ones from module and class attributes; a pattern built inside a function,
+    or imported from `re` by name, would escape both and go untested.
+    """
     stray: list[str] = []
     for path in sorted(_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -557,9 +590,11 @@ def test_every_regex_in_the_package_is_where_the_collector_looks() -> None:
 
 
 def test_the_collector_sees_inline_and_runtime_built_patterns() -> None:
-    """The guard is only as good as its reach: a literal inside a function body, a
-    pattern assembled from an f-string and one held in a rule table must all be
-    collected."""
+    """The collector reaches every pattern shape the guard must test.
+
+    A literal inside a function body, a pattern assembled from an f-string and one held
+    in a rule table must all be collected.
+    """
     wheres = {where for _p, _f, where in _all_patterns()}
     assert any(w.startswith("webcam_aggregator/sources/base.py:") for w in wheres)
     assert "webcam_aggregator.sources.skyline._SITEMAP_CAM" in wheres

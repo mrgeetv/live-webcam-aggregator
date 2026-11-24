@@ -1,3 +1,5 @@
+"""Baltic Live cam extractor: embed page -> admin-ajax auth_token -> tokenised m3u8."""
+
 from __future__ import annotations
 
 import re
@@ -23,6 +25,8 @@ _EPOCH_MS = re.compile(r":(\d{13})")
 
 
 class BalticResolver:
+    """Resolve a balticlivecam.com embed page to its tokenised HLS URL."""
+
     _get: Callable[[str], str]
     _post: Callable[[str, dict[str, str]], str]
 
@@ -31,10 +35,12 @@ class BalticResolver:
         get: Callable[[str], str],
         post: Callable[[str, dict[str, str]], str],
     ) -> None:
+        """Take the `get` (page fetch) and `post` (ajax call) callables."""
         self._get = get
         self._post = post
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to its tokenised HLS URL, expiring with its token."""
         page = self._get(target_url)
         cam = _ID.search(page)
         if not cam:

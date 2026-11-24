@@ -1,3 +1,5 @@
+"""airportwebcams.net source: airport cams via each YouTube channel's /live URL."""
+
 from __future__ import annotations
 
 import re
@@ -38,11 +40,14 @@ _TITLE_TAIL = re.compile(r"(?<!\s)\s*Webcams?\s*$", re.IGNORECASE)
 
 
 class AirportWebcamsSource(HtmlScraperSource[str]):
-    """airportwebcams.net: an airport-cam directory whose pages link each camera's
-    YouTube channel (its /streams page) rather than a fixed video id — the current
-    live stream is resolved via the channel's /live URL at build/serve time. A
-    channel not currently live is a resolve-failed drop; that churn is normal for
-    this source. All cams -> category Airports; ctx is the page's airport title."""
+    """airportwebcams.net: airport cams, resolved via each YouTube channel's /live URL.
+
+    The site is an airport-cam directory whose pages link each camera's YouTube channel
+    (its /streams page) rather than a fixed video id; the current live stream is
+    resolved via the channel's /live URL at build/serve time. A channel not currently
+    live is a resolve-failed drop; that churn is normal for this source. All cams ->
+    category Airports; ctx is the page's airport title.
+    """
 
     name: str = "airportwebcams"
 

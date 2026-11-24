@@ -234,8 +234,11 @@ def test_wildlife_trusts_keeps_chrome_and_noise_out():
 
 
 def test_wildlife_trusts_stable_ids_are_unique_and_follow_the_cam():
-    """Every YouTube card shares the index page, and a page's embeds can be added,
-    removed or reordered: the id must belong to the cam, not to its position."""
+    """The id belongs to the cam, not to its position.
+
+    Every YouTube card shares the index page, and a page's embeds can be added, removed
+    or reordered.
+    """
     cams = list(WildlifeTrustsSource(_FakeFetch()).discover())
     assert max(Counter(stable_id(c) for c in cams).values()) == 1
 
@@ -295,9 +298,11 @@ def test_wildlife_trusts_sitemap_filter_keeps_cam_pages_only():
 
 
 def test_wildlife_trusts_markup_scan_stays_linear_on_hostile_pages():
-    """`re` holds the GIL, so a backtracking blow-up on one page stalls playback
-    too. This source's own scans (cards, player tags) must stay linear on unclosed
-    tags and link-less cards."""
+    """`re` holds the GIL, so a backtracking blow-up on one page stalls playback too.
+
+    This source's own scans (cards, player tags) must stay linear on unclosed tags and
+    link-less cards.
+    """
     from webcam_aggregator.sources.wildlife_trusts import (
         _TAG,  # pyright: ignore[reportPrivateUsage]
     )

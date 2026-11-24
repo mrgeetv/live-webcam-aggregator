@@ -144,8 +144,11 @@ def test_legacy_v1_var_removed_warns(caplog: pytest.LogCaptureFixture) -> None:
 def test_blank_env_vars_mean_unset_not_invalid(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """docker-compose passes `FOO=${FOO:-}` through as an empty string when the var
-    isn't in .env — that must take the default silently, not warn about a bad value."""
+    """A blank value takes the default silently.
+
+    docker-compose passes `FOO=${FOO:-}` through as an empty string when the var isn't
+    in .env, so a blank must not warn about a bad value.
+    """
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
         c = config.load(
             {
@@ -171,7 +174,10 @@ def test_whitespace_only_env_var_also_means_unset() -> None:
 
 
 def test_blank_bool_takes_the_default_not_false() -> None:
-    """Blank means UNSET for bools too — with PROXY_YOUTUBE defaulting False, "" ->
-    False looks right by coincidence; the trap is any future bool defaulting True."""
+    """Blank means UNSET for bools too.
+
+    With PROXY_YOUTUBE defaulting False, "" -> False looks right by coincidence; the
+    trap is any future bool defaulting True.
+    """
     assert _bool_env({"X": ""}, "X", default=True) is True
     assert _bool_env({"X": "  "}, "X", default=True) is True

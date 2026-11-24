@@ -39,8 +39,9 @@ def _python_alpine(tag: str) -> _PythonAlpine | None:
 
 
 def newer_tags(current: str, available: list[str]) -> list[str]:
-    """Tags of current's variant and python major whose python and alpine are both at
-    least current's, oldest first.
+    """Return the newer tags of current's variant and python major, oldest first.
+
+    Newer means python and alpine are both at least current's.
 
     A newer python on an older alpine doesn't count (it would downgrade the OS), nor
     does a new python major (a rewrite, not a bump).
@@ -155,7 +156,9 @@ def stale_reason(dockerfile_path: str, image: str, commit: str) -> str:
 
 
 def main(argv: list[str]) -> int:
-    """Usage:
+    """Run the subcommand named in `argv`.
+
+    Usage:
     images <Dockerfile>              its external base images, one per line
     newer-tags <tag>                 the newer tags among those read from stdin
     label <Dockerfile>               the LABEL=<value> line to stamp on a build

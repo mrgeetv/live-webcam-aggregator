@@ -158,8 +158,10 @@ def test_negative_cache_expires() -> None:
 
 
 def test_negative_entry_keeps_the_failure_reason() -> None:
-    """Every request a negative entry answers says why, with any URL the error
-    quotes cut at its query (a token can ride there)."""
+    """Every request a negative entry answers says why.
+
+    Any URL the error quotes is cut at its query (a token can ride there).
+    """
     clock = _Clock()
 
     def failing_resolve(_entry_id: str, _target_url: str) -> Resolved:

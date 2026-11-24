@@ -117,9 +117,12 @@ def test_cross_source_dedup_collapses_same_predisc_key() -> None:
 
 
 def test_shared_cam_is_probed_once_across_sources() -> None:
-    """The same cam carried by two sources (a first-party site and a meta-aggregator)
-    must cost ONE liveness probe — the second source gets the cached verdict. The
-    verdict fans out: a cached dead cam counts as dropped in BOTH sources' stats."""
+    """The same cam carried by two sources costs one liveness probe.
+
+    The two sources are a first-party site and a meta-aggregator; the second gets the
+    cached verdict. The verdict fans out: a cached dead cam counts as dropped in BOTH
+    sources' stats.
+    """
     probed: list[str] = []
 
     def counting(c: Candidate) -> str | None:
@@ -173,10 +176,13 @@ def test_shared_cam_is_probed_once_across_sources() -> None:
 
 
 def test_same_key_different_target_probed_independently() -> None:
-    """The verdict cache keys on target_url, not the merge key. Two candidates that
-    share a predisc_key but carry DIFFERENT target_urls (a tokened vs bare CDN URL, or
-    a feratel cam whose URL shape routes to a different extractor) must each be probed —
-    sharing one verdict would ship a URL the probe never touched, or drop a live one."""
+    """The verdict cache keys on target_url, not the merge key.
+
+    Two candidates that share a predisc_key but carry DIFFERENT target_urls (a tokened
+    vs bare CDN URL, or a feratel cam whose URL shape routes to a different extractor)
+    must each be probed — sharing one verdict would ship a URL the probe never touched,
+    or drop a live one.
+    """
     probed: list[str] = []
 
     def counting(c: Candidate) -> str | None:
@@ -269,8 +275,10 @@ def test_multisource_deduped_category_mapped_id_non_empty() -> None:
 
 
 def test_entity_escaped_title_is_decoded() -> None:
-    """Data API snippets and several scraped pages hand over titles still
-    HTML-escaped; a player shows `&amp;` literally, so the build decodes them."""
+    """Data API snippets and several scraped pages hand over titles still HTML-escaped.
+
+    A player shows `&amp;` literally, so the build decodes them.
+    """
     cam = _make_candidate(title="Ryan&#39;s &quot;Ground View&quot; Fish &amp; Chips")
 
     [entry] = build_catalogue(
@@ -284,8 +292,10 @@ def test_entity_escaped_title_is_decoded() -> None:
 
 
 def test_escaped_copy_of_a_cam_does_not_win_the_merge() -> None:
-    """Dedup keeps the longest title, and escaping makes a title longer, so the
-    titles are decoded before the merge, not after it."""
+    """Titles are decoded before the merge, not after it.
+
+    Dedup keeps the longest title, and escaping makes a title longer.
+    """
     escaped = _make_candidate(source="ozolio", title="Harry&#039;s Bar")
     # Longer than the escaped title once decoded (11), shorter than it raw (16).
     clean = _make_candidate(source="camscape", title="Harry's Bar, HI")
@@ -504,8 +514,10 @@ def test_empty_guard_streak_increments_then_resets() -> None:
 
 
 def test_crash_reuses_last_good_set_and_never_wipes() -> None:
-    """A source whose discover() raises reuses its last good set across repeated
-    crashes — two consecutive crashes must NOT be accepted as an empty set."""
+    """A source whose discover() keeps raising keeps reusing its last good set.
+
+    Two consecutive crashes must NOT be accepted as an empty set.
+    """
     cam = _make_candidate(
         source="worldcams",
         key="hls:a",
@@ -543,9 +555,12 @@ def test_crash_reuses_last_good_set_and_never_wipes() -> None:
 
 
 def test_health_fields_record_raw_outcome_under_guard() -> None:
-    """The per-cycle raw fields (/health monitoring) record the actual failure even
-    while the empty-guard masks it: on a collapse, last_raw_kept is the shrunk count
-    (the raw result), not the larger count the guard keeps serving."""
+    """The per-cycle raw fields record the actual failure.
+
+    They feed /health monitoring and show the failure even while the empty-guard masks
+    it: on a collapse, last_raw_kept is the shrunk count (the raw result), not the
+    larger count the guard keeps serving.
+    """
     old_kept = _make_old_candidates(10)
     history: dict[str, Hist] = {
         "worldcams": Hist(last_count=10, shrink_streak=0, last_kept=old_kept)
@@ -586,8 +601,10 @@ def test_health_fields_record_raw_outcome_under_guard() -> None:
 
 
 def test_health_fields_flag_crash() -> None:
-    """A crashed discover records last_crashed=True and last_raw_kept=0, even though
-    the empty-guard keeps serving the last-good set."""
+    """A crashed discover records last_crashed=True and last_raw_kept=0.
+
+    That holds even though the empty-guard keeps serving the last-good set.
+    """
     cam = _make_candidate(
         source="worldcams", key="hls:a", target="https://example.com/a.m3u8"
     )
@@ -618,8 +635,11 @@ def test_health_fields_flag_crash() -> None:
 
 
 def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
-    """Sources run concurrently: one whose liveness probe raises is treated like a crash
-    (reuse its last good set) and must NOT sink the other sources' results."""
+    """A source whose liveness probe raises is treated like a crash.
+
+    Sources run concurrently; it reuses its last good set and must NOT sink the other
+    sources' results.
+    """
     boom = _make_candidate(
         source="worldcams", key="hls:boom", target="https://example.com/boom.m3u8"
     )
@@ -648,8 +668,10 @@ def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
 
 
 def test_exclude_categories_drops_matching_entries() -> None:
-    """Entries whose mapped category is excluded are dropped (case-insensitive, matched
-    on the unified category — Birds maps to Animals, so excluding 'animals' drops it).
+    """Entries whose mapped category is excluded are dropped.
+
+    Matching is case-insensitive and on the unified category: Birds maps to Animals, so
+    excluding 'animals' drops it.
     """
     beach = _make_candidate(
         source="worldcams",
@@ -771,8 +793,11 @@ def test_blocked_source_names_the_host_and_status(
 def test_soft_block_returning_200_is_still_flagged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A Cloudflare challenge page is an HTTP 200 — a failure counter sees nothing
-    wrong. This is the case the whole per-host-failure approach could not detect."""
+    """A Cloudflare challenge page is an HTTP 200.
+
+    A failure counter sees nothing wrong. This is the case the whole per-host-failure
+    approach could not detect.
+    """
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
         build_catalogue(
             [_Src("skyline", [])],
@@ -819,8 +844,11 @@ def test_partial_failures_are_reported_at_info(
 def test_source_with_no_fetcher_is_not_misreported(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """youtube-api uses googleapiclient, not Fetcher — no stats, and it must not be
-    described as "0 fetched" as though the network were the problem."""
+    """youtube-api uses googleapiclient, not Fetcher.
+
+    No stats, and it must not be described as "0 fetched" as though the network were the
+    problem.
+    """
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
         build_catalogue(
             [_Src("youtube-api", [])],
@@ -834,8 +862,11 @@ def test_source_with_no_fetcher_is_not_misreported(
 
 
 def test_fetch_stats_reach_the_source_line(caplog: pytest.LogCaptureFixture) -> None:
-    """Per-source fetch outcomes surface on the log line — /health does not carry
-    them, so the line is the only place a blocked source explains itself."""
+    """Per-source fetch outcomes surface on the log line.
+
+    /health does not carry them, so the line is the only place a blocked source explains
+    itself.
+    """
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
         build_catalogue(
             [_Src("skyline", [])],

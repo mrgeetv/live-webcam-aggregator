@@ -1,3 +1,5 @@
+"""Ozolio extractor: relay session API (init, then open) -> a live Wowza HLS URL."""
+
 from __future__ import annotations
 
 import json
@@ -37,9 +39,12 @@ _SID = re.compile(r"SID_[A-Z0-9]+")
 
 
 class OzolioResolver:
+    """Resolve an Ozolio cam to its live HLS URL through the relay's session API."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a response body as text."""
         self._fetch = fetch
 
     def _api(self, url: str) -> dict[str, object]:
@@ -53,6 +58,7 @@ class OzolioResolver:
         return doc if isinstance(doc, dict) else {}
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to the live HLS URL; raise if offline or a loop."""
         m = _CID.search(target_url)
         if not m:
             msg = "ozolio: no camera id in target"

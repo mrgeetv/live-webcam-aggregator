@@ -1,3 +1,5 @@
+"""YouTube Data API source: live-stream search and the liveness lookup."""
+
 from __future__ import annotations
 
 import logging
@@ -60,6 +62,7 @@ class YoutubeApiSource:
         query: str,
         max_videos: int = 1000,
     ) -> None:
+        """Take a client factory (not a client), the search `query` and a video cap."""
         self._new_client = client_factory
         self._c = None
         self._query = query
@@ -83,6 +86,7 @@ class YoutubeApiSource:
         self._c = None
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield live videos from `search.list`, paging back with `publishedBefore`."""
         # YouTube caps an eventType=live search at ~100 results via pageToken (it
         # reports an inflated totalResults but returns an empty page 3). Paginate by
         # walking backwards in time with publishedBefore instead — each window is a

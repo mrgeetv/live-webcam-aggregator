@@ -1,3 +1,5 @@
+"""camscape.com source: sitemap -> cam pages -> embeds, camsecure resolved early."""
+
 from __future__ import annotations
 
 import json
@@ -90,9 +92,12 @@ _CHANNEL = re.compile(r"[?&]channel=([A-Za-z0-9_]+)")
 
 
 def _is_camsecure(url: str) -> bool:
-    """A camsecure embed (camsecure.co / .uk / .co.uk, any subdomain), resolved to its
-    HLS below. Read from the hostname's labels: as a regex, a run of label repeats and
-    the `camsecure.` literal compete for the same characters."""
+    """Match a camsecure embed (camsecure.co / .uk / .co.uk, any subdomain).
+
+    The embed is resolved to its HLS below. It is read from the hostname's labels: as a
+    regex, a run of label repeats and the `camsecure.` literal compete for the same
+    characters.
+    """
     parts = urlsplit(url)
     labels = (parts.hostname or "").split(".")
     return "camsecure" in labels[:-1] and parts.path.startswith("/")
@@ -116,6 +121,8 @@ def _streams(html: str) -> list[dict[str, object]]:
 
 
 class CamscapeSource(HtmlScraperSource[_Ctx]):
+    """camscape.com cams, listed by its sitemaps; each page's JSON holds the embeds."""
+
     name: str = "camscape"
 
     @override
@@ -162,7 +169,7 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         )
 
     def _camsecure_hls(self, embed: str) -> str | None:
-        """A camsecure embed -> its direct HLS, or None if it doesn't resolve.
+        """Resolve a camsecure embed to its direct HLS, or None if it doesn't resolve.
 
         camscape embeds camsecure players (including white-label ones for third
         parties, which are absent from camsecure's own sitemap and so unreachable
@@ -172,7 +179,8 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         `portland_harbour_webcam.html` serves `weymouthsailing.m3u8`. The URL is a
         static open-CDN path (no token), which is why the camsecure source stores
         it the same way. Only a handful of embeds per build, so a serial hop is
-        cheaper than the duplicate channels we would otherwise ship."""
+        cheaper than the duplicate channels we would otherwise ship.
+        """
         page = self._fetch.get(embed) or ""
         direct = hls_from_player(page, embed)
         if direct:

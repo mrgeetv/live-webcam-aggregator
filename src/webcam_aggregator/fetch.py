@@ -1,3 +1,5 @@
+"""HTTP fetch: SSRF guard, per-host pacing, stats and browser-fingerprint transport."""
+
 from __future__ import annotations
 
 import io
@@ -38,9 +40,12 @@ _MAX_REDIRECTS = 5
 
 
 def resolve_scrape_workers() -> int:
-    """Concurrency for scraping/liveness. The work is I/O-bound (network waits), so
-    the ceiling is politeness to the target host, not local cores. Override with the
-    SCRAPE_WORKERS env var (e.g. raise it on a small box where the build is slow)."""
+    """Return the concurrency for scraping and liveness.
+
+    The work is I/O-bound (network waits), so the ceiling is politeness to the target
+    host, not local cores. Override with the SCRAPE_WORKERS env var (e.g. raise it on a
+    small box where the build is slow).
+    """
     default = min(16, (os.cpu_count() or 2) * 4)
     raw = os.environ.get("SCRAPE_WORKERS")
     # Blank means unset (docker-compose forwards `${SCRAPE_WORKERS:-}` as ""), not bad.
@@ -63,10 +68,13 @@ SCRAPE_WORKERS = resolve_scrape_workers()
 def thread_map[T, R](
     fn: Callable[[T], R], items: list[T], *, workers: int = SCRAPE_WORKERS
 ) -> list[R]:
-    """Map fn over items concurrently, preserving order. Every item is submitted at
-    once, so one slow call never holds the rest back — right for small results. A map
-    whose results are page bodies goes through `thread_imap` instead, or the whole
-    batch sits in memory until the last fetch lands. Empty in → empty out."""
+    """Map fn over items concurrently, preserving order.
+
+    Every item is submitted at once, so one slow call never holds the rest back — right
+    for small results. A map whose results are page bodies goes through `thread_imap`
+    instead, or the whole batch sits in memory until the last fetch lands. Empty in →
+    empty out.
+    """
     if not items:
         return []
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(items)))) as ex:
@@ -76,13 +84,14 @@ def thread_map[T, R](
 def thread_imap[T, R](
     fn: Callable[[T], R], items: list[T], *, workers: int = SCRAPE_WORKERS
 ) -> Iterator[R]:
-    """Map fn over items concurrently, yielding results in input order as the caller
-    takes them. About 4 × workers calls are running or waiting to be taken, so a
-    caller parsing page bodies holds a bounded number of them rather than every page
-    of a large sitemap; the slack keeps the other workers busy past one slow fetch at
-    the head of the queue. Order is kept because it matters downstream:
-    dedup keeps the first of a source's duplicates, and that page fixes the cam's
-    stable id."""
+    """Map fn over items concurrently, yielding results in input order as taken.
+
+    About 4 × workers calls are running or waiting to be taken, so a caller parsing page
+    bodies holds a bounded number of them rather than every page of a large sitemap; the
+    slack keeps the other workers busy past one slow fetch at the head of the queue.
+    Order is kept because it matters downstream: dedup keeps the first of a source's
+    duplicates, and that page fixes the cam's stable id.
+    """
     if not items:
         return
     n = max(1, min(workers, len(items)))
@@ -117,9 +126,10 @@ HOST_BACKOFF = "host-backoff"  # refused by the HostPacer: host is shedding load
 
 
 def _validate_ip(url: str) -> tuple[str | None, str]:
-    """Resolve the URL's host ONCE, validate every returned IP, and report WHY when it
-    is rejected. Returns (ip, "ok"), or (None, reason) where reason is one of
-    bad-scheme / dns-error / blocked-ip.
+    """Resolve the URL's host once, validate every IP, and say why a URL is rejected.
+
+    Returns (ip, "ok"), or (None, reason) where reason is one of bad-scheme /
+    dns-error / blocked-ip.
 
     This is the SSRF check AND the source of truth for the connection IP: the caller
     pins the connection to the returned IP so there is no second DNS lookup between
@@ -129,7 +139,8 @@ def _validate_ip(url: str) -> tuple[str | None, str]:
     The reason comes from THIS lookup, never a second one. Re-resolving to label the
     failure would not just be slow on the dead-domain long tail — on flaky or
     round-robin DNS it could report a genuine unsafe-IP block as a transient
-    "dns-error", quietly downgrading the only signal that says the guard fired."""
+    "dns-error", quietly downgrading the only signal that says the guard fired.
+    """
     host = _fetchable_host(url)
     if host is None:
         return None, BAD_SCHEME
@@ -146,7 +157,7 @@ def _validate_ip(url: str) -> tuple[str | None, str]:
 
 
 def _fetchable_host(url: str) -> str | None:
-    """The host of an http(s) URL with a usable port, or None for anything else."""
+    """Return the host of an http(s) URL with a usable port, or None for anything else."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         return None
@@ -220,10 +231,13 @@ socket.getaddrinfo = _pinning_getaddrinfo
 
 
 class _PinDNS:
-    """Pin `host` -> `ip` for getaddrinfo on THIS thread for the duration of the
-    with-block, so the connection dials the validated IP while urllib3 still does
-    SNI/Host/cert against the hostname. Thread-local, so concurrent fetches from
-    thread_map workers and the HTTP server never see each other's pins."""
+    """Pin `host` -> `ip` for getaddrinfo on this thread within the with-block.
+
+    The pin holds for the duration of the with-block, so the connection dials the
+    validated IP while urllib3 still does SNI/Host/cert against the hostname.
+    Thread-local, so concurrent fetches from thread_map workers and the HTTP server
+    never see each other's pins.
+    """
 
     _host: str
     _ip: str
@@ -278,7 +292,8 @@ class _ImpersonatingSession:
     same code on both transports. The body is buffered up to `limit` bytes plus the
     chunk that crossed it; the transfer is then aborted and the caller's own byte-cap
     loop sees the overflow and refuses it. Two differences remain: `timeout` bounds
-    the whole transfer rather than each read, and the cookie jar is per thread."""
+    the whole transfer rather than each read, and the cookie jar is per thread.
+    """
 
     _limit: int
     _keep_cookies: bool
@@ -426,7 +441,9 @@ def _as_requests_error(
     exc: CurlError, method: str, url: str
 ) -> requests.RequestException:
     """Map a curl_cffi failure onto the requests exception `_classify` labels.
-    Timeout is checked first, as in `_classify`: curl_cffi's ConnectTimeout is both."""
+
+    Timeout is checked first, as in `_classify`: curl_cffi's ConnectTimeout is both.
+    """
     request = requests.Request(method, url)
     if isinstance(exc, curl_requests.exceptions.Timeout):
         return requests.Timeout(str(exc), request=request)
@@ -434,10 +451,15 @@ def _as_requests_error(
 
 
 class FetcherProtocol(Protocol):
-    def get(self, url: str, timeout: float = ..., /) -> str | None: ...
+    """What a source or resolver needs to fetch a page body."""
+
+    def get(self, url: str, timeout: float = ..., /) -> str | None:
+        """Fetch `url` and return its body as text, or None on failure."""
 
 
 class FetcherPostProtocol(Protocol):
+    """What a resolver needs to POST a form and learn the outcome."""
+
     def post_with_outcome(
         self,
         url: str,
@@ -446,7 +468,9 @@ class FetcherPostProtocol(Protocol):
         *,
         headers: dict[str, str] | None = None,
         timeout: float = ...,
-    ) -> tuple[str | None, str]: ...
+    ) -> tuple[str | None, str]:
+        """POST `data` as a form; return the body (None on failure) and its outcome."""
+        ...
 
 
 # Hosts that gate on a Referer: EarthCam's CDN 403s the manifest/segments without it;
@@ -468,10 +492,12 @@ def _referer_for(url: str) -> dict[str, str]:
 
 
 class _FetchError(Exception):
-    """A classified, non-retryable failure — a blocked IP, an oversized body or a
-    broken redirect chain. Distinct from requests' exceptions because retrying cannot
-    change the verdict. Carries the failing HOP's host, which on a redirect is not the
-    host the caller asked for."""
+    """A classified, non-retryable failure.
+
+    It is a blocked IP, an oversized body or a broken redirect chain. Distinct from
+    requests' exceptions because retrying cannot change the verdict. Carries the failing
+    HOP's host, which on a redirect is not the host the caller asked for.
+    """
 
     reason: str
     host: str
@@ -510,13 +536,15 @@ class FetchStats:
     One instance PER SOURCE (see app.build_app). A single shared counter could not say
     WHICH source's fetches failed, and a process-global one would also be polluted by
     serve-time player traffic between rebuilds — so the one line that is supposed to
-    explain an empty source would be reporting hosts the build never touched."""
+    explain an empty source would be reporting hosts the build never touched.
+    """
 
     _counts: dict[tuple[str, str], int]
     _lock: threading.Lock
     _max_hosts: int
 
     def __init__(self, max_hosts: int = 500) -> None:
+        """Track at most `max_hosts` hosts; further ones fold into "other"."""
         self._counts = {}
         self._lock = threading.Lock()
         # Host keys come from scraped third-party HTML, so their cardinality is not
@@ -525,6 +553,7 @@ class FetchStats:
         self._max_hosts = max_hosts
 
     def record(self, host: str, outcome: str) -> None:
+        """Count one `outcome` for `host`."""
         with self._lock:
             key = (host or "?", outcome)
             if key not in self._counts and len(self._counts) >= self._max_hosts:
@@ -564,9 +593,11 @@ _SHEDDING_OUTCOMES = tuple(f"http-{c}" for c in _SHEDDING_STATUSES)
 
 
 def _retry_after_seconds(value: str | None) -> float | None:
-    """Parse a seconds-form Retry-After header. The HTTP-date form is deliberately
-    ignored: it is rare on the hosts we meet, and a misparsed date is worse than
-    letting the adaptive ladder find the window itself."""
+    """Parse a seconds-form Retry-After header.
+
+    The HTTP-date form is deliberately ignored: it is rare on the hosts we meet, and a
+    misparsed date is worse than letting the adaptive ladder find the window itself.
+    """
     if not value:
         return None
     try:
@@ -605,7 +636,8 @@ class HostPacer:
     breaker. At _PACE_BREAK_AT strikes, or when a request would queue longer than
     _PACE_MAX_WAIT, acquire() refuses instead of waiting: the bulk of a
     hard-blocked source fails fast (as it did before pacing existed) while one
-    probe per decay period keeps testing for recovery."""
+    probe per decay period keeps testing for recovery.
+    """
 
     _clock: Callable[[], float]
     _sleep: Callable[[float], None]
@@ -617,6 +649,7 @@ class HostPacer:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        """Set the `clock` and `sleep` functions the pacer uses."""
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
@@ -656,11 +689,13 @@ class HostPacer:
             s.next_allowed = my_slot
 
     def acquire(self, host: str) -> int | None:
-        """Block until a request to `host` may start. Returns the generation stamp
-        to hand back to penalise(), or None to refuse (fail fast): the breaker is
-        open, or the wait would exceed _PACE_MAX_WAIT. That bound is per WAIT, not
-        per call — successive new windows can extend a caller — but sustained
-        shedding escalates to the breaker, which is what bounds the total."""
+        """Block until a request to `host` may start; None means refuse.
+
+        Returns the generation stamp to hand back to penalise(), or None to refuse (fail
+        fast): the breaker is open, or the wait would exceed _PACE_MAX_WAIT. That bound
+        is per WAIT, not per call — successive new windows can extend a caller — but
+        sustained shedding escalates to the breaker, which is what bounds the total.
+        """
         my_slot: float | None = None
         my_end = 0.0
         while True:
@@ -712,8 +747,11 @@ class HostPacer:
     def penalise(
         self, host: str, gen: int, retry_after: float | None = None
     ) -> tuple[int, float, bool]:
-        """Record a 429/503 from `host`. Returns (strikes, window_seconds,
-        escalated) for the caller to log OUTSIDE the pacer's lock."""
+        """Record a 429/503 from `host`.
+
+        Returns (strikes, window_seconds, escalated) for the caller to log OUTSIDE the
+        pacer's lock.
+        """
         with self._lock:
             now = self._clock()
             s = self._hosts.get(host)
@@ -763,10 +801,12 @@ class HostPacer:
                 del self._hosts[host]
 
     def drain(self) -> dict[str, dict[str, float]]:
-        """Snapshot and reset the per-host counters, as
-        {host: {"penalties": n, "backoff_seconds": s}} (backoff is thread-seconds
-        slept behind the gate). Fully-recovered entries are dropped, which is what
-        bounds the map across cycles."""
+        """Snapshot and reset the per-host counters.
+
+        Returns them as {host: {"penalties": n, "backoff_seconds": s}} (backoff is
+        thread-seconds slept behind the gate). Fully-recovered entries are dropped,
+        which is what bounds the map across cycles.
+        """
         out: dict[str, dict[str, float]] = {}
         with self._lock:
             now = self._clock()
@@ -788,7 +828,8 @@ def _classify(exc: BaseException) -> str:
     """Map a requests exception to a stable outcome label.
 
     Order matters: ConnectTimeout subclasses BOTH Timeout and ConnectionError, and
-    "timeout" is the more useful diagnosis, so Timeout is checked first."""
+    "timeout" is the more useful diagnosis, so Timeout is checked first.
+    """
     if isinstance(exc, requests.Timeout):
         return TIMEOUT
     if isinstance(exc, requests.TooManyRedirects):
@@ -801,6 +842,8 @@ def _classify(exc: BaseException) -> str:
 
 
 class Fetcher:
+    """HTTP fetcher with an SSRF guard, retries, per-host pacing and outcome stats."""
+
     _session: requests.Session | _ImpersonatingSession
     _delay: float
     _retries: int
@@ -821,6 +864,14 @@ class Fetcher:
         keep_cookies: bool = True,
         impersonate: bool = False,
     ) -> None:
+        """Configure politeness, retries, size cap, stats, pacing, cookies, transport.
+
+        `delay` is the politeness sleep around each request, `retries` the attempts per
+        fetch and `byte_cap` the body size limit. `stats` records outcomes; `pacer`
+        spaces hosts that shed load (None = unpaced). `retry_only_shedding` limits
+        retries to 429/503. `keep_cookies=False` drops cookies, and `impersonate` sends
+        through a browser's TLS/HTTP2 fingerprint.
+        """
         self._delay = delay
         self._retries = retries
         self._byte_cap = byte_cap
@@ -854,13 +905,17 @@ class Fetcher:
         self._session = session
 
     def get(self, url: str, timeout: float = 20.0) -> str | None:
+        """Fetch `url` and return its body as text, or None on failure."""
         return self.get_with_outcome(url, timeout)[0]
 
     def get_with_outcome(
         self, url: str, timeout: float = 20.0
     ) -> tuple[str | None, str]:
-        """`get`, plus the outcome label it recorded (`ok`, `http-404`, `timeout`…),
-        for a caller that must tell a missing resource from a refused one."""
+        """Return `get`'s result plus the outcome label it recorded.
+
+        The label is `ok`, `http-404`, `timeout`…, for a caller that must tell a missing
+        resource from a refused one.
+        """
         host = urlsplit(url).hostname or "?"
         outcome = CONN_ERROR
         for attempt in range(self._retries):
@@ -950,9 +1005,11 @@ class Fetcher:
     def _penalise_if_shedding(
         self, resp: requests.Response, host: str, gen: int
     ) -> None:
-        """Feed a 429/503 back to the pacer; log outside its lock. The WARNINGs fire
-        once per breaker trip / oversized Retry-After, not per refused request —
-        refusals themselves are counted as host-backoff outcomes in the stats."""
+        """Feed a 429/503 back to the pacer and log outside its lock.
+
+        The WARNINGs fire once per breaker trip / oversized Retry-After, not per refused
+        request — refusals themselves are counted as host-backoff outcomes in the stats.
+        """
         if self._pacer is None or resp.status_code not in _SHEDDING_STATUSES:
             return
         strikes, window, escalated = self._pacer.penalise(
@@ -984,10 +1041,12 @@ class Fetcher:
     def get_segment(
         self, url: str, range_header: str | None = None
     ) -> tuple[tuple[int, str, str | None, bytes] | None, str]:
-        """Fetch a media segment as bytes, relaying status + Range: the
-        (status, content type, Content-Range, body) result, or None on failure, plus
-        the outcome label, as `get_with_outcome` returns them. An upstream error
-        status is a result, relayed to the player as-is, not a failure."""
+        """Fetch a media segment as bytes, relaying status and Range.
+
+        Returns the (status, content type, Content-Range, body) result, or None on
+        failure, plus the outcome label, as `get_with_outcome` returns them. An upstream
+        error status is a result, relayed to the player as-is, not a failure.
+        """
         ip, reason = _validate_ip(url)
         if ip is None:
             return None, reason
@@ -1025,8 +1084,10 @@ class Fetcher:
         headers: dict[str, str] | None = None,
         timeout: float = 20.0,
     ) -> tuple[str | None, str]:
-        """A form POST: the body (None on failure) and its outcome label, as
-        `get_with_outcome` returns them."""
+        """Make a form POST; return the body (None on failure) and its outcome label.
+
+        The result has the same shape as `get_with_outcome`'s.
+        """
         host = urlsplit(url).hostname or ""
         body = urlencode(data).encode()
         # Sending pre-encoded bytes means requests won't auto-set the form Content-Type,

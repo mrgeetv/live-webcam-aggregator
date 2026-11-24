@@ -59,9 +59,11 @@ def test_ytdlp_requests_hls_format():
 
 
 def test_ytdlp_pins_a_muxed_player_client():
-    """We emit ONE url, so the resolve must ask for clients that still serve
-    youtube's muxed live ladder — yt-dlp's default client serves video-only and
-    audio-only formats this extractor cannot use."""
+    """The resolve asks for clients that still serve YouTube's muxed live ladder.
+
+    We emit ONE url, and yt-dlp's default client serves video-only and audio-only
+    formats this extractor cannot use.
+    """
     captured: list[str] = []
 
     def _run(argv: list[str]) -> str:
@@ -78,8 +80,10 @@ def test_ytdlp_pins_a_muxed_player_client():
 
 
 def test_ytdlp_rejects_a_split_format():
-    """Two urls mean yt-dlp picked separate video and audio streams. Taking one
-    would ship a cam that resolves clean and plays audio only."""
+    """Two urls mean yt-dlp picked separate video and audio streams.
+
+    Taking one would ship a cam that resolves clean and plays audio only.
+    """
     split = (
         "https://x.googlevideo.com/video-only.m3u8\n"
         "https://x.googlevideo.com/audio-only.m3u8"
@@ -93,9 +97,11 @@ def test_ytdlp_rejects_a_split_format():
 def test_ytdlp_timeout_says_so_without_the_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A timeout's own message is the whole argv, target URL included: cut to the
-    aggregated detail's width it reads `Command '['yt-dlp', '-q', ...` and nothing
-    else."""
+    """A timeout's message is cut without the target URL.
+
+    A timeout's own message is the whole argv, target URL included: cut to the
+    aggregated detail's width it reads `Command '['yt-dlp', '-q', ...` and nothing else.
+    """
 
     def hang(argv: list[str], *, timeout: float, **_kwargs: object) -> object:
         raise subprocess.TimeoutExpired(argv, timeout)
@@ -130,10 +136,12 @@ def test_ytdlp_failure_names_the_reason_not_the_video(
     stderr_by_target: dict[str, str],
     expected: str,
 ) -> None:
-    """The resolve error is the bucket key of the build's `top resolve failures`
-    line, so one failure mode must read the same for every cam. Left in, the video
-    or channel id splits a total outage into one small bucket per cam, which reads
-    as a few dead streams."""
+    """One failure mode reads the same for every cam.
+
+    The resolve error is the bucket key of the build's `top resolve failures` line. Left
+    in, the video or channel id splits a total outage into one small bucket per cam,
+    which reads as a few dead streams.
+    """
 
     def fail(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, 1, "", stderr_by_target[argv[-1]])
@@ -146,8 +154,10 @@ def test_ytdlp_failure_names_the_reason_not_the_video(
 
 
 def test_wetmet_extracts_the_player_script_url() -> None:
-    """The widget's inline script assigns the master playlist to `vurl` (plain, not
-    JSON-escaped — the fixture mirrors the real page)."""
+    """The widget's inline script assigns the master playlist to `vurl`.
+
+    It is plain, not JSON-escaped; the fixture mirrors the real page.
+    """
     from webcam_aggregator.extractors.wetmet import WetmetResolver
 
     body = (

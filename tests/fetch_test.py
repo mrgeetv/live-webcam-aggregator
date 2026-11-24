@@ -42,8 +42,11 @@ def _mock_getaddrinfo(ip: str):
 
 
 def _url_is_safe(url: str) -> bool:
-    """Test predicate over the real gate: True iff the URL resolves to a non-private
-    IP (i.e. the Fetcher would be allowed to fetch it)."""
+    """Return True iff the URL resolves to a non-private IP.
+
+    This is a test predicate over the real gate: the Fetcher would be allowed to fetch
+    the URL.
+    """
     return _validate_ip(url)[0] is not None
 
 
@@ -379,8 +382,10 @@ def test_get_oversized_body_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_get_respects_custom_byte_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A raised byte_cap accepts a body the default cap would reject — so the manifest
-    fetcher can pull large DVR playlists."""
+    """A raised byte_cap accepts a body the default cap would reject.
+
+    So the manifest fetcher can pull large DVR playlists.
+    """
     from webcam_aggregator.fetch import MAX_BYTES
 
     monkeypatch.setattr(
@@ -442,7 +447,7 @@ def test_get_segment_refuses_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_post_blocks_unsafe_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    """post must return None for private/loopback URLs without calling the session."""
+    """Post must return None for private/loopback URLs without calling the session."""
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("127.0.0.1"),
@@ -646,9 +651,11 @@ def test_validate_ip_returns_public(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_pin_dns_pins_getaddrinfo_then_clears() -> None:
-    """Inside `with _PinDNS(host, ip)`, getaddrinfo resolves the host to the pinned
-    IP (so the socket dials it); the hostname stays in the URL, so urllib3 still does
-    SNI/Host/cert against it. The pin is cleared on exit. Scheme-agnostic by design."""
+    """Inside `with _PinDNS(host, ip)`, getaddrinfo resolves the host to the pinned IP.
+
+    The socket dials the pinned IP; the hostname stays in the URL, so urllib3 still does
+    SNI/Host/cert against it. The pin is cleared on exit. Scheme-agnostic by design.
+    """
     host = "cam.example"
     with _PinDNS(host, "203.0.113.7"):
         infos = socket.getaddrinfo(host, 443)
@@ -672,9 +679,11 @@ class _PinStubResp:
 def test_fetcher_pins_to_validated_ip_not_a_second_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rebinding simulation: the resolver returns a PUBLIC IP at validation time;
-    the connection must be pinned to THAT ip (host kept for SNI/Host) via _PinDNS,
-    never a fresh lookup at connect time."""
+    """Rebinding simulation: the resolver returns a PUBLIC IP at validation time.
+
+    The connection must be pinned to THAT ip (host kept for SNI/Host) via _PinDNS, never
+    a fresh lookup at connect time.
+    """
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -721,14 +730,17 @@ def test_fetcher_get_blocks_private_resolution(
 def test_fetcher_tls_verified_against_hostname_while_connecting_to_ip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """End-to-end proof (offline, real sockets): stand up an HTTPS server on
-    127.0.0.1:0 with a self-signed cert for hostname 'pinned.test'. Resolver maps
-    'pinned.test' -> 127.0.0.1. The Fetcher must connect to the pinned IP yet
-    complete the TLS handshake by validating the cert AGAINST THE HOSTNAME.
+    """End-to-end proof (offline, real sockets) that a pinned connection verifies TLS.
+
+    Stand up an HTTPS server on 127.0.0.1:0 with a self-signed cert for hostname
+    'pinned.test'. Resolver maps 'pinned.test' -> 127.0.0.1. The Fetcher must connect to
+    the pinned IP yet complete the TLS handshake by validating the cert AGAINST THE
+    HOSTNAME.
 
     This is the regression guard for the hard requirement: connecting to the IP
     must not weaken TLS. If cert validation were done against the IP (or disabled),
-    this fetch would fail."""
+    this fetch would fail.
+    """
     import ssl
     import tempfile
 
@@ -903,8 +915,10 @@ def test_one_outcome_per_call_not_per_retry() -> None:
 
 
 def test_get_with_outcome_says_why_a_fetch_failed() -> None:
-    """A caller judging a cam needs to tell "gone" (404) from "not for you right
-    now" (401) — `get` collapses both to None."""
+    """A caller can tell "gone" (404) from "not for you right now" (401).
+
+    `get` collapses both to None.
+    """
     f = Fetcher(delay=0.0, retries=1)
     resp = requests.Response()
     resp.status_code = 404
@@ -921,9 +935,11 @@ def test_get_with_outcome_says_why_a_fetch_failed() -> None:
 
 
 def test_failure_mid_redirect_attributed_to_the_failing_hop() -> None:
-    """An HTTPError raised on hop 2 of a redirect chain must be counted against the
-    host that failed, not the URL the caller asked for — otherwise the "0 ok (11x
-    http-403 …)" line names the wrong host."""
+    """An HTTPError on hop 2 of a redirect chain counts against the host that failed.
+
+    It is not counted against the URL the caller asked for; otherwise the "0 ok (11x
+    http-403 ...)" line names the wrong host.
+    """
     s = FetchStats()
     f = Fetcher(delay=0.0, retries=1, stats=s)
     resp = requests.Response()
@@ -948,8 +964,9 @@ def test_success_records_ok() -> None:
 
 
 def test_politeness_delay_still_runs_on_non_retryable_failure() -> None:
-    """A bot-wall serving redirect loops must NOT become unthrottled hammering: these
-    paths used to hit time.sleep(delay) via the success return, and must keep doing so.
+    """A bot-wall serving redirect loops must NOT become unthrottled hammering.
+
+    These paths hit time.sleep(delay) via the success return, and must keep doing so.
     """
     s = FetchStats()
     f = Fetcher(delay=1.0, retries=3, stats=s)
@@ -1055,8 +1072,10 @@ def test_classify_http_error_without_response_falls_back() -> None:
 def test_scrape_workers_blank_means_unset(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """docker-compose forwards `${SCRAPE_WORKERS:-}` as "" when it isn't in .env —
-    that must take the default silently, not warn about a bad int."""
+    """docker-compose forwards `${SCRAPE_WORKERS:-}` as "" when it isn't in .env.
+
+    That must take the default silently, not warn about a bad int.
+    """
     import os as _os
 
     monkeypatch.setenv("SCRAPE_WORKERS", "")
@@ -1072,8 +1091,10 @@ def test_scrape_workers_blank_means_unset(
 
 
 def _cookie_server() -> tuple[http.server.HTTPServer, threading.Thread, int]:
-    """The MediaMTX shape: /index 302s to /child setting a cookie; /child echoes the
-    Cookie header it received (or "none")."""
+    """Serve the MediaMTX shape: /index 302s to /child setting a cookie.
+
+    /child echoes the Cookie header it received (or "none").
+    """
 
     class _Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -1137,10 +1158,12 @@ def test_fetcher_cookie_jar_only_when_asked(
 def test_requests_transport_never_resolves_a_name_outside_the_pin(
     monkeypatch: pytest.MonkeyPatch, path: str
 ) -> None:
-    """urllib3 does not always resolve the host urlsplit validated. Validation sees a
-    public address; any other name resolves to the internal server here, so reaching
-    it would be a rebinding/SSRF bypass. The pin must refuse every lookup it didn't
-    validate."""
+    """urllib3 does not always resolve the host urlsplit validated.
+
+    Validation sees a public address; any other name resolves to the internal server
+    here, so reaching it would be a rebinding/SSRF bypass. The pin must refuse every
+    lookup it didn't validate.
+    """
     httpd, thread, port = _cookie_server()  # the "internal" server, on 127.0.0.1
     hits: list[str] = []
     handler = httpd.RequestHandlerClass
@@ -1191,9 +1214,11 @@ def test_a_bad_port_is_a_bad_scheme_not_a_crash(port: str, impersonate: bool) ->
 def pinned_server(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[int, list[dict[str, str]]]]:
-    """Plain-HTTP server on 127.0.0.1:0. Validation resolves every name to loopback
-    except `private.test` (10.0.0.1, which stays blocked). Yields (port, the request
-    headers it saw, names lowercased)."""
+    """Plain-HTTP server on 127.0.0.1:0.
+
+    Validation resolves every name to loopback except `private.test` (10.0.0.1, which
+    stays blocked). Yields (port, the request headers it saw, names lowercased).
+    """
     seen: list[dict[str, str]] = []
 
     class _Handler(http.server.BaseHTTPRequestHandler):
@@ -1303,10 +1328,12 @@ def test_impersonating_fetcher_feeds_shedding_to_the_pacer(
 def test_impersonating_fetcher_dials_the_pin_whatever_libcurl_makes_of_the_host(
     pinned_server: tuple[int, list[dict[str, str]]],
 ) -> None:
-    """urlsplit reads `bücher.test`; libcurl IDNA-encodes it to `xn--bcher-kva.test`.
-    A pin keyed by urlsplit's host would miss and let libcurl resolve the name
-    itself (here: fail; in the wild: a rebinding window). Every connection must go to
-    the validated IP regardless."""
+    """Urlsplit reads `bücher.test`; libcurl IDNA-encodes it to `xn--bcher-kva.test`.
+
+    A pin keyed by urlsplit's host would miss and let libcurl resolve the name itself
+    (here: fail; in the wild: a rebinding window). Every connection must go to the
+    validated IP regardless.
+    """
     port, _ = pinned_server
     f = Fetcher(delay=0.0, retries=1, impersonate=True)
     assert f.get(f"http://b\u00fccher.test:{port}/page") == "pinned-ok"
@@ -1316,9 +1343,11 @@ def test_impersonating_fetcher_refuses_a_response_from_an_unpinned_ip(
     pinned_server: tuple[int, list[dict[str, str]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Backstop for a parser difference the wildcard cannot cover (the RESOLVE entry
-    still keys on the port): libcurl reporting any IP but the validated one is a
-    blocked fetch, whatever came back."""
+    """Backstop for a parser difference the wildcard cannot cover.
+
+    The RESOLVE entry still keys on the port: libcurl reporting any IP but the validated
+    one is a blocked fetch, whatever came back.
+    """
     port, _ = pinned_server
     real = curl_requests.Session.request
 
@@ -1337,9 +1366,11 @@ def test_impersonating_fetcher_refuses_a_response_from_an_unpinned_ip(
 def test_impersonating_fetcher_accepts_a_reused_connection_to_an_earlier_pin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Round-robin DNS: the second validation of a host picks a different IP, and
-    libcurl reuses its keep-alive connection to the first. That IP was validated, so
-    the page is served — not thrown away as blocked-ip."""
+    """Round-robin DNS: a second validated IP is served, not thrown away as blocked-ip.
+
+    The second validation of a host picks a different IP, and libcurl reuses its
+    keep-alive connection to the first. That IP was validated, so the page is served.
+    """
     servers: list[http.server.ThreadingHTTPServer] = []
     for ip in ("127.0.0.1", "127.0.0.2"):
 
@@ -1389,8 +1420,10 @@ def test_impersonating_fetcher_accepts_a_reused_connection_to_an_earlier_pin(
 def test_impersonating_session_aborts_the_transfer_past_its_limit(
     pinned_server: tuple[int, list[dict[str, str]]],
 ) -> None:
-    """The transport stops reading at its limit (plus the chunk that crossed it); the
-    Fetcher's own cap then refuses the body."""
+    """The transport stops reading at its limit (plus the chunk that crossed it).
+
+    The Fetcher's own cap then refuses the body.
+    """
     port, _ = pinned_server
     with _PinDNS("pinned.test", "127.0.0.1"):
         resp = _ImpersonatingSession(1000, keep_cookies=True).get(
@@ -1430,8 +1463,11 @@ def test_impersonating_get_segment_survives_a_pin_failure(
 
 
 def test_impersonating_session_refuses_an_unpinned_host() -> None:
-    """Outside a _PinDNS block libcurl would resolve the name itself, reopening the
-    rebinding window, so the transport refuses before sending anything."""
+    """The transport refuses a request made outside a _PinDNS block.
+
+    Outside one, libcurl would resolve the name itself, reopening the rebinding window,
+    so the transport refuses before sending anything.
+    """
     with pytest.raises(RuntimeError):
         _ImpersonatingSession(MAX_BYTES, keep_cookies=True).get(
             "http://pinned.test/", timeout=1
@@ -1456,9 +1492,11 @@ def test_impersonating_errors_classify_like_requests_ones(
 
 
 def test_thread_imap_streams_in_order_without_running_ahead() -> None:
-    """Results arrive in input order, and a consumer that hasn't taken the next one
-    yet holds back the work: a scrape must not buffer every page body of a
-    large sitemap before the first is parsed."""
+    """Results arrive in input order, and a slow consumer holds back the work.
+
+    A consumer that hasn't taken the next result yet holds back the work: a scrape must
+    not buffer every page body of a large sitemap before the first is parsed.
+    """
     started: list[int] = []
     lock = threading.Lock()
 

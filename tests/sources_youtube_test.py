@@ -62,7 +62,7 @@ class _FakeClient:
 
 
 def _source(factory: Callable[[], object], query: str) -> YoutubeApiSource:
-    """A source over a fake client, which stands in for googleapiclient's resource."""
+    """Build a source over a fake client standing in for googleapiclient's resource."""
     return YoutubeApiSource(cast("Callable[[], YouTubeResource]", factory), query=query)
 
 
@@ -117,8 +117,10 @@ class _LeakyError(Exception):
 def test_search_warning_names_the_real_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A BrokenPipeError must not be reported as an API quota problem: it carries no
-    HTTP status at all, and the fix is completely different."""
+    """A BrokenPipeError must not be reported as an API quota problem.
+
+    It carries no HTTP status at all, and the fix is completely different.
+    """
     src = _source(
         lambda: _FakeClient(search=[BrokenPipeError(32, "Broken pipe")]), query="cam"
     )

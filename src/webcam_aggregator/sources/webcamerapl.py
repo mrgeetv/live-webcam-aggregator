@@ -1,3 +1,5 @@
+"""webcamera.pl source: the map markers plus category listings, ROT13-decoded HLS."""
+
 from __future__ import annotations
 
 import json
@@ -62,8 +64,11 @@ _SKIP_NAME = re.compile(r"playlist|premium", re.IGNORECASE)
 
 
 def _cam_page(url: str) -> str | None:
-    """Canonical cam-page URL, or None for non-cam links (nav, static assets).
-    A cam lives either on its own subdomain or under www's /kamera/ path."""
+    """Return the canonical cam-page URL, or None for non-cam links.
+
+    Non-cam links are nav and static assets. A cam lives either on its own subdomain
+    or under www's /kamera/ path.
+    """
     s = urlsplit(url)
     host = (s.hostname or "").lower()
     if not host.endswith(".webcamera.pl"):
@@ -91,14 +96,15 @@ def _slug_title(url: str) -> str:
 
 
 class WebcameraPlSource(HtmlScraperSource[str]):
-    """webcamera.pl: ~600 Polish cams (Baltic beaches, Tatra/ski resorts, towns),
-    each on its own subdomain with the HLS URL ROT13-encoded in the inline player
-    config — decoded here at discovery, served by DirectHls. Enumeration is the
-    /mapa marker JSON unioned with the five top-level category listings (the map
-    misses most ski cams; the listings carry the category). ctx is the cam's
-    Polish display name (the page h1). Streams are Nimble: the manifest mints a
-    `nimblesessionid` that must survive into segment fetches, so webcamera.pl is
-    segment-proxied."""
+    """webcamera.pl: Polish cams (Baltic beaches, Tatra/ski resorts, towns).
+
+    Each is on its own subdomain with the HLS URL ROT13-encoded in the inline player
+    config, decoded here at discovery and served by DirectHls. Enumeration is the /mapa
+    marker JSON unioned with the five top-level category listings (the map misses most
+    ski cams; the listings carry the category). ctx is the cam's Polish display name
+    (the page h1). Streams are Nimble: the manifest mints a `nimblesessionid` that must
+    survive into segment fetches, so webcamera.pl is segment-proxied.
+    """
 
     name: str = "webcamerapl"
 

@@ -25,8 +25,11 @@ def _cam_page(
 def _site(
     cams: dict[str, str], slugs: tuple[str, ...] = ("beaches",)
 ) -> dict[str, str]:
-    """The index pages around `cams` (cam url -> page html): the category index, and a
-    sitemap index pointing at one webcam sitemap listing every cam."""
+    """Build the index pages around `cams` (cam url -> page html).
+
+    They are the category index, and a sitemap index pointing at one webcam sitemap
+    listing every cam.
+    """
     sitemap = f"{_BASE}/webcam-sitemap.xml"
     return {
         f"{_BASE}/showing/": "".join(f'<a href="/showing/{s}/">x</a>' for s in slugs),
@@ -71,8 +74,10 @@ def test_camscape_discover_multistream_category_location_and_dedup():
 
 
 def test_camscape_ignores_the_nav_category_link():
-    """Every page's nav links /showing/christmas/; an untagged cam must stay
-    uncategorised (-> title fallback), not land in Seasonal."""
+    """Every page's nav links /showing/christmas/.
+
+    An untagged cam must stay uncategorised (-> title fallback), not land in Seasonal.
+    """
     cam = f"{_BASE}/webcam/x/"
     streams = '[{"name":"Live","url":"https://www.youtube.com/embed/ccccccccccc"}]'
     pages = _site({cam: _cam_page(streams, tags="")})
@@ -110,9 +115,11 @@ def test_camscape_normalises_twitch_embed_for_ytdlp():
 
 
 def test_camscape_resolves_camsecure_player_embed_to_its_hls():
-    """camsecure embeds are resolved at discovery, not left as a page URL: the m3u8
-    is the key dedup shares with the camsecure source, and it can't be derived from
-    the embed URL (cityair1.html serves cityair.m3u8)."""
+    """Camsecure embeds are resolved at discovery, not left as a page URL.
+
+    The m3u8 is the key dedup shares with the camsecure source, and it can't be derived
+    from the embed URL (cityair1.html serves cityair.m3u8).
+    """
     cam = f"{_BASE}/webcam/manchester-city-airport-heliport-cams/"
     player = "https://camsecure.co/httpswebcam/cityair/cityair1.html"
     pages = {
@@ -128,8 +135,10 @@ def test_camscape_resolves_camsecure_player_embed_to_its_hls():
 
 
 def test_camscape_follows_a_camsecure_cam_page_to_its_player():
-    """Some camscape embeds point at a camsecure CAM page rather than the player;
-    that needs the extra iframe hop the camsecure source also does."""
+    """Some camscape embeds point at a camsecure CAM page rather than the player.
+
+    That needs the extra iframe hop the camsecure source also does.
+    """
     cam = f"{_BASE}/webcam/sennen-cove-beach-webcams/"
     page = "https://www.camsecure.co.uk/sennen_cove_webcam.html"
     player = "https://camsecure.co/httpswebcam/camsecure/sennen.html"
@@ -145,8 +154,10 @@ def test_camscape_follows_a_camsecure_cam_page_to_its_player():
 
 
 def test_camscape_keeps_an_unresolvable_camsecure_embed_visible():
-    """If neither hop yields an HLS the original URL stands, so the cam still shows
-    up as a no-extractor drop rather than vanishing silently."""
+    """If neither hop yields an HLS, the original URL stands.
+
+    The cam still shows up as a no-extractor drop rather than vanishing silently.
+    """
     cam = f"{_BASE}/webcam/x/"
     embed = "https://camsecure.co/httpswebcam/gone/gone.html"
     pages = {
@@ -158,8 +169,11 @@ def test_camscape_keeps_an_unresolvable_camsecure_embed_visible():
 
 
 def test_camscape_leaves_a_direct_camsecure_m3u8_alone():
-    """Many camsecure embeds are already the .m3u8 — no hop needed, and fetching one
-    as if it were a player page would be a wasted request."""
+    """Many camsecure embeds are already the .m3u8.
+
+    No hop needed, and fetching one as if it were a player page would be a wasted
+    request.
+    """
     cam = f"{_BASE}/webcam/newlyn-harbour-webcams/"
     m3u8 = "https://camsecure.co/HLS/newlyn.m3u8"
     pages = {

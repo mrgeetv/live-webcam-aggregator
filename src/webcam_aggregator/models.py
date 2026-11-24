@@ -1,3 +1,5 @@
+"""Data contracts: candidates, catalogue entries, stable ids and drop reasons."""
+
 from __future__ import annotations
 
 import hashlib
@@ -17,6 +19,8 @@ _TRACKING = {
 
 @dataclass(frozen=True)
 class Candidate:
+    """A cam a source discovered, before the liveness check and dedup."""
+
     title: str
     angle_key: str | None
     category: str | None
@@ -28,6 +32,8 @@ class Candidate:
 
 @dataclass(frozen=True)
 class CatalogueEntry:
+    """A cam in the built catalogue, as served in the playlist."""
+
     id: str
     title: str
     category: str
@@ -45,6 +51,11 @@ def _canonical_url(url: str) -> str:
 
 
 def stable_id(c: Candidate) -> str:
+    """Return the stable 16-hex id of a candidate's cam.
+
+    The id derives from its source, canonical page URL and angle, not from the title or
+    target.
+    """
     basis = f"{c.source}|{_canonical_url(c.source_page_url)}|{c.angle_key or '0'}"
     return hashlib.sha256(basis.encode()).hexdigest()[:16]
 

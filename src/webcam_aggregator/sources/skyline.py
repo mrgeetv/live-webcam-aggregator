@@ -1,3 +1,5 @@
+"""SkylineWebcams source: sitemap -> cam pages with their own HLS or a YouTube embed."""
+
 from __future__ import annotations
 
 import json
@@ -69,9 +71,11 @@ _Ctx = tuple[str, list[str]]
 
 
 def _breadcrumb_geo(html: str) -> list[str]:
-    """The English place names from the page's JSON-LD BreadcrumbList (country ->
-    region -> city), minus its "Live Cams" root, which links the /en/webcam.html
-    index rather than a place."""
+    """Return the English place names from the page's JSON-LD BreadcrumbList.
+
+    The names run country -> region -> city, minus its "Live Cams" root, which links the
+    /en/webcam.html index rather than a place.
+    """
     for blob in _LD_JSON.findall(html):
         try:
             ld = json.loads(blob)
@@ -90,13 +94,17 @@ def _breadcrumb_geo(html: str) -> list[str]:
 
 
 class SkylineSource(HtmlScraperSource[_Ctx]):
+    """skylinewebcams.com cams, from `sitemap_en.xml`, categorised from its pages."""
+
     name: str = "skyline"
     _cat: dict[str, str | None]  # cam URL -> category, filled by _page_urls
 
     def _category_slugs(self) -> list[str]:
-        """Skyline's category slugs from its index page, so a newly-added category
-        surfaces instead of being silently missed. Falls back to the known slugs if the
-        index is unreachable."""
+        """Return Skyline's category slugs from its index page.
+
+        A newly-added category surfaces instead of being silently missed. Falls back to
+        the known slugs if the index is unreachable.
+        """
         html = self._fetch.get(f"{_BASE}/en/categories.html") or ""
         return list(dict.fromkeys(_CAT_INDEX.findall(html))) or list(_CATEGORY)
 

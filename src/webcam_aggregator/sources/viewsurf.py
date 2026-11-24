@@ -1,3 +1,5 @@
+"""viewsurf.com source: sitemap -> joada embed targets, categorised by univers."""
+
 from __future__ import annotations
 
 import logging
@@ -58,7 +60,8 @@ class ViewsurfSource(HtmlScraperSource[str]):
     Titles come from the page h1 (city + cam name) plus the country from the URL
     slug; the category is the univers segment of the vue URL. Pages with no joada
     embed (panoramic-photo cams) yield nothing and drop. `ctx` is the finished
-    display title."""
+    display title.
+    """
 
     name: str = "viewsurf"
 

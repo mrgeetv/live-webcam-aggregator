@@ -1,3 +1,5 @@
+"""Catalogue builder: run sources concurrently, drop dead cams, dedupe, build."""
+
 from __future__ import annotations
 
 import logging
@@ -32,6 +34,11 @@ _NO_EXCLUDE: frozenset[str] = (
 
 @dataclass
 class Hist:
+    """Per-source state carried between rebuilds.
+
+    It holds the empty-guard's last good set and the raw outcome of the last cycle.
+    """
+
     last_count: int | None = None
     shrink_streak: int = 0
     last_kept: list[Candidate] = field(default_factory=list)
@@ -85,15 +92,20 @@ def _apply_yt_category(c: Candidate, live: Mapping[str, str]) -> Candidate:
 
 
 def top_counts(counts: dict[str, int], n: int) -> str:
-    """ "3x a, 2x b" for the n biggest counts, largest first. Shared with app's
-    cross-source liveness/pacing lines so every aggregate reads the same."""
+    """Format the n biggest counts as "3x a, 2x b", largest first.
+
+    Shared with app's cross-source liveness/pacing lines so every aggregate reads the
+    same.
+    """
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
     return ", ".join(f"{v}x {k}" for k, v in ranked)
 
 
 def failure_counts(fetches: dict[str, dict[str, int]]) -> dict[str, int]:
-    """Flatten {host: {outcome: n}} to {"<outcome> <host>": n}, OK excluded —
-    the shape every fetch-failure log line ranks and prints."""
+    """Flatten {host: {outcome: n}} to {"<outcome> <host>": n}, OK excluded.
+
+    This is the shape every fetch-failure log line ranks and prints.
+    """
     return {
         f"{outcome} {host}": n
         for host, outcomes in fetches.items()
@@ -105,9 +117,11 @@ def failure_counts(fetches: dict[str, dict[str, int]]) -> dict[str, int]:
 def _log_drop_detail(
     name: str, no_ext_hosts: dict[str, int], details: dict[str, int]
 ) -> None:
-    """The two follow-up lines that turn a drop count into something actionable: which
-    hosts have no extractor (i.e. what to write next), and what the extractors that DID
-    run actually said (yt-dlp broken vs cam simply off air)."""
+    """Build the two follow-up lines that turn a drop count into something actionable.
+
+    They name which hosts have no extractor (i.e. what to write next), and what the
+    extractors that DID run actually said (yt-dlp broken vs cam simply off air).
+    """
     if no_ext_hosts:
         log.info(
             "%s: no extractor for %d candidate(s) — top hosts: %s",
@@ -126,14 +140,16 @@ def _log_source_outcome(
     fetches: dict[str, dict[str, int]],
     reasons: dict[str, int],
 ) -> bool:
-    """One line per source, carrying the fetch outcome so an empty source says WHY.
+    """Log one line per source, carrying the fetch outcome so an empty source says WHY.
+
     Returns True if it warned, so the caller can avoid stacking a second warning.
 
     A totally-blocked source makes very FEW requests (skyline: one category index plus
     ten category pages, then it has no cam URLs left to try), so any global "top N
     failing hosts" view ranks it below healthy sources' routine dead-cam probes — the
     worse the outage, the better it hides. Reporting against the source is what makes
-    it visible."""
+    it visible.
+    """
     total = sum(sum(o.values()) for o in fetches.values())
     ok_n = sum(o.get(OK, 0) for o in fetches.values())
     failures = failure_counts(fetches)
@@ -179,9 +195,12 @@ def _log_source_outcome(
 
 
 def _status_for(kept: int, *, crashed: bool, h: Hist) -> str:
-    """Coarse health from the RAW result: dead (nothing, or it blew up), degraded (a
-    collapse the guard is masking), or ok. Drives the one-line transition log, so an
-    incident reads as a timeline rather than the same line repeated every 6h."""
+    """Return the coarse health of a source from its RAW result.
+
+    The result is dead (nothing, or it blew up), degraded (a collapse the guard is
+    masking), or ok. Drives the one-line transition log, so an incident reads as a
+    timeline rather than the same line repeated every 6h.
+    """
     if crashed or kept == 0:
         return "dead"
     if (
@@ -216,6 +235,12 @@ def build_catalogue(
     max_parallel_sources: int = 4,
     fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None = None,
 ) -> list[CatalogueEntry]:
+    """Build the catalogue entries from `sources`.
+
+    Each source discovers and liveness-checks concurrently; the per-source empty guard,
+    cross-source dedup and category mapping then run serially. `history` carries each
+    source's state between rebuilds.
+    """
     # Sources discover + liveness-check CONCURRENTLY (each hits a different site), so the
     # build's wall-clock is the slowest source, not the sum. Each source's work is
     # self-contained and returns its kept candidates; the per-source empty guard and the

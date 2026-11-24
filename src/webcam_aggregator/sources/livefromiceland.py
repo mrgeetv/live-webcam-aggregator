@@ -1,3 +1,5 @@
+"""livefromiceland.is source: the WP REST cam list, one ipcamlive player each."""
+
 from __future__ import annotations
 
 import json
@@ -31,10 +33,12 @@ _SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Live From Iceland\s*$", re.IGNORECA
 
 
 class LiveFromIcelandSource(HtmlScraperSource[str]):
-    """livefromiceland.is: ~32 cams (volcanoes, glaciers, Reykjavík, harbours), one
-    ipcamlive player per page, served by the existing ipcamlive extractor. ctx is the
-    page <title> with the site boilerplate tail stripped; the site has no per-cam
-    category -> None (the title fallback categorises what it can)."""
+    """livefromiceland.is: cams of volcanoes, glaciers, Reykjavík and harbours.
+
+    One ipcamlive player per page, served by the existing ipcamlive extractor. ctx is
+    the page <title> with the site boilerplate tail stripped; the site has no per-cam
+    category -> None (the title fallback categorises what it can).
+    """
 
     name: str = "livefromiceland"
 

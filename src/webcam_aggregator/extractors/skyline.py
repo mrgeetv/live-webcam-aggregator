@@ -1,3 +1,5 @@
+"""SkylineWebcams extractor: cam page's Clappr token -> its hd-auth HLS URL."""
+
 from __future__ import annotations
 
 import re
@@ -30,19 +32,26 @@ _TTL_SECONDS = 60
 
 
 def stream_token(html: str) -> str | None:
-    """The cam page's Clappr stream token, or None for a page with no own-HLS player
-    (offline, or a "from the web" YouTube embed)."""
+    """Return the cam page's Clappr stream token, or None.
+
+    None means a page with no own-HLS player (offline, or a "from the web" YouTube
+    embed).
+    """
     m = _TOKEN.search(html)
     return m.group(1) if m else None
 
 
 class SkylineResolver:
+    """Resolve a SkylineWebcams cam page to its hd-auth HLS URL."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a page body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to its HLS URL, with a TTL under the token's lapse."""
         token = stream_token(self._fetch(target_url))
         if not token:
             # No URL in the message: it becomes an aggregated INFO detail, where a

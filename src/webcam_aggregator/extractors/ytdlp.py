@@ -1,3 +1,5 @@
+"""yt-dlp extractor: resolve a video or channel URL to one muxed HLS stream URL."""
+
 from __future__ import annotations
 
 import re
@@ -52,12 +54,16 @@ def _default_run(argv: list[str]) -> str:
 
 
 class YtDlpExtractor:
+    """Resolve a target URL to a muxed HLS stream URL by running yt-dlp."""
+
     _run: Callable[[list[str]], str]
 
     def __init__(self, run: Callable[[list[str]], str] = _default_run) -> None:
+        """Take the `run` callable that runs yt-dlp's argv and returns its stdout."""
         self._run = run
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to one muxed HLS URL; its expiry, if any, is the TTL."""
         # Prefer an HLS (m3u8) format. Some live streams default to a DASH .mpd,
         # which our HLS manifest proxy can't serve; fall back to best if no HLS.
         out = self._run(

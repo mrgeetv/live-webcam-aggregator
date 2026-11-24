@@ -1,3 +1,5 @@
+"""whatsupcams.com source: Yoast sitemaps -> cam pages -> CDN API direct HLS."""
+
 from __future__ import annotations
 
 import json
@@ -40,18 +42,22 @@ def _on_site(url: str) -> bool:
 
 
 class WhatsupcamsSource:
-    """whatsupcams.com (Croatian-run network, Adriatic-heavy): Yoast sitemap ->
-    per-cam pages (cam id + title) -> per-id CDN API (direct open HLS). A page
-    without a wgt embed id isn't a cam page and drops; an id whose API fetch
-    fails drops. No per-cam category in the page -> "Other" (title fallback)."""
+    """whatsupcams.com: a Croatian-run, Adriatic-heavy network of cams.
+
+    Yoast sitemap -> per-cam pages (cam id + title) -> per-id CDN API (direct open HLS).
+    A page without a wgt embed id isn't a cam page and drops; an id whose API fetch
+    fails drops. No per-cam category in the page -> "Other" (title fallback).
+    """
 
     name: str = "whatsupcams"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each cam page whose CDN API call returns an HLS URL."""
         idx = self._fetch.get(_SITEMAP_INDEX) or ""
         maps = [
             u

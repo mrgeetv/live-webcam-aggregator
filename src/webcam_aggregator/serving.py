@@ -1,3 +1,5 @@
+"""Serving: playlist rendering, the manifest gate and the manifest/segment proxy."""
+
 from __future__ import annotations
 
 import logging
@@ -23,13 +25,15 @@ _HLS_CT = "application/vnd.apple.mpegurl"
 
 
 class RepeatLimiter:
-    """Admits a serve-path log line once per `window` seconds per key. The serve
-    path logs per player request, and a failing cam repeats itself: an IP-bound 403
-    hits every segment, every few seconds, for every viewer, and a restart turns
-    every URL a player holds into a bad signature.
+    """Admit a serve-path log line once per `window` seconds per key.
+
+    The serve path logs per player request, and a failing cam repeats itself: an
+    IP-bound 403 hits every segment, every few seconds, for every viewer, and a restart
+    turns every URL a player holds into a bad signature.
 
     Keys can carry an id taken from the request path, which a client can make up, so
-    past `cap` keys the expired ones go, and if that isn't enough, all of them."""
+    past `cap` keys the expired ones go, and if that isn't enough, all of them.
+    """
 
     _clock: Callable[[], float]
     _window: float
@@ -43,6 +47,7 @@ class RepeatLimiter:
         window: float = 60.0,
         cap: int = 4096,
     ) -> None:
+        """Set the `clock`, the `window` (seconds) and the `cap` on tracked keys."""
         self._clock = clock
         self._window = window
         self._cap = cap
@@ -50,11 +55,14 @@ class RepeatLimiter:
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
+        """Return the number of keys currently tracked."""
         return len(self._seen)
 
     def admit(self, key: tuple[str, ...]) -> int | None:
-        """None to suppress this line, else how many repeats of it were suppressed
-        since it last logged."""
+        """Return None to suppress this line, else the repeats suppressed so far.
+
+        The count is of repeats suppressed since the line last logged.
+        """
         now = self._clock()
         with self._lock:
             seen = self._seen.get(key)
@@ -86,11 +94,13 @@ def _shown(entry_id: str) -> str:
 
 
 def _log(level: int, stream: str, reason: str, msg: str, *args: object) -> None:
-    """Log a serve-path line unless the same line for the same stream and reason
-    logged within the last minute (`RepeatLimiter`); the next one that logs says
-    how many came since. A line about a request that proved nothing (a bad
-    signature, an unknown id) passes stream "", so one line a minute covers every
-    id a client can make up."""
+    """Log a serve-path line unless the same one logged within the last minute.
+
+    Limiting is per stream and reason (`RepeatLimiter`); the next one that logs says
+    how many came since. A line about a request that proved
+    nothing (a bad signature, an unknown id) passes stream "", so one line a minute
+    covers every id a client can make up.
+    """
     suppressed = repeats.admit((msg, stream, reason))
     if suppressed is None:
         return
@@ -101,8 +111,9 @@ def _log(level: int, stream: str, reason: str, msg: str, *args: object) -> None:
 
 
 def is_playable_manifest(text: str | None) -> bool:
-    """True only for an HLS playlist that actually points at something: a media
-    playlist carrying segments, or a master playlist carrying variants.
+    """Return True only for an HLS playlist that actually points at something.
+
+    That is a media playlist carrying segments, or a master playlist carrying variants.
 
     The `#EXTM3U` header alone is NOT enough, and testing only for it is how a dead
     cam gets listed. A CDN handed an expired or bogus token typically answers
@@ -114,16 +125,19 @@ def is_playable_manifest(text: str | None) -> bool:
     catches the whole class instead of one domain at a time.
 
     Accepting either tag matters: requiring segments alone would reject every
-    master playlist (variants, no `#EXTINF`), which is most CDN top-level URLs."""
+    master playlist (variants, no `#EXTINF`), which is most CDN top-level URLs.
+    """
     if not text or "#EXTM3U" not in text:
         return False
     return "#EXTINF" in text or "#EXT-X-STREAM-INF" in text
 
 
 def first_variant(master: str, url: str) -> str | None:
-    """The absolute URL of a master playlist's first variant (the URI line after its
-    first `#EXT-X-STREAM-INF`), or None if it names none. The first listed variant is
-    where a player starts."""
+    """Return the absolute URL of a master playlist's first variant, or None.
+
+    The variant is the URI line after its first `#EXT-X-STREAM-INF`; None means the
+    playlist names none. The first listed variant is where a player starts.
+    """
     lines = iter(master.splitlines())
     for ln in lines:
         if ln.startswith("#EXT-X-STREAM-INF"):
@@ -136,12 +150,14 @@ def first_variant(master: str, url: str) -> str | None:
 
 
 def loggable(url: str) -> str:
-    """An upstream URL trimmed for an INFO log line (`logging_redaction.trim_url`:
-    no credentials, but the params that name the cam). These warnings land in a
-    log kept for weeks.
+    """Trim an upstream URL for an INFO log line.
+
+    The trimming is `logging_redaction.trim_url`: no credentials, but the params that
+    name the cam. These warnings land in a log kept for weeks.
 
     At DEBUG the full URL is kept: when you are actually debugging one stream, the
-    token is the point, and DEBUG is opt-in and short-lived."""
+    token is the point, and DEBUG is opt-in and short-lived.
+    """
     if log.isEnabledFor(logging.DEBUG):
         return url
     return trim_url(url)
@@ -223,9 +239,11 @@ def _registrable_domain(host: str) -> str:
 
 
 def _same_site(a: str, b: str) -> bool:
-    """True if two hosts share a registrable domain (last two labels). Heuristic —
-    treats 2-part TLDs (e.g. co.uk) as the registrable domain, acceptable here as it
-    only ever widens 'is this the upstream's own CDN' very slightly."""
+    """Return True if two hosts share a registrable domain (last two labels).
+
+    Heuristic — treats 2-part TLDs (e.g. co.uk) as the registrable domain, acceptable
+    here as it only ever widens 'is this the upstream's own CDN' very slightly.
+    """
     return bool(a) and bool(b) and _registrable_domain(a) == _registrable_domain(b)
 
 
@@ -248,6 +266,7 @@ def _m3u_text(value: str) -> str:
 
 
 def render_playlist(entries: list[CatalogueEntry], *, base_url: str) -> str:
+    """Render the M3U playlist: one `#EXTINF` entry per cam, linking `/stream/<id>`."""
     lines = ["#EXTM3U"]
     for e in entries:
         title, category = _m3u_text(e.title), _m3u_text(e.category)
@@ -270,6 +289,11 @@ def rewrite_manifest(
     base_url: str,
     proxy_segments: bool = False,
 ) -> str:
+    """Rewrite a manifest's references so players fetch them through us.
+
+    Refs on the upstream's own site go through us: playlists via `/m`, segments via `/s`
+    only when `proxy_segments`. Refs on any other site are left absolute.
+    """
     up_host = urlsplit(upstream_url).hostname or ""
 
     def rewrite(ref: str) -> str:
@@ -351,10 +375,12 @@ def _extinf_dur(tags: list[str]) -> float:
 
 
 def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> str:
-    """Trim a long DVR media playlist to ~`window` seconds at the live edge, adjusting
-    MEDIA-SEQUENCE / DISCONTINUITY-SEQUENCE and carrying the key and init section in
-    force at the cut. Master playlists and normal-length media playlists are returned
-    unchanged (verbatim)."""
+    """Trim a long DVR media playlist to ~`window` seconds at the live edge.
+
+    Adjusts MEDIA-SEQUENCE / DISCONTINUITY-SEQUENCE and carries the key and init
+    section in force at the cut. Master playlists and normal-length media playlists
+    are returned unchanged (verbatim).
+    """
     if "#EXT-X-STREAM-INF" in text:  # master playlist — no media segments here
         return text
     header: list[str] = []
@@ -426,11 +452,14 @@ _URL_CONTROL_CHARS = frozenset(map(chr, [*range(0x20), 0x7F]))
 
 
 def _safe_redirect_target(url: str) -> bool:
-    """A resolved URL is emitted verbatim in a 302 `Location` header, so it must be a
-    plain http(s) URL with no control characters. An extractor reads its URL from a
-    scraped page (e.g. a feratel/og:video meta), and `send_header` does NO CRLF
-    sanitisation — a newline in that value would split the response (header injection
-    on our own origin), and a non-http scheme would be an open redirect."""
+    """Return whether a resolved URL is safe to emit in a 302 `Location` header.
+
+    A resolved URL is emitted verbatim in a 302 `Location` header, so it must be a plain
+    http(s) URL with no control characters. An extractor reads its URL from a scraped
+    page (e.g. a feratel/og:video meta), and `send_header` does NO CRLF sanitisation — a
+    newline in that value would split the response (header injection on our own origin),
+    and a non-http scheme would be an open redirect.
+    """
     if not _URL_CONTROL_CHARS.isdisjoint(url):
         return False
     return urlsplit(url).scheme in ("http", "https")
@@ -445,8 +474,11 @@ def serve_stream(
     base_url: str,
     proxy_youtube: bool = False,
 ) -> Response:
-    """Answer a player's `/stream/<id>`. `fetch` returns a body (None on failure)
-    and its outcome label, as `Fetcher.get_with_outcome` does."""
+    """Answer a player's `/stream/<id>`.
+
+    `fetch` returns a body (None on failure) and its outcome label, as
+    `Fetcher.get_with_outcome` does.
+    """
     sid = _shown(entry_id)
     entry = catalogue.get(entry_id)
     if entry is None:
@@ -523,6 +555,7 @@ def serve_child_manifest(
     fetch: Callable[[str], tuple[str | None, str]],
     base_url: str,
 ) -> Response:
+    """Relay a signed child manifest, answering 403 for a bad signature."""
     sid = _shown(entry_id)
     if not verify(upstream_url, sig):
         # the signing key is per-process: after a restart, a player still holding
@@ -542,8 +575,10 @@ def _proxy_manifest(
     base_url: str,
     kind: str,
 ) -> Response:
-    """Fetch an upstream playlist and relay it trimmed and rewritten through us, or
-    refuse it with a 502. `kind` names the playlist in the log."""
+    """Relay an upstream playlist trimmed and rewritten through us, or refuse with 502.
+
+    `kind` names the playlist in the log.
+    """
     sid = _shown(entry_id)
     manifest, outcome = fetch(upstream_url)
     if manifest is None:
@@ -594,8 +629,11 @@ def serve_segment(
     fetch_segment: Callable[[str, str | None], tuple[SegmentResponse | None, str]],
     range_header: str | None = None,
 ) -> SegmentResponse:
-    """Relay one segment. `fetch_segment` returns the upstream response (None on
-    failure) and its outcome label, as `Fetcher.get_segment` does."""
+    """Relay one segment.
+
+    `fetch_segment` returns the upstream response (None on failure) and its outcome
+    label, as `Fetcher.get_segment` does.
+    """
     sid = _shown(entry_id)
     if not verify(upstream_url, sig):
         # see child manifest

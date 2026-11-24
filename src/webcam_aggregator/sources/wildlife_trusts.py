@@ -1,3 +1,5 @@
+"""The Wildlife Trusts source: the national index plus every trust's sitemap."""
+
 from __future__ import annotations
 
 import html as htmllib
@@ -135,22 +137,27 @@ def _cand(target: str, page_url: str, title: str) -> Candidate:
 
 
 class WildlifeTrustsSource:
-    """The Wildlife Trusts' cams, from two lists: the national /webcams index (curated
-    cards, some on non-trust sites) and every trust's own sitemap, which carries cam
-    pages the index never links. The national site is behind a Cloudflare fingerprint
-    gate, so this source's Fetcher impersonates a browser.
+    """The Wildlife Trusts' cams, from two lists.
+
+    The lists are the national /webcams index (curated cards, some on non-trust sites)
+    and every trust's own sitemap, which carries cam pages the index never links. The
+    national site is behind a Cloudflare fingerprint gate, so this source's Fetcher
+    impersonates a browser.
 
     Pages embed YouTube (often behind a consent placeholder), camstreamer (a wrapped
     YouTube, resolved here so it dedups on its `yt:` key), camsecure (resolved to its
-    open HLS, as camscape does) and direct HLS. All wildlife -> category Animals."""
+    open HLS, as camscape does) and direct HLS. All wildlife -> category Animals.
+    """
 
     name: str = "wildlife-trusts"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield the cams from the index cards and the trust sitemaps, once per cam."""
         found: list[tuple[int, Candidate]] = []
         card_titles: dict[str, str] = {}
         for href, title in self._cards():
@@ -190,9 +197,11 @@ class WildlifeTrustsSource:
                 yield htmllib.unescape(href.group(1)), name
 
     def _cam_pages(self, origin: str) -> list[str]:
-        """The cam-named pages in one trust's sitemap (following a sitemap index).
+        """Return the cam-named pages in one trust's sitemap (via a sitemap index).
+
         Most trusts serve it at /sitemap.xml; the rest name it in robots.txt. Only the
-        trust's own site is followed, `www.` or not: the trusts list it either way."""
+        trust's own site is followed, `www.` or not: the trusts list it either way.
+        """
         site = _site(origin)
         queue, seen, pages = [f"{origin}/sitemap.xml"], set[str](), list[str]()
         while queue and len(seen) < _MAX_SITEMAPS and len(pages) < _MAX_PAGES:
@@ -291,7 +300,7 @@ class WildlifeTrustsSource:
         return found.strip() if isinstance(found, str) else ""
 
     def _camstreamer_target(self, embed: str) -> str:
-        """The YouTube video a camstreamer player wraps, else the player itself."""
+        """Return the YouTube video a camstreamer player wraps, else the player."""
         m = _YT_EMBED_URL.search(self._fetch.get(embed) or "")
         video = (predisc_key(m.group(0)) or "") if m else ""
         if video.startswith("yt:"):
@@ -299,7 +308,7 @@ class WildlifeTrustsSource:
         return embed
 
     def _resolve_embed(self, embed: str) -> list[str]:
-        """An embed URL -> the target(s) the extractors serve."""
+        """Map an embed URL to the target(s) the extractors serve."""
         for query in _YT_LIVE_QUERY.finditer(embed):
             live = _CHANNEL_PARAM.search(query.group(1))
             if live:

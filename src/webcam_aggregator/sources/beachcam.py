@@ -1,3 +1,5 @@
+"""beachcam.meo.pt source: Portuguese beach cams, blanket category Beaches."""
+
 from __future__ import annotations
 
 import re
@@ -44,11 +46,13 @@ _Ctx = tuple[str, str | None]
 
 
 class BeachcamSource(HtmlScraperSource[_Ctx]):
-    """beachcam.meo.pt: ~190 MEO Beachcam livecams, blanket-categorised "Beaches" —
-    almost all are beach/surf spots, and the few lake/wake-park/city outliers are a
-    better trade than ~190 Portuguese-titled cams landing in "Other" (the English
-    title-keyword fallback can't read them). One stream per page in a data-video-url
-    attribute, playable only with a per-build ?wmsAuthSign= auth token."""
+    """beachcam.meo.pt: MEO Beachcam livecams, blanket-categorised "Beaches".
+
+    There are ~190, almost all beach/surf spots, and the few lake/wake-park/city
+    outliers are a better trade than ~190 Portuguese-titled cams landing in "Other" (the
+    English title-keyword fallback can't read them). One stream per page in a
+    data-video-url attribute, playable only with a per-build ?wmsAuthSign= auth token.
+    """
 
     name: str = "beachcam"
     # per-build auth token, fetched alongside the index in _page_urls

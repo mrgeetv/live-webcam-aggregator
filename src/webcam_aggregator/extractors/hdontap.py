@@ -1,3 +1,5 @@
+"""HDOnTap extractor: cam page `player-data` blob -> its token-signed HLS URL."""
+
 from __future__ import annotations
 
 import json
@@ -26,9 +28,11 @@ _BLOB = re.compile(
 
 
 def stream_src(html: str) -> str | None:
-    """The token-signed HLS URL in a page's player-data blob, or None (an offline
-    page, or a YouTube-embed cam). Shared with `sources.hdontap`, which uses it to
-    tell native-HLS cam pages from the rest."""
+    """Return the token-signed HLS URL in a page's player-data blob, or None.
+
+    None means an offline page or a YouTube-embed cam. Shared with `sources.hdontap`,
+    which uses it to tell native-HLS cam pages from the rest.
+    """
     m = _BLOB.search(html)
     if not m:
         return None
@@ -43,12 +47,16 @@ def stream_src(html: str) -> str | None:
 
 
 class HdontapResolver:
+    """Resolve an HDOnTap cam page to its token-signed HLS URL."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a page body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to the HLS URL in its page's player-data blob."""
         src = stream_src(self._fetch(target_url))
         if not src:
             msg = "hdontap: no player-data stream (offline?)"

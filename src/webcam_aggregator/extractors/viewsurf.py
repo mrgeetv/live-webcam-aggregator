@@ -1,3 +1,5 @@
+"""Viewsurf extractor: joada embed uuid -> the platform API's HLS manifest URL."""
+
 from __future__ import annotations
 
 import json
@@ -27,12 +29,16 @@ _UUID = re.compile(r"[?&]uuid=([0-9a-f-]+)")
 
 
 class ViewsurfResolver:
+    """Resolve a viewsurf joada embed to its HLS URL through the platform API."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a response body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to the HLS URL for its uuid, trying each API host."""
         m = _UUID.search(target_url)
         if not m:
             msg = "viewsurf: no uuid in embed url"

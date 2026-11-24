@@ -61,8 +61,11 @@ def test_livefromiceland_handles_missing_index():
 
 
 def test_livefromiceland_handles_a_non_json_index():
-    """A retired endpoint answers with an HTML error page, not JSON. That must
-    drop to zero cams (the empty-guard then reports it), never crash the source."""
+    """A retired endpoint answers with an HTML error page, not JSON.
+
+    That must drop to zero cams (the empty-guard then reports it), never crash the
+    source.
+    """
 
     class _ErrorPage:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
@@ -82,8 +85,10 @@ def test_livefromiceland_handles_a_json_error_object():
 
 
 def test_livefromiceland_handles_a_json_scalar_index():
-    """A terse error body like `404` parses as a JSON number; iterating it would
-    raise. Any non-list shape must drop to zero cams, never crash the source."""
+    """A terse error body like `404` parses as a JSON number; iterating it would raise.
+
+    Any non-list shape must drop to zero cams, never crash the source.
+    """
 
     class _Scalar:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
