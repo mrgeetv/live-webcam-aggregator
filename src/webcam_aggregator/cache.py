@@ -120,6 +120,22 @@ class ResolveCache:
             e.retry_streak += 1
             return True
 
+    def _resolve_with_ttl(
+        self, entry_id: str, target_url: str
+    ) -> tuple[Resolved | None, float, str | None]:
+        """Resolve once: the result, how long to cache it, and why it failed if so."""
+        try:
+            resolved = self._resolve(entry_id, target_url)
+        # Whatever the extractor raised becomes a negative cache entry and the
+        # player's error, never an exception out of a /stream request.
+        except Exception as exc:  # noqa: BLE001
+            return None, NEGATIVE_TTL, describe_error(exc)
+        raw = resolved.ttl_seconds
+        if raw is None:
+            return resolved, DEFAULT_TTL * TTL_FACTOR, None
+        # An already-expired token (ttl <= 0) is not served stale: re-resolve.
+        return resolved, max(raw, 0) * TTL_FACTOR, None
+
     def get(self, entry_id: str, target_url: str, *, fresh: bool = False) -> Lookup:
         """Return the cached resolve for `entry_id`, resolving on a miss.
 
@@ -152,21 +168,7 @@ class ResolveCache:
                 e = self._data.get(entry_id)
                 if usable(e, now):
                     return Lookup(e.resolved, e.error)
-            error = None
-            try:
-                resolved = self._resolve(entry_id, target_url)
-                raw = resolved.ttl_seconds
-                if raw is None:
-                    ttl = DEFAULT_TTL * TTL_FACTOR
-                elif raw > 0:
-                    ttl = raw * TTL_FACTOR
-                else:
-                    ttl = 0.0  # already-expired token → don't serve stale, re-resolve
-            # Whatever the extractor raised becomes a negative cache entry and the
-            # player's error, never an exception out of a /stream request.
-            except Exception as exc:  # noqa: BLE001
-                resolved, ttl = None, NEGATIVE_TTL
-                error = describe_error(exc)
+            resolved, ttl, error = self._resolve_with_ttl(entry_id, target_url)
             with self._guard:
                 if (
                     resolved is None

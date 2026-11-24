@@ -225,6 +225,146 @@ class _SourceResult:
     resolve_details: dict[str, int] = field(default_factory=dict)
 
 
+class _SharedVerdicts:
+    """One liveness verdict per target URL, shared by every source in one build.
+
+    Meta-aggregators (windy, camscape) carry the same cams as the first-party sources,
+    so without this the same feratel page gets probed two or three times per build:
+    extra load aimed at exactly the hosts that already rate-limit us. A verdict must
+    never outlive its build (tokens expire), so each build makes a new one. The
+    check-then-probe window means two sources racing on the same URL can still probe
+    twice; that rare duplicate is cheaper than holding a lock across a network fetch.
+    """
+
+    _probe: Callable[[Candidate], str | None]
+    _verdicts: dict[str, str | None]
+    _lock: threading.Lock
+
+    def __init__(self, probe: Callable[[Candidate], str | None]) -> None:
+        """Wrap `probe`, the liveness check that returns a cam's drop reason."""
+        self._probe = probe
+        self._verdicts = {}
+        self._lock = threading.Lock()
+
+    def drop_reason(self, c: Candidate, live: Mapping[str, str]) -> str | None:
+        """Return why `c` is dropped, or None to keep it (`live`: the live yt ids)."""
+        if c.predisc_key and c.predisc_key.startswith("yt:"):
+            return None if c.predisc_key[3:] in live else YT_OFFLINE
+        # Key on target_url, NOT predisc_key: the probe fetches target_url and its
+        # verdict is a property of that exact URL. predisc_key is a lossy MERGE
+        # identity (it strips auth tokens, and feratel:<id> collapses every URL shape
+        # for a cam), so sharing a verdict across it would apply one URL's result to a
+        # materially different one (a tokened vs bare beachcam URL, or a feratel page
+        # that routes to a different extractor). Identical target_urls across sources
+        # are the same fetch, so this still collapses the genuinely duplicated probes.
+        with self._lock:
+            if c.target_url in self._verdicts:
+                return self._verdicts[c.target_url]
+        reason = self._probe(c)
+        with self._lock:
+            self._verdicts[c.target_url] = reason
+        return reason
+
+
+def _tally(
+    name: str,
+    cands: list[Candidate],
+    reasons: list[str | None],
+    live: Mapping[str, str],
+) -> _SourceResult:
+    """Sort a source's candidates into kept ones and counted drops."""
+    kept: list[Candidate] = []
+    drops: dict[str, int] = {}
+    no_ext_hosts: dict[str, int] = {}
+    details: dict[str, int] = {}
+    for c, reason in zip(cands, reasons, strict=True):
+        if reason is None:
+            kept.append(_apply_yt_category(c, live))
+            continue
+        # A reason may carry ":<detail>": bucket on the label, keep the detail for
+        # the top-N line (that is what separates "yt-dlp is broken" from "this cam
+        # is off air").
+        label, _, detail = reason.partition(":")
+        drops[label] = drops.get(label, 0) + 1
+        if label == NO_EXTRACTOR:
+            host = urlsplit(c.target_url).hostname or "?"
+            no_ext_hosts[host] = no_ext_hosts.get(host, 0) + 1
+        elif detail:
+            details[detail] = details.get(detail, 0) + 1
+    return _SourceResult(
+        name,
+        kept,
+        len(cands),
+        crashed=False,
+        drop_reasons=drops,
+        no_extractor_hosts=no_ext_hosts,
+        resolve_details=details,
+    )
+
+
+def _guarded(
+    r: _SourceResult, h: Hist, fetches: dict[str, dict[str, int]]
+) -> list[Candidate]:
+    """Log a source's cycle, update its history, and return the candidates to serve.
+
+    That is the new set, or the last good one while the empty-guard holds.
+    """
+    name, kept, discovered, crashed = r.name, r.kept, r.discovered, r.crashed
+    warned = _log_source_outcome(name, len(kept), discovered, fetches, r.drop_reasons)
+    _log_drop_detail(name, r.no_extractor_hosts, r.resolve_details)
+    # Record the RAW result before the guard can mask it — /health alerts on this
+    # (crashed, or 0 kept) even when the guard keeps serving the last good set.
+    h.last_discovered = discovered
+    h.last_raw_kept = len(kept)
+    h.last_crashed = crashed
+    # Status is computed from the RAW result, before the guard branches below can
+    # return early, so a masked failure still registers.
+    status = _status_for(len(kept), crashed=crashed, h=h)
+    if status != h.status:
+        log.warning(
+            "%s: %s -> %s (%d kept, was %s)",
+            name,
+            h.status,
+            status,
+            len(kept),
+            h.last_count if h.last_count is not None else "n/a",
+        )
+    elif status == "dead" and not warned:
+        # Still down, and nothing above said so. The empty-guard stops warning once
+        # it accepts the zero (after AGREE_TO_ACCEPT cycles), which would make a
+        # long outage go quiet exactly when it matters. A source at zero warns every
+        # single cycle it stays there.
+        log.warning("%s: still dead (%d kept / %d discovered)", name, 0, discovered)
+    h.status = status
+    if crashed and h.last_kept:
+        # A crash is not a genuine "0 cams" result — reuse the last good set and leave
+        # history untouched, so two consecutive crashes can't get accepted as an empty
+        # set (which would wipe last_kept and disable the guard).
+        log.warning("%s discover crashed; reusing previous %d", name, len(h.last_kept))
+        return h.last_kept
+    collapsed = (
+        h.last_count is not None
+        and h.last_count > 0
+        and len(kept) < h.last_count * (1 - DROP_THRESHOLD)
+    )
+    if collapsed:
+        h.shrink_streak += 1
+        if h.shrink_streak < AGREE_TO_ACCEPT:
+            log.warning(
+                "%s collapsed to %d (< %.0f%% of last %d); keeping previous %d",
+                name,
+                len(kept),
+                DROP_THRESHOLD * 100,
+                h.last_count,
+                len(h.last_kept),
+            )
+            return h.last_kept  # guard: reuse this source's last good set
+    h.shrink_streak = 0
+    h.last_count = len(kept)
+    h.last_kept = kept
+    return kept
+
+
 def build_catalogue(
     sources: list[Source],
     *,
@@ -251,16 +391,7 @@ def build_catalogue(
     # slow a pool down but can never deadlock it. Keep it that way: nothing a fetch
     # path acquires may be held while waiting on another thread.
     yt_lock = threading.Lock()
-    # One probe per distinct target URL, not per source: meta-aggregators (windy,
-    # camscape) carry the same cams as the first-party sources, so without this the same
-    # feratel page gets probed two or three times per build — extra load aimed at
-    # exactly the hosts that already rate-limit us. Keyed on target_url (why not
-    # predisc_key: see the lookup below), shared across every source in THIS build only
-    # — a verdict must never outlive the build, tokens expire. The check-then-probe
-    # window means two sources racing on the same key can still probe twice; that rare
-    # duplicate is cheaper than holding a lock across a network fetch.
-    verdicts: dict[str, str | None] = {}
-    verdicts_lock = threading.Lock()
+    verdicts = _SharedVerdicts(drop_reason_for)
 
     def filter_source(src: Source) -> _SourceResult:
         # Never raises — a source that blows up reports crashed=True instead of
@@ -279,55 +410,8 @@ def build_catalogue(
             # youtube_live hits the Data API through a shared client — serialise it.
             with yt_lock:
                 live: Mapping[str, str] = youtube_live(yt_ids) if yt_ids else {}
-
-            def drop_reason(
-                c: Candidate, _live: Mapping[str, str] = live
-            ) -> str | None:
-                if c.predisc_key and c.predisc_key.startswith("yt:"):
-                    return None if c.predisc_key[3:] in _live else YT_OFFLINE
-                # Key on target_url, NOT predisc_key: the probe fetches target_url and
-                # its verdict is a property of that exact URL. predisc_key is a lossy
-                # MERGE identity (it strips auth tokens, and feratel:<id> collapses
-                # every URL shape for a cam) — sharing a verdict across those would
-                # apply one URL's result to a materially different one (a tokened vs
-                # bare beachcam URL, or a feratel page that routes to a different
-                # extractor). Identical target_urls across sources are the same fetch,
-                # so this still collapses the genuinely-duplicated probes.
-                with verdicts_lock:
-                    if c.target_url in verdicts:
-                        return verdicts[c.target_url]
-                reason = drop_reason_for(c)
-                with verdicts_lock:
-                    verdicts[c.target_url] = reason
-                return reason
-
-            kept: list[Candidate] = []
-            reasons: dict[str, int] = {}
-            no_ext_hosts: dict[str, int] = {}
-            details: dict[str, int] = {}
-            for c, reason in zip(cands, thread_map(drop_reason, cands), strict=True):
-                if reason is None:
-                    kept.append(_apply_yt_category(c, live))
-                    continue
-                # A reason may carry ":<detail>" — bucket on the label, keep the detail
-                # for the top-N line (that is what separates "yt-dlp is broken" from
-                # "this cam is off air").
-                label, _, detail = reason.partition(":")
-                reasons[label] = reasons.get(label, 0) + 1
-                if label == NO_EXTRACTOR:
-                    host = urlsplit(c.target_url).hostname or "?"
-                    no_ext_hosts[host] = no_ext_hosts.get(host, 0) + 1
-                elif detail:
-                    details[detail] = details.get(detail, 0) + 1
-            return _SourceResult(
-                src.name,
-                kept,
-                len(cands),
-                crashed=False,
-                drop_reasons=reasons,
-                no_extractor_hosts=no_ext_hosts,
-                resolve_details=details,
-            )
+            reasons = thread_map(lambda c: verdicts.drop_reason(c, live), cands)
+            return _tally(src.name, cands, reasons, live)
         except Exception:
             log.exception("source %s liveness filter failed", src.name)
             return _SourceResult(src.name, [], len(cands), crashed=True)
@@ -336,74 +420,13 @@ def build_catalogue(
     # SCRAPE_WORKERS regardless of source count (extra sources batch through the pool).
     results = thread_map(filter_source, list(sources), workers=max_parallel_sources)
 
-    # Per-source empty guard + cross-source dedup, serial (results keep source order, so
-    # dedup priority is unchanged from the old sequential build).
+    # Per-source empty guard + cross-source dedup, serial; results keep source order,
+    # so dedup sees the sources in the order they are listed. The fetch stats are
+    # drained per cycle for the log line only — the WHY lives in the logs, not on Hist.
     kept_all: list[Candidate] = []
     for r in results:
-        name, kept, discovered, crashed = r.name, r.kept, r.discovered, r.crashed
-        h = history.setdefault(name, Hist())
-        # Drained per cycle for the log line only — the WHY lives in the logs, not
-        # on Hist (see the field comment there).
-        fetches = fetch_stats(name) if fetch_stats else {}
-        warned = _log_source_outcome(
-            name, len(kept), discovered, fetches, r.drop_reasons
-        )
-        _log_drop_detail(name, r.no_extractor_hosts, r.resolve_details)
-        # Record the RAW result before the guard can mask it — /health alerts on this
-        # (crashed, or 0 kept) even when the guard keeps serving the last good set.
-        h.last_discovered = discovered
-        h.last_raw_kept = len(kept)
-        h.last_crashed = crashed
-        # Status is computed from the RAW result, before the guard branches below can
-        # `continue` past it, so a masked failure still registers.
-        status = _status_for(len(kept), crashed=crashed, h=h)
-        if status != h.status:
-            log.warning(
-                "%s: %s -> %s (%d kept, was %s)",
-                name,
-                h.status,
-                status,
-                len(kept),
-                h.last_count if h.last_count is not None else "n/a",
-            )
-        elif status == "dead" and not warned:
-            # Still down, and nothing above said so. The empty-guard stops warning once
-            # it accepts the zero (after AGREE_TO_ACCEPT cycles), which would make a
-            # long outage go quiet exactly when it matters. A source at zero warns every
-            # single cycle it stays there.
-            log.warning("%s: still dead (%d kept / %d discovered)", name, 0, discovered)
-        h.status = status
-        if crashed and h.last_kept:
-            # A crash is not a genuine "0 cams" result — reuse the last good set and leave
-            # history untouched, so two consecutive crashes can't get accepted as an empty
-            # set (which would wipe last_kept and disable the guard).
-            log.warning(
-                "%s discover crashed; reusing previous %d", name, len(h.last_kept)
-            )
-            kept_all.extend(h.last_kept)
-            continue
-        collapsed = (
-            h.last_count is not None
-            and h.last_count > 0
-            and len(kept) < h.last_count * (1 - DROP_THRESHOLD)
-        )
-        if collapsed:
-            h.shrink_streak += 1
-            if h.shrink_streak < AGREE_TO_ACCEPT:
-                log.warning(
-                    "%s collapsed to %d (< %.0f%% of last %d); keeping previous %d",
-                    name,
-                    len(kept),
-                    DROP_THRESHOLD * 100,
-                    h.last_count,
-                    len(h.last_kept),
-                )
-                kept_all.extend(h.last_kept)  # guard: reuse this source's last good set
-                continue
-        h.shrink_streak = 0
-        h.last_count = len(kept)
-        h.last_kept = kept
-        kept_all.extend(kept)
+        fetches = fetch_stats(r.name) if fetch_stats else {}
+        kept_all.extend(_guarded(r, history.setdefault(r.name, Hist()), fetches))
 
     entries = [_to_entry(c) for c in dedupe(kept_all)]
     if exclude_categories:

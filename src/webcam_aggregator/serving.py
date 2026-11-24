@@ -374,17 +374,16 @@ def _extinf_dur(tags: list[str]) -> float:
     return 0.0
 
 
-def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> str:
-    """Trim a long DVR media playlist to ~`window` seconds at the live edge.
+_Segment = tuple[list[str], str]  # (the tag lines before it, its URL line)
 
-    Adjusts MEDIA-SEQUENCE / DISCONTINUITY-SEQUENCE and carries the key and init
-    section in force at the cut. Master playlists and normal-length media playlists
-    are returned unchanged (verbatim).
+
+def _split_media_playlist(text: str) -> tuple[list[str], list[_Segment], list[str]]:
+    """Split a media playlist into its header tags, its segments and the trailing tags.
+
+    The trailing tags are those after the last segment (ENDLIST, LL-HLS hints).
     """
-    if "#EXT-X-STREAM-INF" in text:  # master playlist — no media segments here
-        return text
     header: list[str] = []
-    segments: list[tuple[list[str], str]] = []  # (preceding tag lines, url line)
+    segments: list[_Segment] = []
     pending: list[str] = []
     for ln in text.splitlines():
         if not ln.strip():
@@ -397,24 +396,21 @@ def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> st
         else:
             segments.append((pending, ln))
             pending = []
-    if len(segments) <= _TRUNCATE_ABOVE:
-        return text  # not a DVR back-catalogue — leave it alone
-    kept: list[tuple[list[str], str]] = []
+    return header, segments, pending
+
+
+def _live_edge_count(segments: list[_Segment], window: float) -> int:
+    """Return how many segments at the end of the playlist cover `window` seconds."""
     acc = 0.0
-    for seg in reversed(segments):
-        kept.append(seg)
+    for kept, seg in enumerate(reversed(segments), start=1):
         acc += _extinf_dur(seg[0])
-        if acc >= window and len(kept) >= _MIN_KEEP:
-            break
-    kept.reverse()
-    if len(kept) >= len(segments):
-        return text
-    dropped = segments[: len(segments) - len(kept)]
-    media_seq = _header_int(header, "#EXT-X-MEDIA-SEQUENCE", 0) + len(dropped)
-    disc_dropped = sum(
-        1 for tags, _ in dropped for t in tags if t == "#EXT-X-DISCONTINUITY"
-    )
-    disc_seq = _header_int(header, "#EXT-X-DISCONTINUITY-SEQUENCE", 0) + disc_dropped
+        if acc >= window and kept >= _MIN_KEEP:
+            return kept
+    return len(segments)
+
+
+def _renumbered_header(header: list[str], media_seq: int, disc_seq: int) -> list[str]:
+    """Return the header with its media and discontinuity sequence numbers replaced."""
     out: list[str] = []
     saw_media = saw_disc = False
     for h in header:
@@ -430,6 +426,31 @@ def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> st
         out.append(f"#EXT-X-MEDIA-SEQUENCE:{media_seq}")
     if not saw_disc and disc_seq:
         out.append(f"#EXT-X-DISCONTINUITY-SEQUENCE:{disc_seq}")
+    return out
+
+
+def truncate_to_live_edge(text: str, window: float = _LIVE_WINDOW_SECONDS) -> str:
+    """Trim a long DVR media playlist to ~`window` seconds at the live edge.
+
+    Adjusts MEDIA-SEQUENCE / DISCONTINUITY-SEQUENCE and carries the key and init
+    section in force at the cut. Master playlists and normal-length media playlists
+    are returned unchanged (verbatim).
+    """
+    if "#EXT-X-STREAM-INF" in text:  # master playlist — no media segments here
+        return text
+    header, segments, pending = _split_media_playlist(text)
+    if len(segments) <= _TRUNCATE_ABOVE:
+        return text  # not a DVR back-catalogue — leave it alone
+    cut = len(segments) - _live_edge_count(segments, window)
+    if cut == 0:
+        return text
+    dropped, kept = segments[:cut], segments[cut:]
+    media_seq = _header_int(header, "#EXT-X-MEDIA-SEQUENCE", 0) + len(dropped)
+    disc_dropped = sum(
+        1 for tags, _ in dropped for t in tags if t == "#EXT-X-DISCONTINUITY"
+    )
+    disc_seq = _header_int(header, "#EXT-X-DISCONTINUITY-SEQUENCE", 0) + disc_dropped
+    out = _renumbered_header(header, media_seq, disc_seq)
     # A key or init section governs every segment after it until replaced, so the
     # dropped ones are replayed in order: with no segments between them, each lands in
     # the state upstream had at the cut — every KEYFORMAT's key, and the key in force
@@ -531,16 +552,19 @@ def serve_stream(
             loggable(resolved.url),
         )
         return (502, "text/plain", b"unsafe upstream URL")
-    if resolved.stream_type == "mp4":
-        return (302, resolved.url, b"")  # redirect; 2nd field is the Location
-    if _is_direct_playback(resolved.url):
-        # IP-bound session: let the player fetch the whole chain itself (no proxy)
-        return (302, resolved.url, b"")
-    if _redirects_youtube(resolved.url, proxy_youtube=proxy_youtube):
-        # Default: hand the player the googlevideo manifest directly — lower latency
-        # and less buffering on shallow live windows. Trade-off: playback stops when
-        # the ~6h googlevideo token expires (re-select to resume). PROXY_YOUTUBE=true
-        # proxies instead — survives expiry via re-resolve, DVR trimmed to live edge.
+    # Three kinds of stream go to the player by redirect (the 2nd field is then the
+    # Location) rather than through the proxy:
+    # - an mp4;
+    # - an IP-bound session, which the player must fetch whole itself;
+    # - YouTube by default: the googlevideo manifest directly gives lower latency and
+    #   less buffering on shallow live windows, but playback stops when the ~6h
+    #   googlevideo token expires (re-select to resume). PROXY_YOUTUBE=true proxies
+    #   instead: it survives expiry via re-resolve, with DVR trimmed to the live edge.
+    if (
+        resolved.stream_type == "mp4"
+        or _is_direct_playback(resolved.url)
+        or _redirects_youtube(resolved.url, proxy_youtube=proxy_youtube)
+    ):
         return (302, resolved.url, b"")
     return _proxy_manifest(
         entry_id, resolved.url, fetch=fetch, base_url=base_url, kind="manifest"
