@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.11](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.10...v2.14.11) (2026-11-24)
+
+### Bug Fixes
+
+* **playlist:** log which cam and why when a stream request fails ([#188](https://github.com/mrgeetv/live-webcam-aggregator/issues/188)) ([b3fb837](https://github.com/mrgeetv/live-webcam-aggregator/commit/b3fb837f3bfb82095c30ba49a1ccb69f6867c27f)), closes [#176](https://github.com/mrgeetv/live-webcam-aggregator/issues/176)
+
 ## [2.14.10](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.9...v2.14.10) (2026-11-24)
 
 ### Bug Fixes
