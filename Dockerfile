@@ -1,7 +1,6 @@
 # Build arguments for image selection (defaults to DHI)
 ARG BUILD_IMAGE=dhi.io/python:3.14-alpine3.24-sfw-dev
 ARG RUNTIME_IMAGE=dhi.io/python:3.14-alpine3.24
-ARG DENO_IMAGE=denoland/deno:alpine-2.8.3
 
 # Deno binary source (for yt-dlp YouTube extraction)
 # See: https://github.com/yt-dlp/yt-dlp/wiki/EJS
@@ -11,7 +10,8 @@ ARG DENO_IMAGE=denoland/deno:alpine-2.8.3
 # without a system /lib64 loader. This lets it exec on the musl Alpine runtime
 # (DHI) while NOT hijacking the system loader on a glibc runtime (local compose
 # uses python:3.14-slim / Debian) — copying glibc over /lib64 breaks the latter.
-FROM ${DENO_IMAGE} AS deno_src
+# Written out, not an ARG: Dependabot only reads a FROM that names its image.
+FROM denoland/deno:alpine-2.8.3 AS deno_src
 # hadolint ignore=DL3018  # patchelf is a build-only tool; pinning it across deno base bumps is fragile
 RUN apk add --no-cache patchelf \
  && patchelf --set-interpreter /usr/local/lib/glibc/ld-linux-x86-64.so.2 \

@@ -96,6 +96,18 @@ CI builds use DHI images from `dhi.io`, requiring authentication. Repository sec
 
 The runtime stage takes its CA bundle (`/etc/ssl/certs/ca-certificates.crt`) from the build stage, because the runtime variant can lag the `-dev` one on `ca-certificates`.
 
+### Base Image Updates
+
+DHI republishes patched images under the same tag, which on its own never rebuilds
+ours. `.github/workflows/base-images.yml` runs daily at 06:00 UTC (or by hand) and
+rebuilds the **latest release tag** (not main's HEAD) when its published image was
+built on other base digests or from another commit, re-pushing `latest`, `vX`,
+`vX.Y` and `vX.Y.Z`; older releases' tags are never rebuilt. It also keeps one
+issue open, *Newer DHI base image tags available*, while dhi.io carries a newer
+python/alpine tag than the Dockerfile uses; those bumps are manual (see *Python
+Version Synchronization* in `AGENTS.md`), and the issue closes itself once they
+land. Dependabot bumps deno's version weekly, holding back majors.
+
 ## Pre-commit Hooks
 
 This project uses pre-commit hooks for code quality. Install them before making changes:
@@ -110,12 +122,12 @@ Hooks will run automatically on commit, checking:
 - Python formatting (black)
 - Python linting (flake8)
 - Shell script validation (shellcheck)
-- Dockerfile linting (hadolint)
+- Dockerfile linting (hadolint), and that its pinned image tag matches its `rev:`
 - Markdown formatting (markdownlint)
 - Conventional commit messages
 - Type checking (basedpyright)
 - **Tests + coverage (pytest)**: runs the full suite with a coverage floor when
-  `src/`, `tests/`, or `requirements*.txt` change
+  `src/`, `scripts/`, `tests/`, or `requirements*.txt` change
 - **Dead-code detection (vulture)**: flags unused functions/attributes on `src/`
 
 > **Note:** the `pytest` hook runs `scripts/run-pytest.sh`, which prefers the
@@ -145,8 +157,8 @@ pytest --cov=webcam_aggregator --cov-report=term-missing    # with coverage
 The suite runs in **parallel** via `pytest-xdist` (`-n auto`, one worker per CPU, so
 it adapts to whatever box you're on); run `pytest -n 0` to go serial (e.g. for `pdb`).
 
-The same `pytest` + coverage floor runs as a pre-commit hook (when `src/`, `tests/`,
-or `requirements*.txt` change) and in CI, so a failing test blocks the commit and
+The same `pytest` + coverage floor runs as a pre-commit hook (when `src/`, `scripts/`,
+`tests/`, or `requirements*.txt` change) and in CI, so a failing test blocks the commit and
 the merge. Test files are named `*_test.py` (enforced by the `name-tests-test` hook).
 
 ## Project Structure
@@ -206,9 +218,12 @@ live-webcam-aggregator/
 ├── scripts/                    # Helper scripts
 │   ├── run.sh                  # Docker build/run script
 │   ├── run-pytest.sh           # pytest wrapper for the pre-commit hook (prefers .venv)
+│   ├── base_images.py          # Base-digest label, rebuild check + newer DHI tags (base-images.yml)
+│   ├── check_hadolint_pin.py   # pre-commit: hadolint's image tag matches its rev
 │   └── check-python-version.sh
 ├── docs/agents/                # Agent-skill config: issue tracker, triage labels, domain docs
 ├── .github/workflows/          # CI/CD pipelines
+├── .github/release/            # semantic-release versions (Dependabot-bumped, read by release.yml)
 ├── Dockerfile                  # Container definition
 ├── docker-compose.yml          # Development compose file
 ├── requirements.txt            # Python dependencies

@@ -80,6 +80,13 @@ repos:
         files: '^(\.python-version|Dockerfile|docker-compose\.yml|pyrightconfig\.json)$'
         pass_filenames: false
 
+      - id: check-hadolint-pin
+        name: Check hadolint's image tag matches its rev
+        entry: python3 scripts/check_hadolint_pin.py
+        language: system
+        files: '^\.pre-commit-config\.yaml$'
+        pass_filenames: false
+
       - id: pytest
         name: pytest (with coverage)
         # The wrapper prefers .venv/bin/pytest and falls back to PATH, so the hook
@@ -88,7 +95,7 @@ repos:
         language: system
         pass_filenames: false
         # Only run when code/tests/deps change (skip doc-only commits).
-        files: '^(src/|tests/|pytest\.ini|requirements.*\.txt)'
+        files: '^(src/|scripts/|tests/|pytest\.ini|requirements.*\.txt)'
         # Coverage floor lives here (not in pytest.ini addopts) so ad-hoc/partial
         # runs aren't tripped; floor sits a few points below the achieved ~88%.
         args:

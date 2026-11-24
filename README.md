@@ -99,8 +99,10 @@ source); until it's ready, `/playlist.m3u8` returns `503`.
 Set `PUBLIC_BASE_URL` to the address your players actually reach; `localhost` only
 works for a player on the same machine (see *Exposing it*). These use the `:v2` major
 tag, so you get v2.x updates but never an automatic jump to a future breaking major
-(`:latest` would); see *Upgrading from v1*. Want to build from source instead? See
-[DEVELOPMENT.md](DEVELOPMENT.md).
+(`:latest` would); see *Upgrading from v1*. The latest release's tags (`:v2`
+included) are rebuilt daily when a base image is republished with patches, so
+pulling `:v2` again picks them up; an older `:v2.x.y` pin is never rebuilt. Want to
+build from source instead? See [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Adding it to a player
 

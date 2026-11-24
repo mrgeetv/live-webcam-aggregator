@@ -26,15 +26,25 @@ jobs:
         with:
           fetch-depth: 0 # Need full history for semantic-release
 
+      # The versions live in .github/release/package.json, where Dependabot can bump them.
+      - name: Read release tool versions
+        id: tools
+        shell: bash
+        run: |
+          pkg=.github/release/package.json
+          echo "semantic=$(jq -er '.devDependencies["semantic-release"]' "$pkg")" >> "$GITHUB_OUTPUT"
+          {
+            echo "plugins<<EOF"
+            jq -er '.devDependencies | to_entries[] | select(.key != "semantic-release") | "\(.key)@\(.value)"' "$pkg"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Semantic Release
         id: semantic
         uses: cycjimmy/semantic-release-action@ad51787758d9654d5a75150a89a6fa9b3ccef95e # v8.1.4
         with:
-          semantic_version: 25.0.2
-          extra_plugins: |
-            @semantic-release/changelog@6.0.3
-            @semantic-release/git@10.0.1
-            conventional-changelog-conventionalcommits@9.1.0
+          semantic_version: ${{ steps.tools.outputs.semantic }}
+          extra_plugins: ${{ steps.tools.outputs.plugins }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -64,6 +74,9 @@ jobs:
     if: needs.semantic-release.outputs.new_release_published == 'true'
     uses: ./.github/workflows/docker-build.yml
     with:
+      # The tag, not the pushed commit: the image's revision label must name the
+      # release's commit, which base-images.yml checks it against.
+      ref: v${{ needs.semantic-release.outputs.new_release_version }}
       tags: |
         ghcr.io/${{ github.repository }}:latest
         ghcr.io/${{ github.repository }}:v${{ needs.semantic-release.outputs.new_release_version }}

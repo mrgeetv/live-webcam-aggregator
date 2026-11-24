@@ -815,6 +815,19 @@ When adding or updating versioned dependencies (Python packages, GitHub Actions,
    - WebFetch on GitHub releases page (fallback)
 3. If version cannot be verified from GitHub, stop and ask user to confirm
 
+What keeps each pin current once it's in (`.github/dependabot.yml` unless noted):
+
+| Pin | Updated by |
+| --- | --- |
+| `requirements*.txt` | Dependabot pip, daily (yt-dlp skips the cooldown) |
+| workflow `uses:` | Dependabot github-actions |
+| `.pre-commit-config.yaml` `rev:` + python hooks' `additional_dependencies` | Dependabot pre-commit |
+| hadolint's `entry:` image tag | by hand, in that Dependabot PR: `check-hadolint-pin` fails it until the tag matches `rev:` |
+| semantic-release + plugins | Dependabot npm on `.github/release/package.json`, which `release.yml` reads |
+| deno `FROM` | Dependabot docker (majors held) |
+| DHI python bases: same-tag patches | `base-images.yml` rebuild (see *Base Image Updates*) |
+| DHI python bases, `.python-version`, compose, pyright: version bumps | by hand, prompted by `base-images.yml`'s issue (see *Python Version Synchronization*) |
+
 ## Pre-commit Behavior
 
 When pre-commit finds issues:
@@ -862,8 +875,9 @@ Pre-commit hooks enforced:
 - **hadolint** - Dockerfile linting
 - **conventional-pre-commit** - Commit message validation (strict mode with forced scopes)
 - **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, and pyrightconfig.json
+- **check-hadolint-pin** - hadolint's pinned `entry:` image tag must match its `rev:` (Dependabot bumps only the `rev:`)
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
-- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `tests/`, or `requirements*.txt` change. Runs via `scripts/run-pytest.sh` (prefers `.venv/bin/pytest`, falls back to `PATH`). Also runs in CI.
+- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `scripts/`, `tests/`, or `requirements*.txt` change. Runs via `scripts/run-pytest.sh` (prefers `.venv/bin/pytest`, falls back to `PATH`). Also runs in CI.
 - **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what flake8/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name.
 
 ## Python Version Synchronization
@@ -871,7 +885,7 @@ Pre-commit hooks enforced:
 This project enforces Python version consistency:
 
 - `.python-version` - Source of truth (currently 3.14)
-- `Dockerfile` - `ARG RUNTIME_IMAGE` default must use `dhi.io/python:{version}-alpine3.24`
+- `Dockerfile` - `ARG RUNTIME_IMAGE` default must use `dhi.io/python:{version}-alpine{alpine}`
 - `docker-compose.yml` - `RUNTIME_IMAGE` build arg must use `python:{version}-slim`
 - `pyrightconfig.json` - Must have `pythonVersion` matching .python-version
 - Pre-commit hook validates synchronization automatically
@@ -881,7 +895,35 @@ This project enforces Python version consistency:
 
 1. Update `.python-version` file
 2. Update `Dockerfile` `ARG RUNTIME_IMAGE` and `ARG BUILD_IMAGE` defaults to match
+   (an alpine-only bump is just this step)
 3. Update `docker-compose.yml` `RUNTIME_IMAGE` and `BUILD_IMAGE` args to match
 4. Update `pyrightconfig.json` pythonVersion to match
 5. Pre-commit hook validates consistency
 6. Test Docker build before committing
+
+## Base Image Updates
+
+How the daily refresh works is in DEVELOPMENT's *Base Image Updates*. The
+invariants that are easy to break:
+
+- **The image records what it was built from.** `docker-build.yml` stamps the bases'
+  digests (`scripts/base_images.py label`, resolved *before* the build, so a base
+  pushed mid-build costs an extra rebuild, never a missed one) and the revision it
+  checked out. `base_images.py` owns that label's format for both writer and reader.
+- **Release builds build their tag**, not the pushed commit: the refresh rebuilds
+  when `:latest`'s revision isn't the latest release tag's commit. That same check
+  heals a refresh that raced a release and pushed the older code. It is why the two
+  workflows share no concurrency group: a queued run cancels the group's pending one,
+  which could drop a release's build.
+- **The rebuild checks out the release tag**, while the reusable workflow and its
+  steps come from main, so a release that predates `scripts/base_images.py` fails
+  the refresh loudly until a release that carries it ships.
+- **Every step that calls a registry runs `shell: bash`.** An unset `shell` is
+  `bash -e` with no pipefail, so a failed lookup piped into the next command reads
+  as empty output: no rebuild, or the newer-tags issue closed.
+- **Dependabot only reads a `FROM` that names its image**, never one from an ARG,
+  and matches a tag's suffix exactly (`-alpine3.N` never offers `-alpine3.N+1`). So
+  deno's `FROM` is written out for Dependabot (majors held: a new deno major can
+  break the yt-dlp-ejs solver, which the offline suite can't see), and the python
+  bases stay behind ARGs (compose swaps them for local builds) with the newer-tags
+  issue standing in for Dependabot.

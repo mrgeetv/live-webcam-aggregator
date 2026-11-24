@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "description": "semantic-release and its plugins, at the versions release.yml installs. Dependabot bumps these; release.yml reads them.",
+  "devDependencies": {
+    "@semantic-release/changelog": "6.0.3",
+    "@semantic-release/git": "10.0.1",
+    "conventional-changelog-conventionalcommits": "9.1.0",
+    "semantic-release": "25.0.2"
+  }
+}
