@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
-from html import unescape
 from urllib.parse import urlsplit
 
 from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
-from .base import predisc_key, with_location_parts
+from .base import decode_entities, predisc_key, with_location_parts
 
 _SITEMAP_INDEX = "https://www.whatsupcams.com/en/sitemap_index.xml"
 _LOC = re.compile(r"<loc>([^<]+)</loc>")
@@ -67,7 +66,7 @@ class WhatsupcamsSource:
             if not m:
                 continue
             tm = _OG_TITLE.search(html or "")
-            title = unescape(tm.group(1)).strip() if tm else ""
+            title = decode_entities(tm.group(1)).strip() if tm else ""
             found.append((page, title, m.group(1)))
         # hop 2: per-id CDN API -> the cam's HLS URL (concurrent)
         seen: set[str] = set()

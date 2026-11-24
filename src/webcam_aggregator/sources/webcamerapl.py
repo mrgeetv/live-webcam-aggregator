@@ -4,12 +4,11 @@ import json
 import re
 import string
 from collections.abc import Iterable
-from html import unescape
 from typing import override
 from urllib.parse import urlsplit
 
 from ..models import Candidate
-from .base import HtmlScraperSource, predisc_key
+from .base import HtmlScraperSource, decode_entities, predisc_key
 
 _BASE = "https://www.webcamera.pl"
 
@@ -151,7 +150,7 @@ class WebcameraPlSource(HtmlScraperSource[str]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
         m = _H1.search(html)
-        raw = unescape(m.group(1)).strip() if m else self._names.get(url, "")
+        raw = decode_entities(m.group(1)).strip() if m else self._names.get(url, "")
         title = _BADGE.sub("", raw).strip() or _slug_title(url)
         return self._cats.get(url), title
 

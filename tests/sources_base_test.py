@@ -4,6 +4,7 @@ from typing import override
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
+    decode_entities,
     extract_candidates,
     predisc_key,
     with_location,
@@ -84,6 +85,21 @@ def test_html_scraper_base_parses_pages_before_the_crawl_ends():
     assert first.source_page_url == "https://s/0"
     assert fetch.fetched < len(urls)
     assert [c.source_page_url for c in cands] == urls[1:]
+
+
+def test_decode_entities_decodes_character_references():
+    assert (
+        decode_entities("Ryan&#39;s &quot;View&quot; &#x2013; Fish &amp; Chips")
+        == 'Ryan\'s "View" \u2013 Fish & Chips'
+    )
+
+
+def test_decode_entities_leaves_already_decoded_text_alone():
+    # Text may be decoded twice (a source, then the build). A bare `&` is just an
+    # ampersand, even when the letters after it spell a legacy entity name HTML
+    # would decode without its `;`, or a `;` follows a name that isn't an entity.
+    text = "Hot&notcold Smith&copy Q&A R&D Hot&notcold; &copyright;"
+    assert decode_entities(text) == text
 
 
 def test_with_location_appends_only_new_parts():

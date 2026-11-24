@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
-from html import unescape
 from typing import override
 
 from ..models import Candidate
-from .base import HtmlScraperSource, with_location_parts
+from .base import HtmlScraperSource, decode_entities, with_location_parts
 
 # The site serves no sitemap, so the `webcam` post type's WP REST collection is
 # the cam index: ~32 cams, well inside WP's per_page ceiling of 100, so one call
@@ -47,7 +46,7 @@ class LiveFromIcelandSource(HtmlScraperSource[str]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
         m = _TITLE.search(html)
-        title = _SITE_TAIL.sub("", unescape(m.group(1)).strip()) if m else ""
+        title = _SITE_TAIL.sub("", decode_entities(m.group(1)).strip()) if m else ""
         if not title:
             # last resort: the URL slug ("vestmannaeyjar-heimaklettur")
             title = url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()

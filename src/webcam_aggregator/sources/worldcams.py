@@ -4,7 +4,7 @@ import re
 from typing import override
 
 from ..models import Candidate
-from .base import HtmlScraperSource, with_location
+from .base import HtmlScraperSource, decode_entities, with_location
 
 _MAX_LIST_PAGES = 80
 # Tag keyword in a lookahead, tag skipped possessively (why: airportwebcams._TITLE).
@@ -37,12 +37,15 @@ class WorldcamsSource(HtmlScraperSource[_Ctx]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, _Ctx]:
         tm = _TITLE.search(html)
-        page_title = tm.group(1).strip() if tm else ""
+        page_title = decode_entities(tm.group(1)).strip() if tm else ""
         cm = _CATEGORY.search(html)
-        category = cm.group(2).strip() if cm else None
+        category = decode_entities(cm.group(2)).strip() if cm else None
         # stream-id -> specific cam name (multi-stream pages); single-stream pages have
         # no selector, so these fall back to the page <h1>.
-        names = {sid: name.strip() for sid, name in _STREAM_NAMES.findall(html)}
+        names = {
+            sid: decode_entities(name).strip()
+            for sid, name in _STREAM_NAMES.findall(html)
+        }
         return category, (page_title, names)
 
     @override

@@ -7,6 +7,7 @@ from typing import override
 from ..models import Candidate
 from .base import (
     HtmlScraperSource,
+    decode_entities,
     extract_candidates,
     with_location,
     with_location_parts,
@@ -98,7 +99,7 @@ class CxtvliveSource(HtmlScraperSource[_Ctx]):
         category, map_name, geo = self._by_slug.get(slug, (None, None, []))
         tm = _TITLE.search(html)
         title_base = (
-            (tm.group(1).strip() if tm else None)
+            (decode_entities(tm.group(1)).strip() if tm else None)
             or map_name
             or slug.replace("-", " ").title()
         )

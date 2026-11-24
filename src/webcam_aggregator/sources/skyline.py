@@ -3,13 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-from html import unescape
 from typing import override
 
 from ..extractors.skyline import stream_token
 from ..fetch import thread_imap
 from ..models import Candidate
-from .base import HtmlScraperSource, with_location_parts
+from .base import HtmlScraperSource, decode_entities, with_location_parts
 
 log = logging.getLogger("webcam-aggregator.skyline")
 
@@ -125,7 +124,7 @@ class SkylineSource(HtmlScraperSource[_Ctx]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, _Ctx]:
         m = _H1.search(html)
-        name = _LIVECAM_SUFFIX.sub("", unescape(m.group(1)).strip()) if m else ""
+        name = _LIVECAM_SUFFIX.sub("", decode_entities(m.group(1)).strip()) if m else ""
         return self._cat.get(url), (name, _breadcrumb_geo(html))
 
     @override

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-from html import unescape
 from typing import override
 
 from ..models import Candidate
-from .base import HtmlScraperSource
+from .base import HtmlScraperSource, decode_entities
 
 # WordPress sitemap for the `webcams` post type — the complete cam list. The bare
 # /webcams/ index has nothing after the slash and never matches.
@@ -37,7 +36,7 @@ class ResortCamsSource(HtmlScraperSource[str]):
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
         m = _TITLE.search(html)
-        title = _SITE_TAIL.sub("", unescape(m.group(1)).strip()) if m else ""
+        title = _SITE_TAIL.sub("", decode_entities(m.group(1)).strip()) if m else ""
         if not title:
             # last resort: the URL slug ("blowing-rock")
             title = url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()

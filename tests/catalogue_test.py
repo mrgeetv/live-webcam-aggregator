@@ -268,6 +268,38 @@ def test_multisource_deduped_category_mapped_id_non_empty() -> None:
     assert city_entry.id != "" and len(city_entry.id) == 16
 
 
+def test_entity_escaped_title_is_decoded() -> None:
+    """Data API snippets and several scraped pages hand over titles still
+    HTML-escaped; a player shows `&amp;` literally, so the build decodes them."""
+    cam = _make_candidate(title="Ryan&#39;s &quot;Ground View&quot; Fish &amp; Chips")
+
+    [entry] = build_catalogue(
+        [_Src("ozolio", [cam])],
+        drop_reason_for=_always_alive,
+        youtube_live=_all_yt_live,
+        history={},
+    )
+
+    assert entry.title == 'Ryan\'s "Ground View" Fish & Chips'
+
+
+def test_escaped_copy_of_a_cam_does_not_win_the_merge() -> None:
+    """Dedup keeps the longest title, and escaping makes a title longer, so the
+    titles are decoded before the merge, not after it."""
+    escaped = _make_candidate(source="ozolio", title="Harry&#039;s Bar")
+    # Longer than the escaped title once decoded (11), shorter than it raw (16).
+    clean = _make_candidate(source="camscape", title="Harry's Bar, HI")
+
+    [entry] = build_catalogue(
+        [_Src("ozolio", [escaped]), _Src("camscape", [clean])],
+        drop_reason_for=_always_alive,
+        youtube_live=_all_yt_live,
+        history={},
+    )
+
+    assert entry.title == "Harry's Bar, HI"
+
+
 # ---------------------------------------------------------------------------
 # Test 3: Dead dropped
 # ---------------------------------------------------------------------------

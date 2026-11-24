@@ -19,8 +19,10 @@ The app is two phases, decoupled by a catalogue snapshot:
    **concurrently** (discover + liveness), capped at `MAX_PARALLEL_SOURCES` so total
    build concurrency stays ~cap × `SCRAPE_WORKERS` no matter how many sources exist, and
    a source that crashes is isolated (reuses its last good set, the rest proceed). Each
-   `Source.discover()` yields `Candidate`s → liveness filter (YouTube via the Data
-   API batch; everything else via a **fetch-verified probe** — `make_liveness_check`
+   `Source.discover()` yields `Candidate`s, every title passed once more through
+   `base.decode_entities` as it leaves the source (see *Add a source*) →
+   liveness filter (YouTube via the Data API batch; everything else via a
+   **fetch-verified probe** — `make_liveness_check`
    actually fetches the HLS manifest (and a master playlist's first variant) and drops
    dead/404 and DASH cams; probed **once per distinct `target_url` across sources** —
    two sources carrying the identical URL share one probe and the verdict counts in
@@ -29,7 +31,8 @@ The app is two phases, decoupled by a catalogue snapshot:
    shapes), so sharing a verdict across it would apply one URL's result to a different
    one) → per-source
    empty-guard (keeps the last good set if a source collapses ≥50%, needs 2 bad
-   cycles to accept) → cross-source `dedupe()` (per-field merge) → YouTube cams get
+   cycles to accept) → cross-source `dedupe()` (per-field merge; it keeps the longest
+   title, which is why the decode runs first) → YouTube cams get
    their category from the Data API; scraped titles get location appended
    (`with_location`) → `CatalogueEntry`s with a stable id.
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
@@ -117,8 +120,15 @@ The app is two phases, decoupled by a catalogue snapshot:
   `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
   `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
   dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
-  `None` = never merged). Add the site to the README *Sources* table and the module
-  to DEVELOPMENT's project-structure tree in the same change.
+  `None` = never merged). Text a source reads out of a page (a title, a name, a
+  category) goes through `base.decode_entities` as it is read, before any suffix
+  strip or geo check compares it (`&#8211;` is not `–`, and `St. John&#39;s` misses
+  its own geo and repeats it); the build runs every title through it again, for text
+  a source passed straight through (Data API snippets, JSON feeds). It decodes only
+  numeric references and exact `name;` entities, so a second pass leaves clean text
+  like `Hot&notcold` alone (`html.unescape` stays for URLs read out of attributes).
+  Add the site to the README *Sources* table and the module to DEVELOPMENT's
+  project-structure tree in the same change.
 - **Add an extractor** — implement the `Extractor` protocol (`extractors/base.py`):
   `resolve(target_url) -> Resolved(url, stream_type, ttl_seconds)`. Add it to the
   `_extractor_set` factory in `build_app` AND a predicate to `build_registry`
@@ -614,7 +624,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   fetch per cam page — our second-heaviest source by request count. Each page's
   `VideoObject` JSON-LD carries the YouTube `embedUrl`, the name and the category, so
   there is nothing to extract from a player and every cam dedups on its `yt:` key;
-  liveness rides the existing Data API batch.
+  liveness rides the existing Data API batch. The names are YouTube's HTML-escaped
+  titles, so the block is parsed as-is: decoding it first turns a `&quot;` into a bare
+  quote that ends the JSON string, and the cam silently drops.
   The category is a Japanese word inside the LD **description** (`。<category>のライブ
   カメラを…`), not a tag or a URL segment. Sampled 20 at random: 20/20 live, all with a
   `startDate` inside 3 days — the site prunes ended cams, so a large `yt-offline` share

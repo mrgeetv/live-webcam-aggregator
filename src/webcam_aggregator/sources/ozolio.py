@@ -5,6 +5,7 @@ from collections.abc import Iterator
 
 from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
+from .base import decode_entities
 
 # Ozolio (resort/beach cams, mostly Hawaii) publishes one /explore/<CID> page per cam
 # via its Yoast cameras sitemap. The page builds its player client-side against
@@ -40,7 +41,7 @@ class OzolioSource:
             if not m:
                 continue  # fetch failed, or the page isn't a rendered cam page
             yield Candidate(
-                title=m.group(1).strip(),
+                title=decode_entities(m.group(1)).strip(),
                 angle_key=None,
                 category=None,  # nothing on the page maps to a category
                 source=self.name,

@@ -16,7 +16,7 @@ from .models import (
     CatalogueEntry,
     stable_id,
 )
-from .sources.base import Source
+from .sources.base import Source, decode_entities
 
 log = logging.getLogger("webcam-aggregator.catalogue")
 
@@ -43,6 +43,15 @@ class Hist:
     # No per-host/per-reason detail here: that goes to the per-cycle log lines,
     # /health carries only these counts.
     status: str = "ok"
+
+
+# Titles a source passed straight through can still be HTML-escaped (Data API
+# snippets, JSON feeds), and a player shows `&amp;` literally. Decoding every title
+# here, as candidates leave their source, covers every source, and happens before
+# dedup, whose "longest title wins" would otherwise prefer an escaped copy of a cam
+# over a clean one. decode_entities is safe on text a source already decoded.
+def _with_decoded_title(c: Candidate) -> Candidate:
+    return replace(c, title=decode_entities(c.title))
 
 
 def _to_entry(c: Candidate) -> CatalogueEntry:
@@ -229,7 +238,7 @@ def build_catalogue(
         # Never raises — a source that blows up reports crashed=True instead of
         # sinking the whole build (and every other source with it).
         try:
-            cands = list(src.discover())
+            cands = [_with_decoded_title(c) for c in src.discover()]
         except Exception:
             log.exception("source %s discover() failed", src.name)
             return _SourceResult(src.name, [], 0, True)

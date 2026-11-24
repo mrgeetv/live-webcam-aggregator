@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
-from html import unescape
 
 from ..fetch import FetcherProtocol, thread_imap
 from ..models import Candidate
-from .base import predisc_key
+from .base import decode_entities, predisc_key
 
 # The /world/spots/<region> listings (paginated /<n>) are the complete index: together
 # they link every cam, Japanese ones included (under asia). Both map views are
@@ -65,7 +64,7 @@ def _video_object(html: str) -> dict[str, object] | None:
     """The cam page's VideoObject JSON-LD (it also carries a WebSite block)."""
     for block in _LD_JSON.findall(html):
         try:
-            data = json.loads(unescape(block))
+            data = json.loads(block)
         except ValueError:
             continue
         if isinstance(data, dict) and data.get("@type") == "VideoObject":
@@ -107,7 +106,7 @@ class TomarigiSource:
                 continue
             seen.add(key)
             yield Candidate(
-                title=str(item.get("name") or "").strip(),
+                title=decode_entities(str(item.get("name") or "")).strip(),
                 angle_key=None,
                 category=_category(str(item.get("description") or "")),
                 source=self.name,
