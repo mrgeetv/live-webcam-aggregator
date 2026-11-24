@@ -222,8 +222,8 @@ live-webcam-aggregator/
 │   ├── check_hadolint_pin.py   # pre-commit: hadolint's image tag matches its rev
 │   └── check-python-version.sh
 ├── docs/agents/                # Agent-skill config: issue tracker, triage labels, domain docs
+├── tools/release/              # semantic-release versions (Dependabot-bumped, read by release.yml)
 ├── .github/workflows/          # CI/CD pipelines
-├── .github/release/            # semantic-release versions (Dependabot-bumped, read by release.yml)
 ├── Dockerfile                  # Container definition
 ├── docker-compose.yml          # Development compose file
 ├── requirements.txt            # Python dependencies

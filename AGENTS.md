@@ -823,7 +823,7 @@ What keeps each pin current once it's in (`.github/dependabot.yml` unless noted)
 | workflow `uses:` | Dependabot github-actions |
 | `.pre-commit-config.yaml` `rev:` + python hooks' `additional_dependencies` | Dependabot pre-commit (it skips `repo: local` hooks, so a versioned tool goes in its upstream hook repo) |
 | hadolint's `entry:` image tag | by hand, in that Dependabot PR: `check-hadolint-pin` fails it until the tag matches `rev:` |
-| semantic-release + plugins | Dependabot npm on `.github/release/package.json`, which `release.yml` reads; majors by hand, with a semantic-release-action that runs the Node they need |
+| semantic-release + plugins | Dependabot npm on `tools/release/package.json` (not under `.github/`: Dependabot refuses npm changes there), which `release.yml` reads; majors by hand, with a semantic-release-action that runs the Node they need |
 | deno `FROM` | Dependabot docker (majors held) |
 | DHI python bases: same-tag patches | `base-images.yml` rebuild (see *Base Image Updates*) |
 | DHI python bases, `.python-version`, compose, pyright: version bumps | by hand, prompted by `base-images.yml`'s issue (see *Python Version Synchronization*) |

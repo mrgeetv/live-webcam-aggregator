@@ -26,12 +26,13 @@ jobs:
         with:
           fetch-depth: 0 # Need full history for semantic-release
 
-      # The versions live in .github/release/package.json, where Dependabot can bump them.
+      # The versions live in tools/release/package.json, where Dependabot can bump them
+      # (it opens no npm PRs for files under .github/).
       - name: Read release tool versions
         id: tools
         shell: bash
         run: |
-          pkg=.github/release/package.json
+          pkg=tools/release/package.json
           echo "semantic=$(jq -er '.devDependencies["semantic-release"]' "$pkg")" >> "$GITHUB_OUTPUT"
           {
             echo "plugins<<EOF"
