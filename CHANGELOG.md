@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.10](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.9...v2.14.10) (2026-11-24)
+
+### Bug Fixes
+
+* **scraper:** follow camscape's site redesign ([#183](https://github.com/mrgeetv/live-webcam-aggregator/issues/183)) ([19ef912](https://github.com/mrgeetv/live-webcam-aggregator/commit/19ef9129e89b462b59f97b11bbe51c3fe0154e50))
+
 ## [2.14.9](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.8...v2.14.9) (2026-11-24)
 
 ### Bug Fixes
