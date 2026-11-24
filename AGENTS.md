@@ -821,9 +821,9 @@ What keeps each pin current once it's in (`.github/dependabot.yml` unless noted)
 | --- | --- |
 | `requirements*.txt` | Dependabot pip, daily (yt-dlp skips the cooldown) |
 | workflow `uses:` | Dependabot github-actions |
-| `.pre-commit-config.yaml` `rev:` + python hooks' `additional_dependencies` | Dependabot pre-commit |
+| `.pre-commit-config.yaml` `rev:` + python hooks' `additional_dependencies` | Dependabot pre-commit (it skips `repo: local` hooks, so a versioned tool goes in its upstream hook repo) |
 | hadolint's `entry:` image tag | by hand, in that Dependabot PR: `check-hadolint-pin` fails it until the tag matches `rev:` |
-| semantic-release + plugins | Dependabot npm on `.github/release/package.json`, which `release.yml` reads |
+| semantic-release + plugins | Dependabot npm on `.github/release/package.json`, which `release.yml` reads; majors by hand, with a semantic-release-action that runs the Node they need |
 | deno `FROM` | Dependabot docker (majors held) |
 | DHI python bases: same-tag patches | `base-images.yml` rebuild (see *Base Image Updates*) |
 | DHI python bases, `.python-version`, compose, pyright: version bumps | by hand, prompted by `base-images.yml`'s issue (see *Python Version Synchronization*) |
@@ -916,8 +916,10 @@ invariants that are easy to break:
   workflows share no concurrency group: a queued run cancels the group's pending one,
   which could drop a release's build.
 - **The rebuild checks out the release tag**, while the reusable workflow and its
-  steps come from main, so a release that predates `scripts/base_images.py` fails
-  the refresh loudly until a release that carries it ships.
+  steps come from main, so the daily check runs main's workflow against the
+  release's `scripts/base_images.py`. Change that script's commands only in a
+  releasing commit (`fix`/`feat`): otherwise the check fails daily until the next
+  release ships one that matches.
 - **Every step that calls a registry runs `shell: bash`.** An unset `shell` is
   `bash -e` with no pipefail, so a failed lookup piped into the next command reads
   as empty output: no rebuild, or the newer-tags issue closed.

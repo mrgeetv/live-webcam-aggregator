@@ -63,7 +63,9 @@ updates:
       prefix: "chore(deps)"
 
   # semantic-release and its plugins - Weekly on Friday. release.yml reads the
-  # versions from this package.json; nothing installs it.
+  # versions from this package.json; nothing installs it. Majors are held: they track
+  # the Node version semantic-release-action runs on, and CI never runs a release, so
+  # a major that needs a newer Node would merge green and fail the next release.
   - package-ecosystem: "npm"
     directory: "/.github/release"
     schedule:
@@ -71,6 +73,9 @@ updates:
       day: "friday"
       time: "08:00"
       timezone: "Etc/UTC"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       release-tooling:
         patterns:

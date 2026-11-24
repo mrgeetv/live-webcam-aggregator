@@ -103,12 +103,13 @@ repos:
           - "--cov-report=term-missing"
           - "--cov-fail-under=85"
 
+  # Upstream's own hook repo rather than a local hook: Dependabot skips local hooks,
+  # so a pin there would never be bumped.
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: v2.16
+    hooks:
       - id: vulture
         name: vulture (dead code)
-        entry: vulture
-        language: python
-        additional_dependencies: ["vulture==2.16"]
-        pass_filenames: false
         files: '^src/'
         # confidence 60 catches dead functions/attributes/fields (not just imports,
         # which flake8/basedpyright already get). Framework-dispatched HTTP-handler
