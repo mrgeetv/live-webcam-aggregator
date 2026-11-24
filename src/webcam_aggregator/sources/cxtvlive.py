@@ -92,7 +92,7 @@ class CxtvliveSource(HtmlScraperSource[_Ctx]):
         return [_BASE + s for s in slugs if not (s in seen or seen.add(s))]
 
     @override
-    def _candidates(self, html: str, url: str):
+    def _candidates(self, html: str, url: str) -> list[Candidate]:
         cands = list(extract_candidates(html, page_url=url, source=self.name))
         real = [c for c in cands if not _YT_CHANNEL_LIVE.search(c.target_url)]
         return real or cands

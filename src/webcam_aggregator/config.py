@@ -55,7 +55,7 @@ def _csv_set(raw: str) -> frozenset[str]:
     return frozenset(p.strip().casefold() for p in raw.split(",") if p.strip())
 
 
-def _bool_env(env: dict[str, str], key: str, default: bool) -> bool:
+def _bool_env(env: dict[str, str], key: str, *, default: bool) -> bool:
     raw = env.get(key)
     # Blank means unset, not "false": same contract as _int_env — docker-compose passes
     # `FOO=${FOO:-}` through as an empty string when the var isn't in .env, and that
@@ -125,7 +125,7 @@ def load(env: dict[str, str] | None = None) -> Config:
         search_query=e.get("SEARCH_QUERY", "").strip() or _DEFAULT_SEARCH_QUERY,
         log_level=e.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         exclude_categories=_csv_set(e.get("EXCLUDE_CATEGORIES", "")),
-        proxy_youtube=_bool_env(e, "PROXY_YOUTUBE", False),
+        proxy_youtube=_bool_env(e, "PROXY_YOUTUBE", default=False),
         max_parallel_sources=_int_env(e, "MAX_PARALLEL_SOURCES", 4, 1),
     )
     _warn_on_suspect_config(cfg)

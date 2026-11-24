@@ -1,9 +1,13 @@
 import logging
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, cast, override
 
 import pytest
 
 from webcam_aggregator.sources.youtube_api import YoutubeApiSource
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from googleapiclient._apis.youtube.v3.resources import YouTubeResource
 
 # Fake, non-functional key in the real AIza… shape.
 _FAKE_KEY = "AIzaSyFAKEKEY_notarealkey_1234567890"
@@ -57,6 +61,11 @@ class _FakeClient:
         return self._videos
 
 
+def _source(factory: Callable[[], object], query: str) -> YoutubeApiSource:
+    """A source over a fake client, which stands in for googleapiclient's resource."""
+    return YoutubeApiSource(cast("Callable[[], YouTubeResource]", factory), query=query)
+
+
 def _item(
     vid: str, title: str = "t", published: str = "2026-01-01T00:00:00Z"
 ) -> dict[str, Any]:
@@ -72,7 +81,7 @@ def test_discover_walks_published_windows() -> None:
     page1 = {"items": [_item("aaaaaaaaaaa", published="2026-01-02T00:00:00Z")]}
     page2 = {"items": [_item("bbbbbbbbbbb", published="2026-01-01T00:00:00Z")]}
     client = _FakeClient(search=[page1, page2])
-    cands = list(YoutubeApiSource(lambda: client, query="cam").discover())
+    cands = list(_source(lambda: client, query="cam").discover())
     assert [c.predisc_key for c in cands] == ["yt:aaaaaaaaaaa", "yt:bbbbbbbbbbb"]
     # 1st call has no window; 2nd carries publishedBefore = 1st window's last publishedAt
     assert "publishedBefore" not in client.search().calls[0]
@@ -80,9 +89,7 @@ def test_discover_walks_published_windows() -> None:
 
 
 def test_discover_stops_on_quota_error(caplog: pytest.LogCaptureFixture) -> None:
-    src = YoutubeApiSource(
-        lambda: _FakeClient(search=[RuntimeError("403 quota")]), query="cam"
-    )
+    src = _source(lambda: _FakeClient(search=[RuntimeError("403 quota")]), query="cam")
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
         assert list(src.discover()) == []
     assert "youtube search stopped" in caplog.text
@@ -112,7 +119,7 @@ def test_search_warning_names_the_real_exception(
 ) -> None:
     """A BrokenPipeError must not be reported as an API quota problem: it carries no
     HTTP status at all, and the fix is completely different."""
-    src = YoutubeApiSource(
+    src = _source(
         lambda: _FakeClient(search=[BrokenPipeError(32, "Broken pipe")]), query="cam"
     )
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
@@ -126,9 +133,7 @@ def test_search_warning_names_the_real_exception(
 def test_search_warning_mentions_quota_only_on_403(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    src = YoutubeApiSource(
-        lambda: _FakeClient(search=[_Denied("forbidden")]), query="cam"
-    )
+    src = _source(lambda: _FakeClient(search=[_Denied("forbidden")]), query="cam")
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
         assert list(src.discover()) == []
     assert "HTTP 403" in caplog.text
@@ -137,7 +142,7 @@ def test_search_warning_mentions_quota_only_on_403(
 
 def test_search_warning_scrubs_the_api_key(caplog: pytest.LogCaptureFixture) -> None:
     """Non-vacuous: the exception's str CONTAINS a key and it must not survive."""
-    src = YoutubeApiSource(lambda: _FakeClient(search=[_LeakyError()]), query="cam")
+    src = _source(lambda: _FakeClient(search=[_LeakyError()]), query="cam")
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.sources.youtube"):
         assert list(src.discover()) == []
     assert _FAKE_KEY not in caplog.text
@@ -164,7 +169,7 @@ def test_live_ids_filters_offair() -> None:
             },
         ]
     }
-    src = YoutubeApiSource(lambda: _FakeClient(videos=[resp]), query="cam")
+    src = _source(lambda: _FakeClient(videos=[resp]), query="cam")
     # returns {live_id: category_name}; categoryId 19 → "Travel & Events"
     assert src.live_ids(["live1", "ended", "vod"]) == {"live1": "Travel & Events"}
 
@@ -190,7 +195,7 @@ def test_discover_drops_the_client_after_a_failure() -> None:
         built.append(c)
         return c
 
-    src = YoutubeApiSource(factory, query="cam")
+    src = _source(factory, query="cam")
     assert list(src.discover()) == []  # wedged
     assert len(built) == 1
     # The next cycle must NOT reuse the wedged client.
@@ -211,7 +216,7 @@ def test_live_ids_drops_the_client_and_reraises() -> None:
         built.append(c)
         return c
 
-    src = YoutubeApiSource(factory, query="cam")
+    src = _source(factory, query="cam")
     with pytest.raises(BrokenPipeError):
         src.live_ids(["a"])  # caller still sees the error, as before
     assert len(built) == 1
@@ -227,7 +232,7 @@ def test_client_is_built_lazily_and_reused_while_healthy() -> None:
         built.append(c)
         return c
 
-    src = YoutubeApiSource(factory, query="cam")
+    src = _source(factory, query="cam")
     assert built == []  # nothing built until first use
     list(src.discover())
     src.live_ids(["a"])
@@ -267,7 +272,7 @@ def test_client_access_is_serialised_across_threads() -> None:
         def videos(self) -> Any:
             return _SlowEndpoint()
 
-    src = YoutubeApiSource(lambda: _SlowClient(), query="cam")
+    src = _source(lambda: _SlowClient(), query="cam")
     t = threading.Thread(target=lambda: list(src.discover()))
     t.start()
     for _ in range(5):
@@ -281,14 +286,12 @@ def test_discover_skips_a_sparse_search_item() -> None:
     # is skipped, and the rest of the page still yields.
     sparse = [{"id": {}, "snippet": {"title": "x"}}, {"id": {"videoId": "bbbbbbbbbbb"}}]
     page = {"items": [*sparse, _item("aaaaaaaaaaa")]}
-    src = YoutubeApiSource(
-        lambda: _FakeClient(search=[page, {"items": []}]), query="cam"
-    )
+    src = _source(lambda: _FakeClient(search=[page, {"items": []}]), query="cam")
     assert [c.predisc_key for c in src.discover()] == ["yt:aaaaaaaaaaa"]
 
 
 def test_live_ids_skips_an_item_without_an_id() -> None:
     live = {"snippet": {"liveBroadcastContent": "live"}, "liveStreamingDetails": {}}
     resp = {"items": [live, {**live, "id": "aaaaaaaaaaa"}]}
-    src = YoutubeApiSource(lambda: _FakeClient(videos=[resp]), query="cam")
+    src = _source(lambda: _FakeClient(videos=[resp]), query="cam")
     assert src.live_ids(["aaaaaaaaaaa"]) == {"aaaaaaaaaaa": ""}

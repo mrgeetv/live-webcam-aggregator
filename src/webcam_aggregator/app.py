@@ -81,7 +81,9 @@ from webcam_aggregator.sources.worldcams import WorldcamsSource
 from webcam_aggregator.sources.youtube_api import YoutubeApiSource
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
+
+    from googleapiclient._apis.youtube.v3.resources import YouTubeResource
 
     from webcam_aggregator.extractors.base import Extractor, Resolved
 
@@ -314,6 +316,7 @@ def make_handler(
     store: CatalogueStore,
     cache: ResolveCache,
     base_url: str,
+    *,
     manifest_fetch: Callable[[str], tuple[str | None, str]],
     source_status: Callable[[], dict[str, Any]],
     segment_fetch: Callable[[str, str | None], tuple[SegmentResponse | None, str]],
@@ -548,7 +551,7 @@ def build_app(
     resolve_build = make_resolve(registry, build_extractors)
     cache: ResolveCache = ResolveCache(resolve_serve, clock=time.monotonic)
 
-    def _new_yt_client() -> Any:
+    def _new_yt_client() -> YouTubeResource:
         import googleapiclient.discovery
 
         # static_discovery=True uses the bundled discovery document, so rebuilding the
@@ -645,7 +648,7 @@ def build_app(
     )
     drop_reason_for = make_liveness_check(resolve_build, probe_fetcher.get_with_outcome)
 
-    def youtube_live(ids: Any) -> dict[str, str]:
+    def youtube_live(ids: Iterable[str]) -> dict[str, str]:
         if yt_source is None:
             return {}
         try:

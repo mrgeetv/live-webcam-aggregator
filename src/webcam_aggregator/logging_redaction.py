@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, override
+from typing import override
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 # googleapiclient puts the developer key in the request URI, and HttpError.__str__ (which
@@ -97,7 +97,7 @@ def describe_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {text}"
 
 
-def _scrub_arg(value: Any) -> Any:
+def _scrub_arg(value: object) -> object:
     """Pre-scrub a log arg's string form. Non-str args are %s-formatted later, and the
     usual leak shape is `log.warning("…: %s", exc)` where the exception's str carries the
     key — so the arg has to be scrubbed, not just the format string. Clean values are

@@ -108,7 +108,7 @@ def _start_server(
         store,
         cache,
         _BASE_URL,
-        _manifest_fetch,
+        manifest_fetch=_manifest_fetch,
         source_status=lambda: ss,
         segment_fetch=_segment_fetch,
     )

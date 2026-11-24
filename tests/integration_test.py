@@ -94,7 +94,7 @@ def test_end_to_end_server() -> None:
         store,
         cache,
         _BASE_URL,
-        _manifest_fetch,
+        manifest_fetch=_manifest_fetch,
         source_status=lambda: {
             "sources": {"youtube-api": {"kept": 1, "discovered": 1, "crashed": False}},
             "unhealthy": [],

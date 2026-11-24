@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.cookiejar import DefaultCookiePolicy
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import urlencode, urljoin, urlsplit
 
 import requests
@@ -182,14 +182,35 @@ def _pin_key(host: str) -> str:
     return host.lower().rstrip(".")  # urllib3 strips a trailing dot before resolving
 
 
-def _pinning_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
+# socket.getaddrinfo's return type.
+_AddrInfo = list[
+    tuple[
+        socket.AddressFamily,
+        socket.SocketKind,
+        int,
+        str,
+        tuple[str, int] | tuple[str, int, int, int] | tuple[int, bytes],
+    ]
+]
+
+
+# A drop-in for socket.getaddrinfo, so it takes the same parameters under the same
+# names: callers pass them positionally or by keyword, `type` included.
+def _pinning_getaddrinfo(  # noqa: PLR0917
+    host: bytes | str | None,
+    port: bytes | str | int | None,
+    family: int = 0,
+    type: int = 0,  # noqa: A002
+    proto: int = 0,
+    flags: int = 0,
+) -> _AddrInfo:
     pinned: dict[str, str] | None = getattr(_pin, "map", None)
     if pinned:
         key = _pin_key(host.decode() if isinstance(host, bytes) else str(host))
         if key not in pinned:
             raise socket.gaierror(socket.EAI_NONAME, "lookup outside the active pin")
         host = pinned[key]  # resolve the pre-validated IP literal, not the hostname
-    return _real_getaddrinfo(host, *args, **kwargs)
+    return _real_getaddrinfo(host, port, family, type, proto, flags)
 
 
 # Process-wide but transparent: with no active pin it's a straight passthrough, and
@@ -262,7 +283,7 @@ class _ImpersonatingSession:
     _keep_cookies: bool
     _local: threading.local
 
-    def __init__(self, limit: int, keep_cookies: bool) -> None:
+    def __init__(self, limit: int, *, keep_cookies: bool) -> None:
         self._limit = limit
         self._keep_cookies = keep_cookies
         # One curl_cffi Session per thread: the pin travels in the session's
@@ -289,7 +310,14 @@ class _ImpersonatingSession:
         headers: dict[str, str] | None = None,
     ) -> requests.Response:
         del stream  # the body is always buffered, under the cap `_send` enforces
-        return self._send("GET", url, timeout, headers or {}, None, allow_redirects)
+        return self._send(
+            "GET",
+            url,
+            timeout=timeout,
+            headers=headers or {},
+            data=None,
+            allow_redirects=allow_redirects,
+        )
 
     def post(
         self,
@@ -302,12 +330,20 @@ class _ImpersonatingSession:
         allow_redirects: bool = False,
     ) -> requests.Response:
         del stream  # as in get()
-        return self._send("POST", url, timeout, headers, data, allow_redirects)
+        return self._send(
+            "POST",
+            url,
+            timeout=timeout,
+            headers=headers,
+            data=data,
+            allow_redirects=allow_redirects,
+        )
 
     def _send(
         self,
         method: Literal["GET", "POST"],
         url: str,
+        *,
         timeout: float,
         headers: dict[str, str],
         data: bytes | None,
@@ -774,6 +810,7 @@ class Fetcher:
 
     def __init__(
         self,
+        *,
         delay: float = 1.0,
         retries: int = 3,
         byte_cap: int = MAX_BYTES,
@@ -799,7 +836,7 @@ class Fetcher:
         if impersonate:
             # The browser profile brings its own User-Agent; ours would contradict it.
             self._session = _ImpersonatingSession(
-                max(byte_cap, MAX_BYTES, SEGMENT_MAX_BYTES), keep_cookies
+                max(byte_cap, MAX_BYTES, SEGMENT_MAX_BYTES), keep_cookies=keep_cookies
             )
             return
         session = requests.Session()

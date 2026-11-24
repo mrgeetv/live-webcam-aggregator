@@ -178,7 +178,7 @@ def _log_source_outcome(
     return False
 
 
-def _status_for(kept: int, crashed: bool, h: Hist) -> str:
+def _status_for(kept: int, *, crashed: bool, h: Hist) -> str:
     """Coarse health from the RAW result: dead (nothing, or it blew up), degraded (a
     collapse the guard is masking), or ok. Drives the one-line transition log, so an
     incident reads as a timeline rather than the same line repeated every 6h."""
@@ -244,7 +244,7 @@ def build_catalogue(
             cands = [_with_decoded_title(c) for c in src.discover()]
         except Exception:
             log.exception("source %s discover() failed", src.name)
-            return _SourceResult(src.name, [], 0, True)
+            return _SourceResult(src.name, [], 0, crashed=True)
         try:
             yt_ids = [
                 c.predisc_key[3:]
@@ -295,11 +295,17 @@ def build_catalogue(
                 elif detail:
                     details[detail] = details.get(detail, 0) + 1
             return _SourceResult(
-                src.name, kept, len(cands), False, reasons, no_ext_hosts, details
+                src.name,
+                kept,
+                len(cands),
+                crashed=False,
+                drop_reasons=reasons,
+                no_extractor_hosts=no_ext_hosts,
+                resolve_details=details,
             )
         except Exception:
             log.exception("source %s liveness filter failed", src.name)
-            return _SourceResult(src.name, [], len(cands), True)
+            return _SourceResult(src.name, [], len(cands), crashed=True)
 
     # Cap concurrent sources so total build concurrency stays ~max_parallel_sources ×
     # SCRAPE_WORKERS regardless of source count (extra sources batch through the pool).
@@ -325,7 +331,7 @@ def build_catalogue(
         h.last_crashed = crashed
         # Status is computed from the RAW result, before the guard branches below can
         # `continue` past it, so a masked failure still registers.
-        status = _status_for(len(kept), crashed, h)
+        status = _status_for(len(kept), crashed=crashed, h=h)
         if status != h.status:
             log.warning(
                 "%s: %s -> %s (%d kept, was %s)",

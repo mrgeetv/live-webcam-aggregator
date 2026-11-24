@@ -954,9 +954,7 @@ def test_politeness_delay_still_runs_on_non_retryable_failure() -> None:
     s = FetchStats()
     f = Fetcher(delay=1.0, retries=3, stats=s)
     with (
-        patch.object(
-            Fetcher, "_fetch_following", side_effect=_FetchError("too-large")
-        ),
+        patch.object(Fetcher, "_fetch_following", side_effect=_FetchError("too-large")),
         patch("webcam_aggregator.fetch.time.sleep") as slept,
     ):
         assert f.get("https://e.example/x") is None
@@ -1395,7 +1393,7 @@ def test_impersonating_session_aborts_the_transfer_past_its_limit(
     Fetcher's own cap then refuses the body."""
     port, _ = pinned_server
     with _PinDNS("pinned.test", "127.0.0.1"):
-        resp = _ImpersonatingSession(1000, True).get(
+        resp = _ImpersonatingSession(1000, keep_cookies=True).get(
             f"http://pinned.test:{port}/big", timeout=5
         )
     body = b"".join(resp.iter_content(65536))
@@ -1435,7 +1433,9 @@ def test_impersonating_session_refuses_an_unpinned_host() -> None:
     """Outside a _PinDNS block libcurl would resolve the name itself, reopening the
     rebinding window, so the transport refuses before sending anything."""
     with pytest.raises(RuntimeError):
-        _ImpersonatingSession(MAX_BYTES, True).get("http://pinned.test/", timeout=1)
+        _ImpersonatingSession(MAX_BYTES, keep_cookies=True).get(
+            "http://pinned.test/", timeout=1
+        )
 
 
 @pytest.mark.parametrize(

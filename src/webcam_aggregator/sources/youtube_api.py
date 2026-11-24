@@ -10,6 +10,8 @@ from webcam_aggregator.models import Candidate
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
+    from googleapiclient._apis.youtube.v3.resources import YouTubeResource
+
 log = logging.getLogger("webcam-aggregator.sources.youtube")
 
 # YouTube's stable video-category IDs → names. Names then flow through
@@ -46,14 +48,17 @@ class YoutubeApiSource:
     """
 
     name: str = "youtube-api"
-    _new_client: Callable[[], Any]
-    _c: Any | None
+    _new_client: Callable[[], YouTubeResource]
+    _c: YouTubeResource | None
     _query: str
     _max: int
     _lock: threading.Lock
 
     def __init__(
-        self, client_factory: Callable[[], Any], query: str, max_videos: int = 1000
+        self,
+        client_factory: Callable[[], YouTubeResource],
+        query: str,
+        max_videos: int = 1000,
     ) -> None:
         self._new_client = client_factory
         self._c = None
@@ -68,7 +73,7 @@ class YoutubeApiSource:
         self._lock = threading.Lock()
 
     @property
-    def _client(self) -> Any:
+    def _client(self) -> YouTubeResource:
         if self._c is None:
             self._c = self._new_client()
         return self._c

@@ -173,5 +173,5 @@ def test_whitespace_only_env_var_also_means_unset() -> None:
 def test_blank_bool_takes_the_default_not_false() -> None:
     """Blank means UNSET for bools too — with PROXY_YOUTUBE defaulting False, "" ->
     False looks right by coincidence; the trap is any future bool defaulting True."""
-    assert _bool_env({"X": ""}, "X", True) is True
-    assert _bool_env({"X": "  "}, "X", True) is True
+    assert _bool_env({"X": ""}, "X", default=True) is True
+    assert _bool_env({"X": "  "}, "X", default=True) is True
