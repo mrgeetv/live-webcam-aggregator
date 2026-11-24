@@ -1,6 +1,6 @@
 {
   "include": ["src"],
-  "extraPaths": ["scripts"],
+  "extraPaths": ["src", "scripts"],
   "pythonVersion": "3.14",
   "typeCheckingMode": "recommended",
   "reportAny": false,
