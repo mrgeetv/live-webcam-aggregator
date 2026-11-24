@@ -1,12 +1,20 @@
+"""HDOnTap source: sitemap -> cam pages, native HLS or the standard ladder."""
+
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..extractors.hdontap import stream_src
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, extract_candidates
+from webcam_aggregator.extractors.hdontap import stream_src
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    extract_candidates,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _SITEMAP = "https://hdontap.com/sitemap.xml"
 # Cam pages are /stream/<id>/<slug>/. Their /embed/ twins sit in the sitemap's
@@ -15,13 +23,14 @@ _SITEMAP = "https://hdontap.com/sitemap.xml"
 # The sitemap's locs carry either scheme; the page URL is also the candidate target,
 # so it is rebuilt as https:// rather than left to ride the site's 301.
 _LOC = re.compile(r"<loc>https?://hdontap\.com/(stream/(\d+)/[^<]*)</loc>")
-_TITLE = re.compile(r"<title>([^<]*)</title>", re.I)
+_TITLE = re.compile(r"<title>([^<]*)</title>", re.IGNORECASE)
 # "Carmel-By-The-Sea Live Webcam - HDOnTap" -> "Carmel-By-The-Sea"; the boilerplate
 # tail is stripped once, anchored at the end, so a mid-name "Cam" ("PA Peregrine
 # Falcon Cam Live Webcam") survives.
-_SUFFIX = re.compile(r"(?<!\s)\s*[-|]\s*HDOnTap\s*$", re.I)
+_SUFFIX = re.compile(r"(?<!\s)\s*[-|]\s*HDOnTap\s*$", re.IGNORECASE)
 _BOILER = re.compile(
-    r"(?<!\s)\s*\b(?:live\s+)?(?:streaming\s+|beach\s+)?(?:web\s?cam|cam)\s*$", re.I
+    r"(?<!\s)\s*\b(?:live\s+)?(?:streaming\s+|beach\s+)?(?:web\s?cam|cam)\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -35,14 +44,16 @@ def _title_of(html: str, url: str) -> str:
 
 
 class HdOnTapSource(HtmlScraperSource[str]):
-    """HDOnTap's sitemap lists every cam page (/stream/<id>/<slug>/). A page with a
-    `player-data` blob is a native-HLS cam: its candidate is the PAGE URL, resolved
-    fresh at serve time by `HdontapResolver`, because the blob's HLS URL carries a
-    per-page-fetch t/e token (which also means an `hls:` predisc_key could never
-    merge — hence None). Pages without the blob fall back to the standard ladder
+    """HDOnTap: sitemap -> cam pages (/stream/<id>/<slug>/), native HLS or the ladder.
+
+    A page with a `player-data` blob is a native-HLS cam: its candidate is the PAGE URL,
+    resolved fresh at serve time by `HdontapResolver`, because the blob's HLS URL
+    carries a per-page-fetch t/e token (which also means an `hls:` predisc_key could
+    never merge, hence None). Pages without the blob fall back to the standard ladder
     (roughly a quarter are plain YouTube embeds; an offline page carries neither and
     yields nothing). The site has no category taxonomy -> None, so the title-keyword
-    fallback picks up the beaches/wildlife cams."""
+    fallback picks up the beaches/wildlife cams.
+    """
 
     name: str = "hdontap"
 

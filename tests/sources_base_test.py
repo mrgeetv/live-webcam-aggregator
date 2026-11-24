@@ -1,7 +1,6 @@
 import threading
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
@@ -10,6 +9,9 @@ from webcam_aggregator.sources.base import (
     with_location,
     with_location_parts,
 )
+
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 
 class _FakeFetch:
@@ -45,7 +47,7 @@ class _StubSource(HtmlScraperSource[str]):
         return f"{ctx} [{category}]"
 
 
-def test_html_scraper_base_crawls_skips_empty_and_titles():
+def test_html_scraper_base_crawls_skips_empty_and_titles() -> None:
     pages = {
         "https://s/a": '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>',
         "https://s/b": "",  # empty body -> skipped by the base loop
@@ -74,9 +76,11 @@ class _CountingFetch(_FakeFetch):
         return super().get(url)
 
 
-def test_html_scraper_base_parses_pages_before_the_crawl_ends():
-    """A page is parsed while later ones are still to be fetched, so a big sitemap's
-    bodies are never all held in memory at once."""
+def test_html_scraper_base_parses_pages_before_the_crawl_ends() -> None:
+    """A page is parsed while later ones are still to be fetched.
+
+    A big sitemap's bodies are then never all held in memory at once.
+    """
     urls = [f"https://s/{i}" for i in range(200)]
     embed = '<iframe src="https://www.youtube.com/embed/{:011d}"></iframe>'
     fetch = _CountingFetch({u: embed.format(i) for i, u in enumerate(urls)})
@@ -87,14 +91,14 @@ def test_html_scraper_base_parses_pages_before_the_crawl_ends():
     assert [c.source_page_url for c in cands] == urls[1:]
 
 
-def test_decode_entities_decodes_character_references():
+def test_decode_entities_decodes_character_references() -> None:
     assert (
         decode_entities("Ryan&#39;s &quot;View&quot; &#x2013; Fish &amp; Chips")
         == 'Ryan\'s "View" \u2013 Fish & Chips'
     )
 
 
-def test_decode_entities_leaves_already_decoded_text_alone():
+def test_decode_entities_leaves_already_decoded_text_alone() -> None:
     # Text may be decoded twice (a source, then the build). A bare `&` is just an
     # ampersand, even when the letters after it spell a legacy entity name HTML
     # would decode without its `;`, or a `;` follows a name that isn't an entity.
@@ -102,7 +106,7 @@ def test_decode_entities_leaves_already_decoded_text_alone():
     assert decode_entities(text) == text
 
 
-def test_with_location_appends_only_new_parts():
+def test_with_location_appends_only_new_parts() -> None:
     wc = "https://worldcams.tv"
     # generic title gains the distinguishing place (redundant country/word dropped)
     assert (
@@ -134,7 +138,7 @@ def test_with_location_appends_only_new_parts():
     )
 
 
-def test_with_location_drops_category_from_suffix():
+def test_with_location_drops_category_from_suffix() -> None:
     wc = "https://worldcams.tv"
     url = f"{wc}/spain/gran-canaria/beaches"
     # the category is shown as the group, so keep it out of the suffix
@@ -149,7 +153,7 @@ def test_with_location_drops_category_from_suffix():
     )
 
 
-def test_with_location_parts_dedupes_repeated_breadcrumb_levels():
+def test_with_location_parts_dedupes_repeated_breadcrumb_levels() -> None:
     # some breadcrumbs name the same place at two levels (a parish == its only town)
     assert (
         with_location_parts(
@@ -160,7 +164,7 @@ def test_with_location_parts_dedupes_repeated_breadcrumb_levels():
     )
 
 
-def test_ignores_source_attribution_link():
+def test_ignores_source_attribution_link() -> None:
     html = '<div class="player"></div> Source: <a href="https://www.youtube.com/@SlowTVLive">x</a>'
     cands = list(
         extract_candidates(html, page_url="https://worldcams.tv/x", source="worldcams")
@@ -168,7 +172,7 @@ def test_ignores_source_attribution_link():
     assert cands == []
 
 
-def test_youtube_playlist_embed():
+def test_youtube_playlist_embed() -> None:
     html = '<iframe src="https://www.youtube.com/embed?list=UUabc&playnext=1"></iframe>'
     cands = list(
         extract_candidates(
@@ -178,13 +182,13 @@ def test_youtube_playlist_embed():
     assert any("list=UUabc" in c.target_url for c in cands)
 
 
-def test_youtube_video_predisc_key():
+def test_youtube_video_predisc_key() -> None:
     html = '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>'
     cands = list(extract_candidates(html, page_url="https://s/x", source="cxtvlive"))
     assert cands[0].predisc_key == "yt:aaaaaaaaaaa"
 
 
-def test_reserved_embed_paths_are_not_video_ids():
+def test_reserved_embed_paths_are_not_video_ids() -> None:
     """`embed/videoseries` and `embed/live_stream` are 11 characters, like an id."""
     html = (
         '<iframe src="https://www.youtube.com/embed/videoseries?list=PLx"></iframe>'
@@ -197,7 +201,7 @@ def test_reserved_embed_paths_are_not_video_ids():
     ]
 
 
-def test_multiangle_distinct_keys():
+def test_multiangle_distinct_keys() -> None:
     html = (
         'streams[0] = "<iframe src=\\"https://www.youtube.com/embed/aaaaaaaaaaa\\"></iframe>";'
         'streams[1] = "<iframe src=\\"https://www.youtube.com/embed/bbbbbbbbbbb\\"></iframe>";'
@@ -208,7 +212,7 @@ def test_multiangle_distinct_keys():
     assert len({c.angle_key for c in cands}) == 2
 
 
-def test_single_quote_streams_keyed_by_stream_id():
+def test_single_quote_streams_keyed_by_stream_id() -> None:
     # worldcams multi-cam pages use streams[<id>] = '<iframe …>' (SINGLE quotes),
     # keyed by the site's stream-id (not a 0..n index). Each candidate's angle_key
     # IS that stream-id, so it survives the page reordering its cams.
@@ -224,7 +228,7 @@ def test_single_quote_streams_keyed_by_stream_id():
     assert by_key["1378"] == "https://en.example.es/cam"
 
 
-def test_feratel_embeds_key_on_the_cam_id():
+def test_feratel_embeds_key_on_the_cam_id() -> None:
     # the same cam appears as webtv.…?cam=<id> and webtvfc.…?design=…&cam=<id>
     # across sources; keying on the id is what lets dedup merge them
     html = (
@@ -238,17 +242,20 @@ def test_feratel_embeds_key_on_the_cam_id():
     )
 
 
-def test_channel_has_no_predisc_key():
+def test_channel_has_no_predisc_key() -> None:
     html = '<a href="https://www.youtube.com/@SomeCam/live">live</a>'
     # NOTE: a bare channel link with no attribution prefix is a stream candidate
     cands = list(extract_candidates(html, page_url="https://s/x", source="cxtvlive"))
-    assert cands and cands[0].predisc_key is None
+    assert cands
+    assert cands[0].predisc_key is None
 
 
 def test_relative_embed_is_resolved_against_the_page() -> None:
-    """worldcams' streams[] array mixes absolute iframes with site-relative paths.
-    A target with no host is useless to every extractor and shows up in the
-    diagnostics as an unattributable '?', so resolve it rather than emitting it raw."""
+    """Worldcams' streams[] array mixes absolute iframes with site-relative paths.
+
+    A target with no host is useless to every extractor and shows up in the diagnostics
+    as an unattributable '?', so resolve it rather than emitting it raw.
+    """
     html = (
         "streams[0] = '<iframe src=\"https://www.youtube.com/embed/3nyPER2kzqk\">';"
         "streams[7] = '<iframe src=\"/player/live?id=9\">';"
@@ -264,9 +271,12 @@ def test_relative_embed_is_resolved_against_the_page() -> None:
 
 
 def test_still_image_entries_are_not_candidates() -> None:
-    """worldcams lists JPEG stills in streams[] beside real embeds. They can never be
-    a stream, so they must not become candidates — otherwise they inflate the
-    'no extractor' counts that are supposed to say which extractor to write next."""
+    """Worldcams lists JPEG stills in streams[] beside real embeds.
+
+    They can never be a stream, so they must not become candidates — otherwise they
+    inflate the 'no extractor' counts that are supposed to say which extractor to write
+    next.
+    """
     html = (
         "streams[0] = '<iframe src=\"https://www.youtube.com/embed/3nyPER2kzqk\">';"
         "streams[449] = '<iframe src=\"/images/live/big/227.jpg\">';"
@@ -291,8 +301,10 @@ def test_image_check_uses_the_path_not_the_query() -> None:
 
 
 def test_only_the_gtm_iframe_leaves_no_candidates() -> None:
-    """A page whose only iframe is the tag manager yields nothing at all, rather
-    than one doomed candidate."""
+    """A page whose only iframe is the tag manager yields nothing at all.
+
+    That beats one doomed candidate.
+    """
     html = '<iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"></iframe>'
     cands = list(
         extract_candidates(
@@ -303,9 +315,11 @@ def test_only_the_gtm_iframe_leaves_no_candidates() -> None:
 
 
 def test_unservable_video_embeds_are_still_reported() -> None:
-    """The denylist is for hosts that can never carry video — NOT for embeds we
-    simply have no extractor for. Those must keep surfacing as no-extractor, since
-    each one is a real gap someone could close."""
+    """The denylist is for hosts that can never carry video.
+
+    NOT for embeds we simply have no extractor for. Those must keep surfacing as
+    no-extractor, since each one is a real gap someone could close.
+    """
     for host in ("open.ivideon.com", "rtsp.me", "v.angelcam.com"):
         html = f'<iframe src="https://{host}/embed/abc"></iframe>'
         cands = list(
@@ -315,8 +329,10 @@ def test_unservable_video_embeds_are_still_reported() -> None:
 
 
 def test_a_leading_tag_manager_iframe_does_not_hide_the_player() -> None:
-    """CMS pages open <body> with GTM's <noscript> iframe, ahead of the real
-    player. The player further down is the page's cam and must be read."""
+    """CMS pages open <body> with GTM's <noscript> iframe, ahead of the real player.
+
+    The player further down is the page's cam and must be read.
+    """
     html = (
         '<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"'
         ' height="0" width="0"></iframe></noscript>'
@@ -333,8 +349,10 @@ def test_a_leading_tag_manager_iframe_does_not_hide_the_player() -> None:
 
 
 def test_a_placeholder_iframe_is_skipped_for_the_player_after_it() -> None:
-    """A consent manager parks embeds on about:blank until consent is given. The
-    placeholder can never be a stream; the player after it is the cam."""
+    """A consent manager parks embeds on about:blank until consent is given.
+
+    The placeholder can never be a stream; the player after it is the cam.
+    """
     html = (
         '<iframe src="about:blank" data-src-cmplz="https://x.example/p"></iframe>'
         '<iframe src="https://g1.ipcamlive.com/player/player.php?alias=a"></iframe>'
@@ -351,7 +369,9 @@ def test_a_placeholder_iframe_is_skipped_for_the_player_after_it() -> None:
 
 def test_a_traffic_map_iframe_is_not_a_candidate() -> None:
     """Traffic-cam pages embed a Waze live map beside (or instead of) the player.
-    A map serves no video, so it must not surface as a no-extractor gap."""
+
+    A map serves no video, so it must not surface as a no-extractor gap.
+    """
     html = '<iframe src="https://embed.waze.com/iframe?zoom=14&lat=-23.5&lon=-46.6">'
     cands = list(
         extract_candidates(html, page_url="https://www.cxtvlive.com/x", source="c")
@@ -360,8 +380,10 @@ def test_a_traffic_map_iframe_is_not_a_candidate() -> None:
 
 
 def test_the_fallback_iframe_is_read_as_an_html_attribute() -> None:
-    """The walk skips a leading still image, resolves a relative player path, and
-    decodes entities: `&amp;` in a src is `&` in the URL."""
+    """The walk skips a leading still image and resolves a relative player path.
+
+    It also decodes entities: `&amp;` in a src is `&` in the URL.
+    """
     html = (
         '<iframe src="/img/cam.jpg"></iframe>'
         '<iframe src="/player/embed.php?cam=7&amp;autoplay=1"></iframe>'
@@ -375,8 +397,10 @@ def test_the_fallback_iframe_is_read_as_an_html_attribute() -> None:
 
 
 def test_an_m3u8_url_is_taken_whole_from_the_page() -> None:
-    """A playlist URL keeps its query, a page link without `.m3u8` is not one, and a
-    wrapper URL carrying the playlist in its query is taken whole, wrapper and all."""
+    """A playlist URL keeps its query, and a page link without `.m3u8` is not one.
+
+    A wrapper URL carrying the playlist in its query is taken whole, wrapper and all.
+    """
     html = (
         '<a href="https://cams.example/about">about</a>'
         '<video src="https://cdn.example/live/cam.m3u8?token=abc"></video>'

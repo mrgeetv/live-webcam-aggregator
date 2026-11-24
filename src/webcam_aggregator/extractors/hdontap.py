@@ -1,10 +1,15 @@
+"""HDOnTap extractor: cam page `player-data` blob -> its token-signed HLS URL."""
+
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # HDOnTap cam pages ship the player config in the static HTML:
 #   <script id="player-data" type="application/json">
@@ -18,14 +23,16 @@ from .base import Resolved
 # body from being rescanned from every repeat inside it.
 _BLOB = re.compile(
     r'<script(?=[^<>]+?id="player-data")[^<>]*+>((?:[^<]|<(?!/?script))*+)</script>',
-    re.I,
+    re.IGNORECASE,
 )
 
 
 def stream_src(html: str) -> str | None:
-    """The token-signed HLS URL in a page's player-data blob, or None (an offline
-    page, or a YouTube-embed cam). Shared with `sources.hdontap`, which uses it to
-    tell native-HLS cam pages from the rest."""
+    """Return the token-signed HLS URL in a page's player-data blob, or None.
+
+    None means an offline page or a YouTube-embed cam. Shared with `sources.hdontap`,
+    which uses it to tell native-HLS cam pages from the rest.
+    """
     m = _BLOB.search(html)
     if not m:
         return None
@@ -40,15 +47,20 @@ def stream_src(html: str) -> str | None:
 
 
 class HdontapResolver:
+    """Resolve an HDOnTap cam page to its token-signed HLS URL."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a page body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to the HLS URL in its page's player-data blob."""
         src = stream_src(self._fetch(target_url))
         if not src:
-            raise ValueError("hdontap: no player-data stream (offline?)")
+            msg = "hdontap: no player-data stream (offline?)"
+            raise ValueError(msg)
         return Resolved(
             url=src,
             stream_type="hls",

@@ -1,15 +1,21 @@
+"""windy.com source: keyless API enumeration plus per-cam stream-page probes."""
+
 from __future__ import annotations
 
 import json
 import math
 import re
-from collections.abc import Iterator
 from dataclasses import replace
 from html import unescape
+from typing import TYPE_CHECKING
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
-from .base import extract_candidates, with_location_parts
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.sources.base import extract_candidates, with_location_parts
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from webcam_aggregator.models import Candidate
 
 # Windy's webcams platform hosts no video itself, but a live cam's stream page
 # (webcams.windy.com/webcams/stream/<id>) is a tiny static HTML wrapper around the
@@ -25,7 +31,7 @@ _LIST = (
     "?nearby={lat},{lon}&radius=250&limit=25&offset={off}"
 )
 _STREAM = "https://webcams.windy.com/webcams/stream/{id}"
-_IFRAME = re.compile(r'<iframe[^<>]+src="([^"]+)"', re.I)
+_IFRAME = re.compile(r'<iframe[^<>]+src="([^"]+)"', re.IGNORECASE)
 
 # The corpus is ~65k cams worldwide and only ~5-10% have live video, so one build
 # can neither enumerate nor probe everything politely. Instead the instance keeps
@@ -49,6 +55,7 @@ _PAGE = 25
 # latitudes outside the band hold no cams worth a probe row
 _STEP = 3.15
 _LAT_MIN, _LAT_MAX = -60.0, 72.0
+_LON_MIN, _LON_MAX = -180.0, 180.0
 # re-run the grid enumeration every N builds to pick up newly added cams
 _ENUM_EVERY = 40
 # a stream page smaller than this is the "not available" stub, not an embed
@@ -60,8 +67,8 @@ def _grid() -> list[tuple[float, float]]:
     lat = _LAT_MIN
     while lat <= _LAT_MAX:
         step = _STEP / max(0.2, math.cos(math.radians(lat)))
-        lon = -180.0
-        while lon < 180.0:
+        lon = _LON_MIN
+        while lon < _LON_MAX:
             pts.append((round(lat, 2), round(lon, 2)))
             lon += step
         lat += _STEP
@@ -89,12 +96,14 @@ class WindySource:
 
     A meta-aggregator like camscape: the emitted candidates are the ORIGINAL
     providers' embeds (feratel, direct DOT m3u8s, YouTube, …), so the shared
-    predisc keys make dedup against the first-party sources do real work."""
+    predisc keys make dedup against the first-party sources do real work.
+    """
 
     name: str = "windy"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch`; the corpus and the live set persist across rebuilds."""
         self._fetch = fetch
         # id -> (title, city, country); persists across rebuilds
         self._corpus: dict[int, tuple[str, str, str]] = {}
@@ -116,15 +125,19 @@ class WindySource:
             )
 
     def _enumerate(self) -> None:
-        """Grid-scan the list API into the corpus, under a hard request ceiling so a
-        dense-corpus pass can never run away at the third-party API. If the ceiling
-        truncates the scan we do NOT mark enumeration done, so the next build resumes
-        it rather than latching a partial corpus for _ENUM_EVERY builds."""
+        """Grid-scan the list API into the corpus, under a hard request ceiling.
+
+        The ceiling keeps a dense-corpus pass from running away at the third-party API.
+        If it truncates the scan we do NOT mark enumeration done, so the next build
+        resumes it rather than latching a partial corpus for _ENUM_EVERY builds.
+        """
         points = _grid()
         first = [_LIST.format(lat=lat, lon=lon, off=0) for lat, lon in points]
         extras: list[str] = []
         truncated = False
-        for (lat, lon), raw in zip(points, thread_imap(self._fetch.get, first)):
+        for (lat, lon), raw in zip(
+            points, thread_imap(self._fetch.get, first), strict=True
+        ):
             total, cams = _cams_of(raw)
             self._remember(cams)
             for off in range(_PAGE, min(total, _CIRCLE_CAP), _PAGE):
@@ -141,6 +154,7 @@ class WindySource:
         self._builds_until_enum = 0 if truncated else _ENUM_EVERY
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield the live cams: known-live probed first, the rest in rotating slices."""
         if not self._corpus or self._builds_until_enum <= 0:
             self._enumerate()
         self._builds_until_enum -= 1
@@ -157,7 +171,7 @@ class WindySource:
         self._cursor = (start + slice_n) % len(rest) if rest else 0
         ids = sorted(self._live) + rotation
         urls = [_STREAM.format(id=i) for i in ids]
-        for cid, page in zip(ids, thread_imap(self._fetch.get, urls)):
+        for cid, page in zip(ids, thread_imap(self._fetch.get, urls), strict=True):
             if page is None:
                 # a fetch FAILURE (timeout/429/backoff), not a verdict: keep the cam in
                 # _live so it is retried first next build rather than exiled to the

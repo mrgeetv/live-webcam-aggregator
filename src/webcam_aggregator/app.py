@@ -1,49 +1,57 @@
+"""App wiring: catalogue store, resolve cache, HTTP handler and the rebuild loop."""
+
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sys
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable
+from dataclasses import dataclass
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, ClassVar, override
 
 import psutil
 
-from . import config
-from .cache import ResolveCache
-from .catalogue import Hist, build_catalogue, failure_counts, top_counts
-from .extractors.base import Extractor, Resolved
-from .extractors.baltic import BalticResolver
-from .extractors.direct_hls import DirectHls
-from .extractors.earthcam import EarthcamResolver
-from .extractors.hdontap import HdontapResolver
-from .extractors.ipcamlive import IpcamliveResolver, is_alias_page
-from .extractors.metatag import MetaTagExtractor
-from .extractors.ozolio import OzolioResolver
-from .extractors.skyline import SkylineResolver
-from .extractors.viewsurf import ViewsurfResolver
-from .extractors.wetmet import WetmetResolver
-from .extractors.ytdlp import YtDlpExtractor
-from .fetch import (
+from webcam_aggregator import config
+from webcam_aggregator.cache import ResolveCache
+from webcam_aggregator.catalogue import (
+    Hist,
+    build_catalogue,
+    failure_counts,
+    top_counts,
+)
+from webcam_aggregator.extractors.baltic import BalticResolver
+from webcam_aggregator.extractors.direct_hls import DirectHls
+from webcam_aggregator.extractors.earthcam import EarthcamResolver
+from webcam_aggregator.extractors.hdontap import HdontapResolver
+from webcam_aggregator.extractors.ipcamlive import IpcamliveResolver, is_alias_page
+from webcam_aggregator.extractors.metatag import MetaTagExtractor
+from webcam_aggregator.extractors.ozolio import OzolioResolver
+from webcam_aggregator.extractors.skyline import SkylineResolver
+from webcam_aggregator.extractors.viewsurf import ViewsurfResolver
+from webcam_aggregator.extractors.wetmet import WetmetResolver
+from webcam_aggregator.extractors.ytdlp import YtDlpExtractor
+from webcam_aggregator.fetch import (
     MANIFEST_MAX_BYTES,
     Fetcher,
     FetcherPostProtocol,
     FetchStats,
     HostPacer,
 )
-from .logging_redaction import RedactingFilter, scrub, trim_urls
-from .models import (
+from webcam_aggregator.logging_redaction import RedactingFilter, scrub, trim_urls
+from webcam_aggregator.models import (
     DEAD_MANIFEST,
     NO_EXTRACTOR,
     RESOLVE_FAILED,
     Candidate,
     CatalogueEntry,
 )
-from .registry import Registry
-from .serving import (
+from webcam_aggregator.registry import Registry
+from webcam_aggregator.serving import (
     SegmentResponse,
     first_variant,
     is_playable_manifest,
@@ -52,51 +60,62 @@ from .serving import (
     serve_segment,
     serve_stream,
 )
-from .sources.airportwebcams import AirportWebcamsSource
-from .sources.beachcam import BeachcamSource
-from .sources.camscape import CamscapeSource
-from .sources.camsecure import CamSecureSource
-from .sources.cxtvlive import CxtvliveSource
-from .sources.earthcam import EarthCamSource
-from .sources.explore import ExploreOrgSource
-from .sources.feratel import FeratelSource
-from .sources.hdontap import HdOnTapSource
-from .sources.livefromiceland import LiveFromIcelandSource
-from .sources.livespotting import LivespottingSource
-from .sources.ozolio import OzolioSource
-from .sources.resortcams import ResortCamsSource
-from .sources.shareju import SharejuSource
-from .sources.skyline import SkylineSource
-from .sources.tomarigi import TomarigiSource
-from .sources.viewsurf import ViewsurfSource
-from .sources.webcamerapl import WebcameraPlSource
-from .sources.whatsupcams import WhatsupcamsSource
-from .sources.wildlife_trusts import WildlifeTrustsSource
-from .sources.windy import WindySource
-from .sources.worldcams import WorldcamsSource
-from .sources.youtube_api import YoutubeApiSource
+from webcam_aggregator.sources.airportwebcams import AirportWebcamsSource
+from webcam_aggregator.sources.beachcam import BeachcamSource
+from webcam_aggregator.sources.camscape import CamscapeSource
+from webcam_aggregator.sources.camsecure import CamSecureSource
+from webcam_aggregator.sources.cxtvlive import CxtvliveSource
+from webcam_aggregator.sources.earthcam import EarthCamSource
+from webcam_aggregator.sources.explore import ExploreOrgSource
+from webcam_aggregator.sources.feratel import FeratelSource
+from webcam_aggregator.sources.hdontap import HdOnTapSource
+from webcam_aggregator.sources.livefromiceland import LiveFromIcelandSource
+from webcam_aggregator.sources.livespotting import LivespottingSource
+from webcam_aggregator.sources.ozolio import OzolioSource
+from webcam_aggregator.sources.resortcams import ResortCamsSource
+from webcam_aggregator.sources.shareju import SharejuSource
+from webcam_aggregator.sources.skyline import SkylineSource
+from webcam_aggregator.sources.tomarigi import TomarigiSource
+from webcam_aggregator.sources.viewsurf import ViewsurfSource
+from webcam_aggregator.sources.webcamerapl import WebcameraPlSource
+from webcam_aggregator.sources.whatsupcams import WhatsupcamsSource
+from webcam_aggregator.sources.wildlife_trusts import WildlifeTrustsSource
+from webcam_aggregator.sources.windy import WindySource
+from webcam_aggregator.sources.worldcams import WorldcamsSource
+from webcam_aggregator.sources.youtube_api import YoutubeApiSource
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from googleapiclient._apis.youtube.v3.resources import YouTubeResource
+
+    from webcam_aggregator.extractors.base import Extractor, Resolved
+    from webcam_aggregator.sources.base import Source
 
 log = logging.getLogger("webcam-aggregator")
 _HLS_CT = "application/vnd.apple.mpegurl"
 
 
 def _total_rss() -> int:
-    """RSS of this process plus any live child processes (yt-dlp/deno spawned per
-    resolve), so /health reflects the container footprint, not just the parent."""
+    """Return the RSS of this process plus its live child processes.
+
+    Children are the yt-dlp/deno processes spawned per resolve, so /health reflects the
+    container footprint, not just the parent.
+    """
     p = psutil.Process()
     total = p.memory_info().rss
     try:
         for child in p.children(recursive=True):
-            try:
+            # A child can exit between listing and measuring.
+            with contextlib.suppress(psutil.Error):
                 total += child.memory_info().rss
-            except psutil.Error:
-                pass  # child exited between listing and measuring
     except psutil.Error:
         pass
     return total
 
 
 def origin_of(url: str) -> str:
+    """Return `scheme://host/` for a URL."""
     p = urllib.parse.urlsplit(url)
     return f"{p.scheme}://{p.hostname}/"
 
@@ -110,7 +129,8 @@ def _resolver_get(fetcher: Fetcher) -> Callable[[str], str]:
             # AND split one failure mode into per-URL-prefix buckets (the detail is
             # truncated), making the count unreadable. The URL is already logged at
             # DEBUG by liveness, and serve-time failures log the cam's target.
-            raise ValueError(f"resolver fetch failed: {outcome}")
+            msg = f"resolver fetch failed: {outcome}"
+            raise ValueError(msg)
         return body
 
     return get_text
@@ -128,7 +148,8 @@ def _baltic_post(fetcher: FetcherPostProtocol) -> Callable[[str, dict[str, str]]
         if body is None:
             # No URL for the same reason as _resolver_get: the message becomes an
             # aggregated INFO detail.
-            raise ValueError(f"resolver post failed: {outcome}")
+            msg = f"resolver post failed: {outcome}"
+            raise ValueError(msg)
         return body
 
     return post
@@ -151,6 +172,7 @@ def _path(u: str) -> str:
 
 
 def build_registry(extractors: dict[str, Extractor]) -> Registry:
+    """Build the `Registry` that routes a target URL to one of `extractors` by name."""
     # The provider extractors match on the target's HOST (+ a path marker), not a bare
     # substring: a scraped iframe src of `https://evil/?x=hdontap.com/stream/` must NOT
     # route an attacker page into a resolver that then fetches it and reflects its
@@ -178,17 +200,20 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
             "ozolio",
         ),
         (
-            lambda u: _host_ends(u, "joada.net")
-            and _path(u).startswith("/embeded/embeded.html"),
+            lambda u: (
+                _host_ends(u, "joada.net")
+                and _path(u).startswith("/embeded/embeded.html")
+            ),
             "viewsurf",
         ),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
-        (lambda u: _is_ytdlp(u), "ytdlp"),
+        (_is_ytdlp, "ytdlp"),
         (lambda u: ".m3u8" in u or "worldcams.tv/player?url=" in u, "direct"),
     ]
     for _predicate, name in rules:
         if name not in extractors:
-            raise ValueError(f"registry rule references unknown extractor {name!r}")
+            msg = f"registry rule references unknown extractor {name!r}"
+            raise ValueError(msg)
     return Registry(rules)
 
 
@@ -196,35 +221,48 @@ class NoExtractorError(ValueError):
     """No registry rule matched the target URL.
 
     Its own type so liveness can tell "we have no code for this site" (a gap to fill)
-    apart from "the extractor ran and failed" (a cam that is probably just off air)."""
+    apart from "the extractor ran and failed" (a cam that is probably just off air).
+    """
 
 
 def make_resolve(
     registry: Registry, extractors: dict[str, Extractor]
 ) -> Callable[[str, str], Resolved]:
+    """Build the resolve callback for `ResolveCache`.
+
+    It routes the target URL through `registry` to its extractor, and raises
+    `NoExtractorError` when none matches.
+    """
+
     def resolve(_entry_id: str, target_url: str) -> Resolved:
         name = registry.match(target_url)
         if name is None:
             log.debug("no extractor matched target %s", target_url)
-            raise NoExtractorError(f"no extractor for {target_url}")
+            msg = f"no extractor for {target_url}"
+            raise NoExtractorError(msg)
         return extractors[name].resolve(target_url)
 
     return resolve
 
 
 class CatalogueStore:
+    """The current catalogue snapshot, swapped in whole after each rebuild."""
+
     _snapshot: dict[str, CatalogueEntry]
     ready: bool
 
     def __init__(self) -> None:
+        """Start empty and not ready."""
         self._snapshot = {}
         self.ready = False
 
     def swap(self, entries: list[CatalogueEntry]) -> None:
+        """Replace the snapshot with `entries` and mark the store ready."""
         self._snapshot = {e.id: e for e in entries}  # atomic rebind
         self.ready = True
 
     def snapshot(self) -> dict[str, CatalogueEntry]:
+        """Return the current snapshot, keyed by entry id."""
         return self._snapshot
 
 
@@ -246,9 +284,11 @@ def make_liveness_check(
     resolve: Callable[[str, str], Resolved],
     fetch: Callable[[str], tuple[str | None, str]],
 ) -> Callable[[Candidate], str | None]:
-    """Build the build-time liveness probe: None if the cam is live, else the reason
-    it was dropped. `fetch` returns a body (None on failure) and its outcome label,
-    as `Fetcher.get_with_outcome` does."""
+    """Build the liveness probe: None if the cam is live, else the drop reason.
+
+    `fetch` returns a body (None on failure) and its outcome label, as
+    `Fetcher.get_with_outcome` does.
+    """
 
     def check(c: Candidate) -> str | None:
         try:
@@ -258,7 +298,9 @@ def make_liveness_check(
             # the URLs tell you what to write an extractor FOR.
             log.debug("no extractor for %s", c.target_url)
             return NO_EXTRACTOR
-        except Exception as exc:
+        # Any extractor can raise anything (yt-dlp, a parse, a fetch); each is a drop
+        # reason for one cam, never a crash of the build.
+        except Exception as exc:  # noqa: BLE001
             log.debug("liveness resolve failed for %s: %s", c.target_url, exc)
             # The detail separates "yt-dlp is broken" from "this cam is off air".
             # It is aggregated at INFO, so any URL it quotes is trimmed, query and
@@ -278,151 +320,190 @@ def make_liveness_check(
         # A master can answer 200 while the variant behind it is gone (an empty
         # body, a header-only stub, a 404 chunklist), so judge the variant a player
         # starts on as well.
-        if "#EXT-X-STREAM-INF" in manifest:
-            variant = first_variant(manifest, r.url)
-            if variant is None:
-                log.debug("liveness: master names no variant %s", c.target_url)
-                return DEAD_MANIFEST
-            body, outcome = fetch(variant)
-            if (
-                body is not None and not is_playable_manifest(body)
-            ) or outcome in _VARIANT_GONE:
-                log.debug("liveness: dead variant %s -> %s", c.target_url, variant)
-                return DEAD_MANIFEST
+        if "#EXT-X-STREAM-INF" in manifest and not variant_alive(c, manifest, r.url):
+            return DEAD_MANIFEST
         return None
 
+    def variant_alive(c: Candidate, master: str, url: str) -> bool:
+        variant = first_variant(master, url)
+        if variant is None:
+            log.debug("liveness: master names no variant %s", c.target_url)
+            return False
+        body, outcome = fetch(variant)
+        if (body is not None and not is_playable_manifest(body)) or (
+            outcome in _VARIANT_GONE
+        ):
+            log.debug("liveness: dead variant %s -> %s", c.target_url, variant)
+            return False
+        return True
+
     return check
+
+
+@dataclass(frozen=True)
+class _HandlerDeps:
+    """What the HTTP handler serves from."""
+
+    store: CatalogueStore
+    cache: ResolveCache
+    base_url: str
+    manifest_fetch: Callable[[str], tuple[str | None, str]]
+    source_status: Callable[[], dict[str, Any]]
+    segment_fetch: Callable[[str, str | None], tuple[SegmentResponse | None, str]]
+    proxy_youtube: bool
+
+
+class _Handler(BaseHTTPRequestHandler):
+    """Serve the playlist, `/health` and `/stream/<id>` from `deps`."""
+
+    deps: ClassVar[_HandlerDeps]
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        path = parsed.path
+        qs = urllib.parse.parse_qs(parsed.query)
+        if path == "/playlist.m3u8":
+            self._playlist()
+        elif path == "/health":
+            self._health()
+        elif path.startswith("/stream/") and path.endswith("/m"):
+            # /stream/<id>/m?u=<url>&sig=<hmac>
+            self._child_manifest(path[len("/stream/") : -len("/m")], qs)
+        elif path.startswith("/stream/") and path.endswith("/s"):
+            # /stream/<id>/s?u=<url>&sig=<hmac>
+            self._segment(path[len("/stream/") : -len("/s")], qs)
+        elif path.startswith("/stream/"):
+            self._stream(path[len("/stream/") :])
+        else:
+            self._respond(404, "text/plain", b"not found")
+
+    def _playlist(self) -> None:
+        if not self.deps.store.ready:
+            self._respond(503, "text/plain", b"not ready yet")
+            return
+        body = render_playlist(
+            list(self.deps.store.snapshot().values()), base_url=self.deps.base_url
+        )
+        self._respond(200, _HLS_CT, body.encode())
+
+    def _child_manifest(self, entry_id: str, qs: dict[str, list[str]]) -> None:
+        u_list = qs.get("u", [])
+        if not u_list:
+            self._respond(400, "text/plain", b"missing u= param")
+            return
+        status, ct, body = serve_child_manifest(
+            entry_id,
+            u_list[0],
+            qs.get("sig", [""])[0],  # a missing sig fails verify, logged
+            fetch=self.deps.manifest_fetch,
+            base_url=self.deps.base_url,
+        )
+        self._respond(status, ct, body)
+
+    def _segment(self, entry_id: str, qs: dict[str, list[str]]) -> None:
+        u_list = qs.get("u", [])
+        if not u_list:
+            self._respond(400, "text/plain", b"missing u= param")
+            return
+        seg_status, seg_ct, seg_cr, seg_body = serve_segment(
+            entry_id,
+            u_list[0],
+            qs.get("sig", [""])[0],  # a missing sig fails verify, logged
+            fetch_segment=self.deps.segment_fetch,
+            range_header=self.headers.get("Range"),
+        )
+        self.send_response(seg_status)
+        self.send_header("Content-Type", seg_ct)
+        self.send_header("Accept-Ranges", "bytes")
+        if seg_cr is not None:
+            self.send_header("Content-Range", seg_cr)
+        self.send_header("Content-Length", str(len(seg_body)))
+        self.end_headers()
+        self.wfile.write(seg_body)
+
+    def _stream(self, entry_id: str) -> None:
+        status, ct_or_loc, body = serve_stream(
+            entry_id,
+            catalogue=self.deps.store.snapshot(),
+            cache=self.deps.cache,
+            fetch=self.deps.manifest_fetch,
+            base_url=self.deps.base_url,
+            proxy_youtube=self.deps.proxy_youtube,
+        )
+        if status == HTTPStatus.FOUND:
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", ct_or_loc)
+            self.end_headers()
+            return
+        self._respond(status, ct_or_loc, body)
+
+    def _health(self) -> None:
+        snapshot = self.deps.store.snapshot()
+        st = self.deps.source_status()
+        unhealthy = st["unhealthy"]
+        # Single rollup for a JSON-query uptime monitor ($.healthy == true).
+        # False during the cold-start build (not ready yet) and whenever any source
+        # crashed or returned 0 cams this cycle — even while the empty-guard is
+        # still masking that failure in the served playlist.
+        healthy = self.deps.store.ready and not unhealthy
+        payload = {
+            "ready": self.deps.store.ready,
+            "healthy": healthy,
+            "streams": len(snapshot),
+            "unhealthy_sources": unhealthy,
+            "sources": st["sources"],
+            "last_build_seconds": st["last_build_seconds"],
+            "rss_mb": round(_total_rss() / 1048576, 1),
+        }
+        self._respond(200, "application/json", json.dumps(payload).encode())
+
+    def _respond(self, status: int, content_type: str, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    @override
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        # The uptime check polls /health every 60s — 4k lines/day of pure noise
+        # that buries everything else whenever DEBUG is on to investigate.
+        # Match the PARSED path: testing a substring of the raw request line would
+        # let /stream/x?y=/health suppress its own access-log entry.
+        if urllib.parse.urlsplit(self.path).path == "/health":
+            return
+        super().log_request(code, size)
+
+    @override
+    def log_message(self, format: str, *args: Any) -> None:
+        log.debug(format, *args)
 
 
 def make_handler(
     store: CatalogueStore,
     cache: ResolveCache,
     base_url: str,
+    *,
     manifest_fetch: Callable[[str], tuple[str | None, str]],
     source_status: Callable[[], dict[str, Any]],
     segment_fetch: Callable[[str, str | None], tuple[SegmentResponse | None, str]],
     proxy_youtube: bool = False,
 ) -> type[BaseHTTPRequestHandler]:
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            parsed = urllib.parse.urlsplit(self.path)
-            path = parsed.path
-            qs = urllib.parse.parse_qs(parsed.query)
+    """Build the handler class serving the playlist, `/health` and `/stream/<id>`."""
+    deps = _HandlerDeps(
+        store=store,
+        cache=cache,
+        base_url=base_url,
+        manifest_fetch=manifest_fetch,
+        source_status=source_status,
+        segment_fetch=segment_fetch,
+        proxy_youtube=proxy_youtube,
+    )
 
-            if path == "/playlist.m3u8":
-                if not store.ready:
-                    self._respond(503, "text/plain", b"not ready yet")
-                    return
-                body = render_playlist(
-                    list(store.snapshot().values()), base_url=base_url
-                )
-                self._respond(200, _HLS_CT, body.encode())
-                return
+    class Handler(_Handler):
+        pass
 
-            if path.endswith("/m") and path.startswith("/stream/"):
-                # /stream/<id>/m?u=<url>&sig=<hmac>
-                entry_id = path[len("/stream/") : -len("/m")]
-                u_list = qs.get("u", [])
-                if not u_list:
-                    self._respond(400, "text/plain", b"missing u= param")
-                    return
-                status, ct, body = serve_child_manifest(
-                    entry_id,
-                    u_list[0],
-                    qs.get("sig", [""])[0],  # a missing sig fails verify, logged
-                    fetch=manifest_fetch,
-                    base_url=base_url,
-                )
-                self._respond(status, ct, body)
-                return
-
-            if path.endswith("/s") and path.startswith("/stream/"):
-                # /stream/<id>/s?u=<url>&sig=<hmac>
-                entry_id = path[len("/stream/") : -len("/s")]
-                u_list = qs.get("u", [])
-                if not u_list:
-                    self._respond(400, "text/plain", b"missing u= param")
-                    return
-                range_header = self.headers.get("Range")
-                seg_status, seg_ct, seg_cr, seg_body = serve_segment(
-                    entry_id,
-                    u_list[0],
-                    qs.get("sig", [""])[0],  # a missing sig fails verify, logged
-                    fetch_segment=segment_fetch,
-                    range_header=range_header,
-                )
-                self.send_response(seg_status)
-                self.send_header("Content-Type", seg_ct)
-                self.send_header("Accept-Ranges", "bytes")
-                if seg_cr is not None:
-                    self.send_header("Content-Range", seg_cr)
-                self.send_header("Content-Length", str(len(seg_body)))
-                self.end_headers()
-                self.wfile.write(seg_body)
-                return
-
-            if path.startswith("/stream/"):
-                entry_id = path[len("/stream/") :]
-                status, ct_or_loc, body = serve_stream(
-                    entry_id,
-                    catalogue=store.snapshot(),
-                    cache=cache,
-                    fetch=manifest_fetch,
-                    base_url=base_url,
-                    proxy_youtube=proxy_youtube,
-                )
-                if status == 302:
-                    self.send_response(302)
-                    self.send_header("Location", ct_or_loc)
-                    self.end_headers()
-                    return
-                self._respond(status, ct_or_loc, body)
-                return
-
-            if path == "/health":
-                snapshot = store.snapshot()
-                st = source_status()
-                unhealthy = st["unhealthy"]
-                # Single rollup for a JSON-query uptime monitor ($.healthy == true).
-                # False during the cold-start build (not ready yet) and whenever any source
-                # crashed or returned 0 cams this cycle — even while the empty-guard is
-                # still masking that failure in the served playlist.
-                healthy = store.ready and not unhealthy
-                payload = {
-                    "ready": store.ready,
-                    "healthy": healthy,
-                    "streams": len(snapshot),
-                    "unhealthy_sources": unhealthy,
-                    "sources": st["sources"],
-                    "last_build_seconds": st["last_build_seconds"],
-                    "rss_mb": round(_total_rss() / 1048576, 1),
-                }
-                self._respond(200, "application/json", json.dumps(payload).encode())
-                return
-
-            self._respond(404, "text/plain", b"not found")
-
-        def _respond(self, status: int, content_type: str, body: bytes) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        @override
-        def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
-            # The uptime check polls /health every 60s — 4k lines/day of pure noise
-            # that buries everything else whenever DEBUG is on to investigate.
-            # Match the PARSED path: testing a substring of the raw request line would
-            # let /stream/x?y=/health suppress its own access-log entry.
-            if urllib.parse.urlsplit(self.path).path == "/health":
-                return
-            super().log_request(code, size)
-
-        @override
-        def log_message(self, format: str, *args: Any) -> None:
-            log.debug(format, *args)
-
+    Handler.deps = deps
     return Handler
 
 
@@ -438,6 +519,7 @@ class _QuietHTTPServer(ThreadingHTTPServer):
 def run_http_server(
     handler_cls: type[BaseHTTPRequestHandler], port: int = 8000
 ) -> None:
+    """Serve `handler_cls` on `port` from a daemon thread."""
     server = _QuietHTTPServer(("", port), handler_cls)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
@@ -445,8 +527,10 @@ def run_http_server(
 
 
 def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, Any]:
-    """The /health `sources` block: per-source RAW outcome of the last rebuild plus the
-    sources that failed this cycle (crashed, or 0 kept).
+    """Build the /health `sources` block.
+
+    Holds the per-source RAW outcome of the last rebuild plus the sources that failed
+    this cycle (crashed, or 0 kept).
 
     Values are the raw result even when the empty-guard is masking a failure in the
     served playlist, so a dying source surfaces here immediately. Cold start (nothing
@@ -454,7 +538,8 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
     from a real 0. Pure, so the payload shape is testable without building the app.
 
     WHAT-only (kept/discovered/crashed/status): the WHY — per-host fetch outcomes,
-    drop reasons, no-extractor hosts, pacing — lives on the per-cycle log lines."""
+    drop reasons, no-extractor hosts, pacing — lives on the per-cycle log lines.
+    """
     sources: dict[str, Any] = {}
     unhealthy: list[str] = []
     for name in expected:
@@ -480,29 +565,21 @@ def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, 
     return {"sources": sources, "unhealthy": unhealthy}
 
 
-def build_app(
-    cfg: config.Config,
-) -> tuple[
-    CatalogueStore,
-    ResolveCache,
-    Callable[[], None],
-    Callable[[], dict[str, Any]],
-]:
-    # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
-    # probe). Reactive: it is a no-op until a host answers 429/503, then that host
-    # is spaced and its retries are gated past the shedding window so they succeed
-    # instead of re-entering the burst. Serve-side fetchers stay unpaced.
-    pacer = HostPacer()
+def _build_resolvers(
+    pacer: HostPacer,
+) -> tuple[ResolveCache, Callable[[str, str], Resolved], FetchStats]:
+    """Build the serve-time resolve cache and the build-time resolve, from one factory.
 
+    Return the cache, the build-time resolve and the build-time fetcher's stats.
+    """
     # The resolve path exists TWICE, from one factory: the build-time set (paced,
     # stats-wired — liveness hammers a source's own site a second time, so it must
     # be measured and paced) and the serve-time set (unpaced, stats deliberately
-    # unwired as before — a build-inflicted cooldown must never stall a player's
-    # /stream request, which holds a ResolveCache per-entry lock while resolving).
+    # unwired — a build-inflicted cooldown must never stall a player's /stream
+    # request, which holds a ResolveCache per-entry lock while resolving).
     serve_fetcher = Fetcher(delay=0.0, retries=2)
     resolver_stats = FetchStats()
     build_fetcher = Fetcher(delay=0.0, retries=2, stats=resolver_stats, pacer=pacer)
-
     ytdlp = YtDlpExtractor()  # stateless, shared across both sets
     direct = DirectHls()
 
@@ -528,12 +605,17 @@ def build_app(
     serve_extractors = _extractor_set(serve_fetcher)
     build_extractors = _extractor_set(build_fetcher)
     registry = build_registry(serve_extractors)  # same keys in both (one factory)
-    resolve_serve = make_resolve(registry, serve_extractors)
-    resolve_build = make_resolve(registry, build_extractors)
-    cache: ResolveCache = ResolveCache(resolve_serve, clock=time.monotonic)
+    cache = ResolveCache(make_resolve(registry, serve_extractors), clock=time.monotonic)
+    return cache, make_resolve(registry, build_extractors), resolver_stats
 
-    def _new_yt_client() -> Any:
-        import googleapiclient.discovery
+
+def _youtube_source(cfg: config.Config) -> YoutubeApiSource | None:
+    """Return the YouTube Data API source, or None when its client can't be built."""
+
+    def new_client() -> YouTubeResource:
+        # Imported here, inside the try below: a broken googleapiclient install must
+        # disable this one source, not stop the app at import.
+        import googleapiclient.discovery  # noqa: PLC0415
 
         # static_discovery=True uses the bundled discovery document, so rebuilding the
         # client after a wedged connection costs ~5 ms and no network call.
@@ -546,9 +628,10 @@ def build_app(
         )
 
     try:
-        _new_yt_client()  # fail fast at startup on a bad key/deps, as before
-        yt_available = True
-    except Exception as exc:
+        new_client()  # fail fast at startup on a bad key or a broken install
+    # Startup must survive whatever a bad key or broken client raises: the source is
+    # disabled and the scrapers still run.
+    except Exception as exc:  # noqa: BLE001
         # No log.exception: the traceback's last line is str(exc), and googleapiclient
         # puts the developer key in the discovery-doc URL it reports.
         log.warning(
@@ -556,15 +639,18 @@ def build_app(
             type(exc).__name__,
             scrub(str(exc)),
         )
-        yt_available = False
+        return None
+    return YoutubeApiSource(new_client, cfg.search_query)
 
-    yt_source = (
-        YoutubeApiSource(_new_yt_client, cfg.search_query) if yt_available else None
-    )
-    # One Fetcher — and one FetchStats — PER SOURCE. A single shared fetcher made it
-    # impossible to say which source's fetches failed, and a process-global counter
-    # would also collect serve-time player traffic between rebuilds, so the line meant
-    # to explain an empty source would name hosts the build never touched.
+
+def _build_sources(
+    yt_source: YoutubeApiSource | None, pacer: HostPacer
+) -> tuple[list[Source], dict[str, FetchStats]]:
+    """Build every active source, each with its own fetcher, and their fetch stats."""
+    # One Fetcher — and one FetchStats — PER SOURCE. A shared fetcher could not say
+    # which source's fetches failed, and a process-global counter would also collect
+    # serve-time player traffic between rebuilds, so the line meant to explain an
+    # empty source would name hosts the build never touched.
     source_stats: dict[str, FetchStats] = {}
 
     def _source_fetcher(name: str, *, impersonate: bool = False) -> Fetcher:
@@ -574,7 +660,7 @@ def build_app(
         source_stats[name] = stats
         return Fetcher(stats=stats, pacer=pacer, impersonate=impersonate)
 
-    active_sources: list[Any] = [
+    active_sources: list[Source] = [
         s
         for s in (
             yt_source,  # googleapiclient, not Fetcher — no fetch stats to collect
@@ -607,8 +693,91 @@ def build_app(
     # silently reports nothing. Fail loudly at startup instead.
     unmapped = {s.name for s in active_sources} - set(source_stats) - {"youtube-api"}
     if unmapped:
-        raise ValueError(f"source_stats key mismatch: {sorted(unmapped)}")
+        msg = f"source_stats key mismatch: {sorted(unmapped)}"
+        raise ValueError(msg)
 
+    return active_sources, source_stats
+
+
+def _youtube_live_for(
+    yt_source: YoutubeApiSource | None,
+) -> Callable[[Iterable[str]], dict[str, str]]:
+    """Build the rebuild's YouTube live check: live video id -> category name."""
+
+    def youtube_live(ids: Iterable[str]) -> dict[str, str]:
+        if yt_source is None:
+            return {}
+        try:
+            return yt_source.live_ids(ids)
+        except Exception as exc:  # noqa: BLE001 - see below
+            # A YouTube quota/transient error must not abort the whole rebuild —
+            # just treat YT cams as offline this cycle (scrapers still build).
+            # No log.exception: a traceback ends in str(exc), and HttpError's str
+            # prints the request URI, which carries the developer key.
+            log.warning(
+                "youtube live_ids failed; treating YT cams as offline — %s: %s",
+                type(exc).__name__,
+                scrub(str(exc)),
+            )
+            return {}
+
+    return youtube_live
+
+
+def _report_build_diag(liveness: dict[str, FetchStats], pacer: HostPacer) -> None:
+    """Log the cross-source liveness fetch failures and pacing of the last rebuild.
+
+    The liveness fetchers and pacer are cross-source, so they report here rather than
+    on a source's own line. One aggregate INFO line each, only when something failed:
+    a healthy cycle adds no noise.
+    """
+    for label, stats in liveness.items():
+        fetches = stats.drain()
+        failures = failure_counts(fetches)
+        if failures:
+            total = sum(sum(o.values()) for o in fetches.values())
+            log.info(
+                "liveness %s: %d fetched, %d failed: %s",
+                label,
+                total,
+                sum(failures.values()),
+                top_counts(failures, 3),
+            )
+    pacing = pacer.drain()
+    if pacing:
+        top_pace = sorted(pacing.items(), key=lambda kv: (-kv[1]["penalties"], kv[0]))[
+            :3
+        ]
+        log.info(
+            "pacing: %s",
+            ", ".join(
+                f"{int(v['penalties'])}x {h} ({v['backoff_seconds']:.0f}s backoff)"
+                for h, v in top_pace
+            ),
+        )
+
+
+def build_app(
+    cfg: config.Config,
+) -> tuple[
+    CatalogueStore,
+    ResolveCache,
+    Callable[[], None],
+    Callable[[], dict[str, Any]],
+]:
+    """Wire sources, extractors, resolve cache and store from `cfg`.
+
+    Return the catalogue store, the resolve cache, a function that runs one catalogue
+    rebuild, and a function reporting per-source status for `/health`.
+    """
+    # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
+    # probe). Reactive: it is a no-op until a host answers 429/503, then that host
+    # is spaced and its retries are gated past the shedding window so they succeed
+    # instead of re-entering the burst. Serve-side fetchers stay unpaced.
+    pacer = HostPacer()
+    cache, resolve_build, resolver_stats = _build_resolvers(pacer)
+    yt_source = _youtube_source(cfg)
+    active_sources, source_stats = _build_sources(yt_source, pacer)
     store = CatalogueStore()
     history: dict[str, Hist] = {}
     # delay=0: liveness verify-fetches hit CDNs (not the scraped sites) and run
@@ -626,23 +795,7 @@ def build_app(
     )
     drop_reason_for = make_liveness_check(resolve_build, probe_fetcher.get_with_outcome)
 
-    def youtube_live(ids: Any) -> dict[str, str]:
-        if yt_source is None:
-            return {}
-        try:
-            return yt_source.live_ids(ids)
-        except Exception as exc:
-            # A YouTube quota/transient error must not abort the whole rebuild —
-            # just treat YT cams as offline this cycle (scrapers still build).
-            # No log.exception: a traceback ends in str(exc), and HttpError's str
-            # prints the request URI, which carries the developer key.
-            log.warning(
-                "youtube live_ids failed; treating YT cams as offline — %s: %s",
-                type(exc).__name__,
-                scrub(str(exc)),
-            )
-            return {}
-
+    youtube_live = _youtube_live_for(yt_source)
     expected_sources = [s.name for s in active_sources]
 
     # The one cross-source number /health carries; everything else the build-side
@@ -665,35 +818,6 @@ def build_app(
         stats = source_stats.get(name)
         return stats.drain() if stats is not None else {}
 
-    def _report_build_diag() -> None:
-        # The liveness fetchers and pacer are cross-source, so they report here
-        # rather than on a source's own line. One aggregate INFO line each, only
-        # when something failed — a healthy cycle adds no noise.
-        liveness = {"resolver": resolver_stats.drain(), "probe": probe_stats.drain()}
-        pacing = pacer.drain()
-        for label, fetches in liveness.items():
-            failures = failure_counts(fetches)
-            if failures:
-                total = sum(sum(o.values()) for o in fetches.values())
-                log.info(
-                    "liveness %s: %d fetched, %d failed: %s",
-                    label,
-                    total,
-                    sum(failures.values()),
-                    top_counts(failures, 3),
-                )
-        if pacing:
-            top_pace = sorted(
-                pacing.items(), key=lambda kv: (-kv[1]["penalties"], kv[0])
-            )[:3]
-            log.info(
-                "pacing: %s",
-                ", ".join(
-                    f"{int(v['penalties'])}x {h} ({v['backoff_seconds']:.0f}s backoff)"
-                    for h, v in top_pace
-                ),
-            )
-
     def rebuild_once() -> None:
         log.info("starting catalogue rebuild")
         t0 = time.monotonic()
@@ -713,7 +837,9 @@ def build_app(
             # precisely when the numbers matter most.
             for name in source_stats:
                 drain_source_stats(name)
-            _report_build_diag()
+            _report_build_diag(
+                {"resolver": resolver_stats, "probe": probe_stats}, pacer
+            )
             diag["last_build_seconds"] = round(time.monotonic() - t0, 1)
         store.swap(entries)
         log.info(
@@ -726,6 +852,7 @@ def build_app(
 
 
 def main() -> None:
+    """Serve HTTP and rebuild the catalogue every `CATALOGUE_INTERVAL_HOURS`."""
     # Root stays at WARNING so third-party libs (googleapiclient, urllib3) never
     # log request URLs at DEBUG — those carry the API key as a query param. Only
     # our own loggers honour LOG_LEVEL.

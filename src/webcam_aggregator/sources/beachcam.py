@@ -1,17 +1,21 @@
+"""beachcam.meo.pt source: Portuguese beach cams, blanket category Beaches."""
+
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 from urllib.parse import quote
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     predisc_key,
     with_location_parts,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _INDEX = "https://beachcam.meo.pt/livecams/"
 # Index links are absolute; the bare /livecams/ index itself has an empty slug and
@@ -21,7 +25,7 @@ _LINK = re.compile(r'href="https?://beachcam\.meo\.pt/livecams/([^"/#?]+)/"')
 # (video-auth1.iol.pt/auth-beachcam/<slug>/playlist.m3u8). The shared ladder is
 # deliberately not used: every page's footer links the site's
 # youtube.com/@Beachcamportugal channel, which the ladder's channel rule would turn
-# into a bogus extra candidate on all ~190 pages.
+# into a bogus extra candidate on every page.
 _VIDEO = re.compile(r'data-video-url="(https?://[^"]+\.m3u8)"')
 # The bare playlist URL answers 403; the site's JW player appends
 # ?wmsAuthSign=<token> fetched from this IOL endpoint (anonymous userId works).
@@ -30,7 +34,7 @@ _VIDEO = re.compile(r'data-video-url="(https?://[^"]+\.m3u8)"')
 # nimblesessionid+wmsAuthSign query is minted for whoever fetched it, so
 # `video-auth1.iol.pt` must be in serving._PROXY_SEGMENT_HOSTS (a segment stripped
 # of its query 404s).
-_TOKEN_API = "https://services.iol.pt/matrix?userId="
+_TOKEN_API = "https://services.iol.pt/matrix?userId="  # noqa: S105 - a URL, no secret
 # a real token is a base64 blob; anything else (an error page) is not a token
 _TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
 _TITLE = re.compile(r'<[^<>]*liveCamsHeader__title">([^<]*)<')
@@ -42,11 +46,13 @@ _Ctx = tuple[str, str | None]
 
 
 class BeachcamSource(HtmlScraperSource[_Ctx]):
-    """beachcam.meo.pt: ~190 MEO Beachcam livecams, blanket-categorised "Beaches" —
-    almost all are beach/surf spots, and the few lake/wake-park/city outliers are a
-    better trade than ~190 Portuguese-titled cams landing in "Other" (the English
-    title-keyword fallback can't read them). One stream per page in a data-video-url
-    attribute, playable only with a per-build ?wmsAuthSign= auth token."""
+    """beachcam.meo.pt: MEO Beachcam livecams, blanket-categorised "Beaches".
+
+    Almost all are beach/surf spots, and the few lake/wake-park/city outliers are a
+    better trade than every Portuguese-titled cam landing in "Other" (the
+    English title-keyword fallback can't read them). One stream per page in a
+    data-video-url attribute, playable only with a per-build ?wmsAuthSign= auth token.
+    """
 
     name: str = "beachcam"
     # per-build auth token, fetched alongside the index in _page_urls

@@ -34,7 +34,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_ozolio_discover_sitemap_titles_and_filtering():
+def test_ozolio_discover_sitemap_titles_and_filtering() -> None:
     cands = list(OzolioSource(_FakeFetch()).discover())
     by_title = {c.title: c for c in cands}
 
@@ -53,7 +53,7 @@ def test_ozolio_discover_sitemap_titles_and_filtering():
         assert c.angle_key is None
 
 
-def test_ozolio_empty_sitemap_yields_nothing():
+def test_ozolio_empty_sitemap_yields_nothing() -> None:
     class _Empty:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None

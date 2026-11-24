@@ -1,30 +1,35 @@
+"""resortcams.com source: WP sitemap -> cam pages with an open Wowza HLS."""
+
 from __future__ import annotations
 
 import re
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities
+from webcam_aggregator.sources.base import HtmlScraperSource, decode_entities
+
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 # WordPress sitemap for the `webcams` post type — the complete cam list. The bare
 # /webcams/ index has nothing after the slash and never matches.
 _SITEMAP = "https://www.resortcams.com/webcams-sitemap1.xml"
 _LOC = re.compile(r"<loc>(https://www\.resortcams\.com/webcams/[^<]+)</loc>")
 _TITLE = re.compile(r"<title>([^<]*)</title>")
-_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Resort Cams\s*$", re.I)
+_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Resort Cams\s*$", re.IGNORECASE)
 
 
 class ResortCamsSource(HtmlScraperSource[str]):
-    """resortcams.com: ~100 US-Southeast ski/mountain/beach/town cams (plus a few
-    outliers like Bar Harbor and Costa Rica, so no location suffix). Each page's
-    player carries an open, direct Wowza HLS
-    (stream.resortcams.com/live/<name>.stream/playlist.m3u8 — no token/Referer;
-    segment names are stream-instance-scoped, not per-viewer) that the shared
-    ladder extracts and DirectHls serves. The site's category pages all list every
-    cam, so there is no per-cam type -> None (the title fallback categorises the
-    "ski"/"downtown"/geo titles it can); pages with no static player (a JS-built
-    or image-refresh cam) yield nothing and drop. ctx is the page <title> with the
-    site boilerplate tail stripped."""
+    """resortcams.com: US-Southeast ski/mountain/beach/town cams.
+
+    There are a few outliers like Bar Harbor and Costa Rica, so no location suffix. Each
+    page's player carries an open, direct Wowza HLS
+    (stream.resortcams.com/live/<name>.stream/playlist.m3u8 — no token/Referer; segment
+    names are stream-instance-scoped, not per-viewer) that the shared ladder extracts
+    and DirectHls serves. The site's category pages all list every cam, so there is no
+    per-cam type -> None (the title fallback categorises the "ski"/"downtown"/geo titles
+    it can); pages with no static player (a JS-built or image-refresh cam) yield nothing
+    and drop. ctx is the page <title> with the site boilerplate tail stripped.
+    """
 
     name: str = "resortcams"
 

@@ -1,3 +1,5 @@
+"""HTTP fetch: SSRF guard, per-host pacing, stats and browser-fingerprint transport."""
+
 from __future__ import annotations
 
 import io
@@ -7,11 +9,11 @@ import os
 import socket
 import threading
 import time
-from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http import HTTPStatus
 from http.cookiejar import DefaultCookiePolicy
-from typing import Any, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import urlencode, urljoin, urlsplit
 
 import requests
@@ -22,9 +24,15 @@ from curl_cffi.curl import CURL_WRITEFUNC_ERROR
 from requests.adapters import HTTPAdapter
 from requests.structures import CaseInsensitiveDict
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
 log = logging.getLogger("webcam-aggregator.fetch")
 
-UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0 Safari/537.36"
+)
 
 MAX_BYTES = 8 * 1024 * 1024  # 8 MB ceiling for any fetched document
 MANIFEST_MAX_BYTES = (
@@ -35,9 +43,12 @@ _MAX_REDIRECTS = 5
 
 
 def resolve_scrape_workers() -> int:
-    """Concurrency for scraping/liveness. The work is I/O-bound (network waits), so
-    the ceiling is politeness to the target host, not local cores. Override with the
-    SCRAPE_WORKERS env var (e.g. raise it on a small box where the build is slow)."""
+    """Return the concurrency for scraping and liveness.
+
+    The work is I/O-bound (network waits), so the ceiling is politeness to the target
+    host, not local cores. Override with the SCRAPE_WORKERS env var (e.g. raise it on a
+    small box where the build is slow).
+    """
     default = min(16, (os.cpu_count() or 2) * 4)
     raw = os.environ.get("SCRAPE_WORKERS")
     # Blank means unset (docker-compose forwards `${SCRAPE_WORKERS:-}` as ""), not bad.
@@ -56,33 +67,34 @@ def resolve_scrape_workers() -> int:
 
 SCRAPE_WORKERS = resolve_scrape_workers()
 
-_T = TypeVar("_T")
-_R = TypeVar("_R")
 
+def thread_map[T, R](
+    fn: Callable[[T], R], items: list[T], *, workers: int = SCRAPE_WORKERS
+) -> list[R]:
+    """Map fn over items concurrently, preserving order.
 
-def thread_map(
-    fn: Callable[[_T], _R], items: list[_T], *, workers: int = SCRAPE_WORKERS
-) -> list[_R]:
-    """Map fn over items concurrently, preserving order. Every item is submitted at
-    once, so one slow call never holds the rest back — right for small results. A map
-    whose results are page bodies goes through `thread_imap` instead, or the whole
-    batch sits in memory until the last fetch lands. Empty in → empty out."""
+    Every item is submitted at once, so one slow call never holds the rest back — right
+    for small results. A map whose results are page bodies goes through `thread_imap`
+    instead, or the whole batch sits in memory until the last fetch lands. Empty in →
+    empty out.
+    """
     if not items:
         return []
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(items)))) as ex:
         return list(ex.map(fn, items))
 
 
-def thread_imap(
-    fn: Callable[[_T], _R], items: list[_T], *, workers: int = SCRAPE_WORKERS
-) -> Iterator[_R]:
-    """Map fn over items concurrently, yielding results in input order as the caller
-    takes them. About 4 × workers calls are running or waiting to be taken, so a
-    caller parsing page bodies holds a bounded number of them rather than every page
-    of a large sitemap; the slack keeps the other workers busy past one slow fetch at
-    the head of the queue. Order is kept because it matters downstream:
-    dedup keeps the first of a source's duplicates, and that page fixes the cam's
-    stable id."""
+def thread_imap[T, R](
+    fn: Callable[[T], R], items: list[T], *, workers: int = SCRAPE_WORKERS
+) -> Iterator[R]:
+    """Map fn over items concurrently, yielding results in input order as taken.
+
+    About 4 × workers calls are running or waiting to be taken, so a caller parsing page
+    bodies holds a bounded number of them rather than every page of a large sitemap; the
+    slack keeps the other workers busy past one slow fetch at the head of the queue.
+    Order is kept because it matters downstream: dedup keeps the first of a source's
+    duplicates, and that page fixes the cam's stable id.
+    """
     if not items:
         return
     n = max(1, min(workers, len(items)))
@@ -117,9 +129,10 @@ HOST_BACKOFF = "host-backoff"  # refused by the HostPacer: host is shedding load
 
 
 def _validate_ip(url: str) -> tuple[str | None, str]:
-    """Resolve the URL's host ONCE, validate every returned IP, and report WHY when it
-    is rejected. Returns (ip, "ok"), or (None, reason) where reason is one of
-    bad-scheme / dns-error / blocked-ip.
+    """Resolve the URL's host once, validate every IP, and say why a URL is rejected.
+
+    Returns (ip, "ok"), or (None, reason) where reason is one of bad-scheme /
+    dns-error / blocked-ip.
 
     This is the SSRF check AND the source of truth for the connection IP: the caller
     pins the connection to the returned IP so there is no second DNS lookup between
@@ -129,33 +142,34 @@ def _validate_ip(url: str) -> tuple[str | None, str]:
     The reason comes from THIS lookup, never a second one. Re-resolving to label the
     failure would not just be slow on the dead-domain long tail — on flaky or
     round-robin DNS it could report a genuine unsafe-IP block as a transient
-    "dns-error", quietly downgrading the only signal that says the guard fired."""
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https"):
+    "dns-error", quietly downgrading the only signal that says the guard fired.
+    """
+    host = _fetchable_host(url)
+    if host is None:
         return None, BAD_SCHEME
-    host = parts.hostname
-    if not host:
-        return None, BAD_SCHEME
-    try:
-        port = parts.port  # raises on a malformed or out-of-range port
-    except ValueError:
-        return None, BAD_SCHEME
-    if port == 0:
-        return None, BAD_SCHEME  # libcurl and urlsplit disagree on what :0 means
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
         return None, DNS_ERROR
-    chosen: str | None = None
-    for info in infos:
-        ip_str = str(info[4][0])  # sockaddr[0] is the IP literal
-        if _ip_is_unsafe(ip_str):
-            return None, BLOCKED_IP  # any unsafe IP poisons the whole host — refuse
-        if chosen is None:
-            chosen = ip_str
-    if chosen is None:
+    ips = [str(info[4][0]) for info in infos]  # sockaddr[0] is the IP literal
+    if any(_ip_is_unsafe(ip) for ip in ips):
+        return None, BLOCKED_IP  # any unsafe IP poisons the whole host — refuse
+    if not ips:
         return None, DNS_ERROR  # resolved to nothing at all
-    return chosen, OK
+    return ips[0], OK
+
+
+def _fetchable_host(url: str) -> str | None:
+    """Return the host of an http(s) URL with a usable port, else None."""
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    try:
+        port = parts.port  # raises on a malformed or out-of-range port
+    except ValueError:
+        return None
+    # libcurl and urlsplit disagree on what :0 means
+    return None if port == 0 else parts.hostname
 
 
 # --- validate-then-pin DNS (the "curl --resolve" approach) -------------------
@@ -183,14 +197,35 @@ def _pin_key(host: str) -> str:
     return host.lower().rstrip(".")  # urllib3 strips a trailing dot before resolving
 
 
-def _pinning_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
+# socket.getaddrinfo's return type.
+_AddrInfo = list[
+    tuple[
+        socket.AddressFamily,
+        socket.SocketKind,
+        int,
+        str,
+        tuple[str, int] | tuple[str, int, int, int] | tuple[int, bytes],
+    ]
+]
+
+
+# A drop-in for socket.getaddrinfo, so it takes the same parameters under the same
+# names: callers pass them positionally or by keyword, `type` included.
+def _pinning_getaddrinfo(  # noqa: PLR0917
+    host: bytes | str | None,
+    port: bytes | str | int | None,
+    family: int = 0,
+    type: int = 0,  # noqa: A002
+    proto: int = 0,
+    flags: int = 0,
+) -> _AddrInfo:
     pinned: dict[str, str] | None = getattr(_pin, "map", None)
     if pinned:
         key = _pin_key(host.decode() if isinstance(host, bytes) else str(host))
         if key not in pinned:
             raise socket.gaierror(socket.EAI_NONAME, "lookup outside the active pin")
         host = pinned[key]  # resolve the pre-validated IP literal, not the hostname
-    return _real_getaddrinfo(host, *args, **kwargs)
+    return _real_getaddrinfo(host, port, family, type, proto, flags)
 
 
 # Process-wide but transparent: with no active pin it's a straight passthrough, and
@@ -199,10 +234,13 @@ socket.getaddrinfo = _pinning_getaddrinfo
 
 
 class _PinDNS:
-    """Pin `host` -> `ip` for getaddrinfo on THIS thread for the duration of the
-    with-block, so the connection dials the validated IP while urllib3 still does
-    SNI/Host/cert against the hostname. Thread-local, so concurrent fetches from
-    thread_map workers and the HTTP server never see each other's pins."""
+    """Pin `host` -> `ip` for getaddrinfo on this thread within the with-block.
+
+    The pin holds for the duration of the with-block, so the connection dials the
+    validated IP while urllib3 still does SNI/Host/cert against the hostname.
+    Thread-local, so concurrent fetches from thread_map workers and the HTTP server
+    never see each other's pins.
+    """
 
     _host: str
     _ip: str
@@ -257,13 +295,14 @@ class _ImpersonatingSession:
     same code on both transports. The body is buffered up to `limit` bytes plus the
     chunk that crossed it; the transfer is then aborted and the caller's own byte-cap
     loop sees the overflow and refuses it. Two differences remain: `timeout` bounds
-    the whole transfer rather than each read, and the cookie jar is per thread."""
+    the whole transfer rather than each read, and the cookie jar is per thread.
+    """
 
     _limit: int
     _keep_cookies: bool
     _local: threading.local
 
-    def __init__(self, limit: int, keep_cookies: bool) -> None:
+    def __init__(self, limit: int, *, keep_cookies: bool) -> None:
         self._limit = limit
         self._keep_cookies = keep_cookies
         # One curl_cffi Session per thread: the pin travels in the session's
@@ -290,7 +329,14 @@ class _ImpersonatingSession:
         headers: dict[str, str] | None = None,
     ) -> requests.Response:
         del stream  # the body is always buffered, under the cap `_send` enforces
-        return self._send("GET", url, timeout, headers or {}, None, allow_redirects)
+        return self._send(
+            "GET",
+            url,
+            timeout=timeout,
+            headers=headers or {},
+            data=None,
+            allow_redirects=allow_redirects,
+        )
 
     def post(
         self,
@@ -303,12 +349,20 @@ class _ImpersonatingSession:
         allow_redirects: bool = False,
     ) -> requests.Response:
         del stream  # as in get()
-        return self._send("POST", url, timeout, headers, data, allow_redirects)
+        return self._send(
+            "POST",
+            url,
+            timeout=timeout,
+            headers=headers,
+            data=data,
+            allow_redirects=allow_redirects,
+        )
 
     def _send(
         self,
         method: Literal["GET", "POST"],
         url: str,
+        *,
         timeout: float,
         headers: dict[str, str],
         data: bytes | None,
@@ -316,17 +370,21 @@ class _ImpersonatingSession:
     ) -> requests.Response:
         if allow_redirects:
             # Every hop must pass through Fetcher's validate-and-pin loop.
-            raise ValueError("redirects are followed by Fetcher, hop by hop")
+            msg = "redirects are followed by Fetcher, hop by hop"
+            raise ValueError(msg)
         parts = urlsplit(url)
         host = parts.hostname or ""
         ip = (getattr(_pin, "map", None) or {}).get(_pin_key(host))
         if ip is None:
-            raise RuntimeError("refusing an unpinned host: libcurl would resolve it")
+            msg = "refusing an unpinned host: libcurl would resolve it"
+            raise RuntimeError(msg)
         # _validate_ip has already refused a malformed port and port 0.
         port = (
             parts.port
             if parts.port is not None
-            else 443 if parts.scheme == "https" else 80
+            else 443
+            if parts.scheme == "https"
+            else 80
         )
         addr = f"[{ip}]" if ":" in ip else ip
         session = self._session()
@@ -363,7 +421,7 @@ class _ImpersonatingSession:
                 raise _as_requests_error(exc, method, url) from exc
             resp = aborted  # aborted by the sink: hand back the overflow
         if _canonical_ip(resp.primary_ip) not in validated[host]:
-            raise _FetchFailure(BLOCKED_IP, host=host)
+            raise _FetchError(BLOCKED_IP, host=host)
         out = requests.Response()
         out.status_code = resp.status_code
         out.reason = resp.reason
@@ -386,7 +444,9 @@ def _as_requests_error(
     exc: CurlError, method: str, url: str
 ) -> requests.RequestException:
     """Map a curl_cffi failure onto the requests exception `_classify` labels.
-    Timeout is checked first, as in `_classify`: curl_cffi's ConnectTimeout is both."""
+
+    Timeout is checked first, as in `_classify`: curl_cffi's ConnectTimeout is both.
+    """
     request = requests.Request(method, url)
     if isinstance(exc, curl_requests.exceptions.Timeout):
         return requests.Timeout(str(exc), request=request)
@@ -394,10 +454,15 @@ def _as_requests_error(
 
 
 class FetcherProtocol(Protocol):
-    def get(self, url: str, timeout: float = ..., /) -> str | None: ...
+    """What a source or resolver needs to fetch a page body."""
+
+    def get(self, url: str, timeout: float = ..., /) -> str | None:
+        """Fetch `url` and return its body as text, or None on failure."""
 
 
 class FetcherPostProtocol(Protocol):
+    """What a resolver needs to POST a form and learn the outcome."""
+
     def post_with_outcome(
         self,
         url: str,
@@ -406,7 +471,9 @@ class FetcherPostProtocol(Protocol):
         *,
         headers: dict[str, str] | None = None,
         timeout: float = ...,
-    ) -> tuple[str | None, str]: ...
+    ) -> tuple[str | None, str]:
+        """POST `data` as a form; return the body (None on failure) and its outcome."""
+        ...
 
 
 # Hosts that gate on a Referer: EarthCam's CDN 403s the manifest/segments without it;
@@ -427,11 +494,13 @@ def _referer_for(url: str) -> dict[str, str]:
     return {}
 
 
-class _FetchFailure(Exception):
-    """A classified, non-retryable failure — a blocked IP, an oversized body or a
-    broken redirect chain. Distinct from requests' exceptions because retrying cannot
-    change the verdict. Carries the failing HOP's host, which on a redirect is not the
-    host the caller asked for."""
+class _FetchError(Exception):
+    """A classified, non-retryable failure.
+
+    It is a blocked IP, an oversized body or a broken redirect chain. Distinct from
+    requests' exceptions because retrying cannot change the verdict. Carries the failing
+    HOP's host, which on a redirect is not the host the caller asked for.
+    """
 
     reason: str
     host: str
@@ -442,19 +511,43 @@ class _FetchFailure(Exception):
         self.host = host
 
 
+def _refuse_redirect(resp: requests.Response, host: str) -> None:
+    """Close and refuse a redirect where the request must not get one."""
+    if resp.is_redirect or resp.is_permanent_redirect:
+        resp.close()
+        raise _FetchError(UNEXPECTED_REDIRECT, host=host)
+
+
+def _read_capped(
+    resp: requests.Response, cap: int, host: str, chunk_size: int = 8192
+) -> bytes:
+    """Read a streamed body, refusing it as too large once it passes `cap` bytes."""
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in resp.iter_content(chunk_size):
+        total += len(chunk)
+        if total > cap:
+            resp.close()
+            raise _FetchError(TOO_LARGE, host=host)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 class FetchStats:
     """Thread-safe (host, outcome) -> count.
 
-    One instance PER SOURCE (see app.build_app). A single shared counter could not say
-    WHICH source's fetches failed, and a process-global one would also be polluted by
-    serve-time player traffic between rebuilds — so the one line that is supposed to
-    explain an empty source would be reporting hosts the build never touched."""
+    One instance PER SOURCE (see app._build_sources). A single shared counter could not
+    say WHICH source's fetches failed, and a process-global one would also be polluted
+    by serve-time player traffic between rebuilds — so the one line that is supposed to
+    explain an empty source would be reporting hosts the build never touched.
+    """
 
     _counts: dict[tuple[str, str], int]
     _lock: threading.Lock
     _max_hosts: int
 
     def __init__(self, max_hosts: int = 500) -> None:
+        """Track at most `max_hosts` hosts; further ones fold into "other"."""
         self._counts = {}
         self._lock = threading.Lock()
         # Host keys come from scraped third-party HTML, so their cardinality is not
@@ -463,6 +556,7 @@ class FetchStats:
         self._max_hosts = max_hosts
 
     def record(self, host: str, outcome: str) -> None:
+        """Count one `outcome` for `host`."""
         with self._lock:
             key = (host or "?", outcome)
             if key not in self._counts and len(self._counts) >= self._max_hosts:
@@ -502,9 +596,11 @@ _SHEDDING_OUTCOMES = tuple(f"http-{c}" for c in _SHEDDING_STATUSES)
 
 
 def _retry_after_seconds(value: str | None) -> float | None:
-    """Parse a seconds-form Retry-After header. The HTTP-date form is deliberately
-    ignored: it is rare on the hosts we meet, and a misparsed date is worse than
-    letting the adaptive ladder find the window itself."""
+    """Parse a seconds-form Retry-After header.
+
+    The HTTP-date form is deliberately ignored: it is rare on the hosts we meet, and a
+    misparsed date is worse than letting the adaptive ladder find the window itself.
+    """
     if not value:
         return None
     try:
@@ -542,8 +638,9 @@ class HostPacer:
     window would decay its own strikes and the ladder could never reach the
     breaker. At _PACE_BREAK_AT strikes, or when a request would queue longer than
     _PACE_MAX_WAIT, acquire() refuses instead of waiting: the bulk of a
-    hard-blocked source fails fast (as it did before pacing existed) while one
-    probe per decay period keeps testing for recovery."""
+    hard-blocked source fails fast while one
+    probe per decay period keeps testing for recovery.
+    """
 
     _clock: Callable[[], float]
     _sleep: Callable[[float], None]
@@ -555,6 +652,7 @@ class HostPacer:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        """Set the `clock` and `sleep` functions the pacer uses."""
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
@@ -594,11 +692,13 @@ class HostPacer:
             s.next_allowed = my_slot
 
     def acquire(self, host: str) -> int | None:
-        """Block until a request to `host` may start. Returns the generation stamp
-        to hand back to penalise(), or None to refuse (fail fast): the breaker is
-        open, or the wait would exceed _PACE_MAX_WAIT. That bound is per WAIT, not
-        per call — successive new windows can extend a caller — but sustained
-        shedding escalates to the breaker, which is what bounds the total."""
+        """Block until a request to `host` may start; None means refuse.
+
+        Returns the generation stamp to hand back to penalise(), or None to refuse (fail
+        fast): the breaker is open, or the wait would exceed _PACE_MAX_WAIT. That bound
+        is per WAIT, not per call — successive new windows can extend a caller — but
+        sustained shedding escalates to the breaker, which is what bounds the total.
+        """
         my_slot: float | None = None
         my_end = 0.0
         while True:
@@ -650,8 +750,11 @@ class HostPacer:
     def penalise(
         self, host: str, gen: int, retry_after: float | None = None
     ) -> tuple[int, float, bool]:
-        """Record a 429/503 from `host`. Returns (strikes, window_seconds,
-        escalated) for the caller to log OUTSIDE the pacer's lock."""
+        """Record a 429/503 from `host`.
+
+        Returns (strikes, window_seconds, escalated) for the caller to log OUTSIDE the
+        pacer's lock.
+        """
         with self._lock:
             now = self._clock()
             s = self._hosts.get(host)
@@ -701,10 +804,12 @@ class HostPacer:
                 del self._hosts[host]
 
     def drain(self) -> dict[str, dict[str, float]]:
-        """Snapshot and reset the per-host counters, as
-        {host: {"penalties": n, "backoff_seconds": s}} (backoff is thread-seconds
-        slept behind the gate). Fully-recovered entries are dropped, which is what
-        bounds the map across cycles."""
+        """Snapshot and reset the per-host counters.
+
+        Returns them as {host: {"penalties": n, "backoff_seconds": s}} (backoff is
+        thread-seconds slept behind the gate). Fully-recovered entries are dropped,
+        which is what bounds the map across cycles.
+        """
         out: dict[str, dict[str, float]] = {}
         with self._lock:
             now = self._clock()
@@ -726,7 +831,8 @@ def _classify(exc: BaseException) -> str:
     """Map a requests exception to a stable outcome label.
 
     Order matters: ConnectTimeout subclasses BOTH Timeout and ConnectionError, and
-    "timeout" is the more useful diagnosis, so Timeout is checked first."""
+    "timeout" is the more useful diagnosis, so Timeout is checked first.
+    """
     if isinstance(exc, requests.Timeout):
         return TIMEOUT
     if isinstance(exc, requests.TooManyRedirects):
@@ -739,6 +845,8 @@ def _classify(exc: BaseException) -> str:
 
 
 class Fetcher:
+    """HTTP fetcher with an SSRF guard, retries, per-host pacing and outcome stats."""
+
     _session: requests.Session | _ImpersonatingSession
     _delay: float
     _retries: int
@@ -749,6 +857,7 @@ class Fetcher:
 
     def __init__(
         self,
+        *,
         delay: float = 1.0,
         retries: int = 3,
         byte_cap: int = MAX_BYTES,
@@ -758,6 +867,14 @@ class Fetcher:
         keep_cookies: bool = True,
         impersonate: bool = False,
     ) -> None:
+        """Configure politeness, retries, size cap, stats, pacing, cookies, transport.
+
+        `delay` is the politeness sleep around each request, `retries` the attempts per
+        fetch and `byte_cap` the body size limit. `stats` records outcomes; `pacer`
+        spaces hosts that shed load (None = unpaced). `retry_only_shedding` limits
+        retries to 429/503. `keep_cookies=False` drops cookies, and `impersonate` sends
+        through a browser's TLS/HTTP2 fingerprint.
+        """
         self._delay = delay
         self._retries = retries
         self._byte_cap = byte_cap
@@ -774,7 +891,7 @@ class Fetcher:
         if impersonate:
             # The browser profile brings its own User-Agent; ours would contradict it.
             self._session = _ImpersonatingSession(
-                max(byte_cap, MAX_BYTES, SEGMENT_MAX_BYTES), keep_cookies
+                max(byte_cap, MAX_BYTES, SEGMENT_MAX_BYTES), keep_cookies=keep_cookies
             )
             return
         session = requests.Session()
@@ -791,28 +908,28 @@ class Fetcher:
         self._session = session
 
     def get(self, url: str, timeout: float = 20.0) -> str | None:
+        """Fetch `url` and return its body as text, or None on failure."""
         return self.get_with_outcome(url, timeout)[0]
 
     def get_with_outcome(
         self, url: str, timeout: float = 20.0
     ) -> tuple[str | None, str]:
-        """`get`, plus the outcome label it recorded (`ok`, `http-404`, `timeout`…),
-        for a caller that must tell a missing resource from a refused one."""
+        """Return `get`'s result plus the outcome label it recorded.
+
+        The label is `ok`, `http-404`, `timeout`…, for a caller that must tell a missing
+        resource from a refused one.
+        """
         host = urlsplit(url).hostname or "?"
         outcome = CONN_ERROR
         for attempt in range(self._retries):
             try:
                 body = self._fetch_following(url, timeout)
-                time.sleep(self._delay)
-                self._stats.record(host, OK)
-                return body, OK
-            except _FetchFailure as exc:
+            except _FetchError as exc:
                 outcome = exc.reason
                 host = exc.host or host  # the failing HOP, not the original URL
-                # The politeness delay applies to failures too. It used to, by accident
-                # (these cases returned None down the success path); dropping it would
-                # let a bot-wall serving redirect loops turn into unthrottled hammering
-                # across every worker — the fastest way to earn a hard block.
+                # The politeness delay applies to failures too: without it, a bot wall
+                # serving redirect loops gets unthrottled requests from every worker,
+                # the fastest way to earn a hard block.
                 # EXCEPT a pacer refusal: no request was made, and a source failing
                 # fast makes thousands of them — delaying each would burn minutes of
                 # pool time being polite about requests that never happened.
@@ -822,7 +939,7 @@ class Fetcher:
             except requests.RequestException as exc:
                 outcome = _classify(exc)
                 # Attribute a mid-redirect-chain failure to the hop that failed, not
-                # the URL the caller asked for. _FetchFailure carries its hop above;
+                # the URL the caller asked for. _FetchError carries its hop above;
                 # requests' exceptions carry the failing response/request instead.
                 hop = getattr(exc.response, "url", None) or getattr(
                     exc.request, "url", None
@@ -835,6 +952,10 @@ class Fetcher:
                 if self._retry_only_shedding and outcome not in _SHEDDING_OUTCOMES:
                     break  # a dead cam costs one attempt; only shedding earns more
                 time.sleep(2**attempt)
+            else:
+                time.sleep(self._delay)
+                self._stats.record(host, OK)
+                return body, OK
         self._stats.record(host, outcome)
         return None, outcome
 
@@ -851,11 +972,11 @@ class Fetcher:
             if self._pacer is not None:
                 acquired = self._pacer.acquire(host)
                 if acquired is None:
-                    raise _FetchFailure(HOST_BACKOFF, host=host)
+                    raise _FetchError(HOST_BACKOFF, host=host)
                 gen = acquired
             ip, reason = _validate_ip(current)
             if ip is None:
-                raise _FetchFailure(reason, host=host)
+                raise _FetchError(reason, host=host)
             # Fresh per-call session pinned to the validated IP (thread-safe).
             with _PinDNS(host, ip):
                 resp = self._session.get(
@@ -869,33 +990,29 @@ class Fetcher:
                     location = resp.headers.get("Location")
                     resp.close()
                     if not location:
-                        raise _FetchFailure(REDIRECT_NO_LOCATION, host=host)
+                        raise _FetchError(REDIRECT_NO_LOCATION, host=host)
                     current = urljoin(current, location)
                     continue
-                if resp.status_code >= 400:
+                if resp.status_code >= HTTPStatus.BAD_REQUEST:
                     # Streamed response: close before raising, or the pooled
                     # connection is only returned by GC — a shedding episode would
                     # leak one per failure against a pool of SCRAPE_WORKERS.
                     resp.close()
                     self._penalise_if_shedding(resp, host, gen)
                 resp.raise_for_status()
-                chunks: list[bytes] = []
-                total = 0
-                for chunk in resp.iter_content(8192):
-                    total += len(chunk)
-                    if total > self._byte_cap:
-                        resp.close()
-                        raise _FetchFailure(TOO_LARGE, host=host)  # oversized → refuse
-                    chunks.append(chunk)
-                return b"".join(chunks).decode("utf-8", "replace")
-        raise _FetchFailure(TOO_MANY_REDIRECTS, host=urlsplit(current).hostname or "")
+                return _read_capped(resp, self._byte_cap, host).decode(
+                    "utf-8", "replace"
+                )
+        raise _FetchError(TOO_MANY_REDIRECTS, host=urlsplit(current).hostname or "")
 
     def _penalise_if_shedding(
         self, resp: requests.Response, host: str, gen: int
     ) -> None:
-        """Feed a 429/503 back to the pacer; log outside its lock. The WARNINGs fire
-        once per breaker trip / oversized Retry-After, not per refused request —
-        refusals themselves are counted as host-backoff outcomes in the stats."""
+        """Feed a 429/503 back to the pacer and log outside its lock.
+
+        The WARNINGs fire once per breaker trip / oversized Retry-After, not per refused
+        request — refusals themselves are counted as host-backoff outcomes in the stats.
+        """
         if self._pacer is None or resp.status_code not in _SHEDDING_STATUSES:
             return
         strikes, window, escalated = self._pacer.penalise(
@@ -927,10 +1044,12 @@ class Fetcher:
     def get_segment(
         self, url: str, range_header: str | None = None
     ) -> tuple[tuple[int, str, str | None, bytes] | None, str]:
-        """Fetch a media segment as bytes, relaying status + Range: the
-        (status, content type, Content-Range, body) result, or None on failure, plus
-        the outcome label, as `get_with_outcome` returns them. An upstream error
-        status is a result, relayed to the player as-is, not a failure."""
+        """Fetch a media segment as bytes, relaying status and Range.
+
+        Returns the (status, content type, Content-Range, body) result, or None on
+        failure, plus the outcome label, as `get_with_outcome` returns them. An upstream
+        error status is a result, relayed to the player as-is, not a failure.
+        """
         ip, reason = _validate_ip(url)
         if ip is None:
             return None, reason
@@ -946,25 +1065,16 @@ class Fetcher:
                     stream=True,
                     allow_redirects=False,
                 )
-                if resp.is_redirect or resp.is_permanent_redirect:
-                    resp.close()
-                    # signed segment URLs shouldn't redirect; refuse
-                    return None, UNEXPECTED_REDIRECT
-                chunks: list[bytes] = []
-                total = 0
-                for chunk in resp.iter_content(65536):
-                    total += len(chunk)
-                    if total > SEGMENT_MAX_BYTES:
-                        resp.close()
-                        return None, TOO_LARGE
-                    chunks.append(chunk)
+                # signed segment URLs shouldn't redirect
+                _refuse_redirect(resp, host)
+                body = _read_capped(resp, SEGMENT_MAX_BYTES, host, chunk_size=65536)
                 return (
                     resp.status_code,
                     resp.headers.get("Content-Type", "video/mp2t"),
                     resp.headers.get("Content-Range"),
-                    b"".join(chunks),
+                    body,
                 ), OK
-        except _FetchFailure as exc:
+        except _FetchError as exc:
             return None, exc.reason
         except requests.RequestException as exc:
             return None, _classify(exc)
@@ -977,8 +1087,10 @@ class Fetcher:
         headers: dict[str, str] | None = None,
         timeout: float = 20.0,
     ) -> tuple[str | None, str]:
-        """A form POST: the body (None on failure) and its outcome label, as
-        `get_with_outcome` returns them."""
+        """Make a form POST; return the body (None on failure) and its outcome label.
+
+        The result has the same shape as `get_with_outcome`'s.
+        """
         host = urlsplit(url).hostname or ""
         body = urlencode(data).encode()
         # Sending pre-encoded bytes means requests won't auto-set the form Content-Type,
@@ -1011,28 +1123,19 @@ class Fetcher:
                         stream=True,
                         allow_redirects=False,
                     )
-                    if resp.is_redirect or resp.is_permanent_redirect:
-                        resp.close()
-                        # admin-ajax POSTs shouldn't redirect; refuse
-                        raise _FetchFailure(UNEXPECTED_REDIRECT, host=host)
-                    if resp.status_code >= 400:
+                    # admin-ajax POSTs shouldn't redirect
+                    _refuse_redirect(resp, host)
+                    if resp.status_code >= HTTPStatus.BAD_REQUEST:
                         resp.close()  # streamed: release the pooled connection
                         self._penalise_if_shedding(resp, host, gen)
                     resp.raise_for_status()
-                    chunks: list[bytes] = []
-                    total = 0
-                    for chunk in resp.iter_content(8192):
-                        total += len(chunk)
-                        if total > MAX_BYTES:
-                            resp.close()
-                            raise _FetchFailure(TOO_LARGE, host=host)
-                        chunks.append(chunk)
+                    raw = _read_capped(resp, MAX_BYTES, host)
                     self._stats.record(host, OK)
-                    # Politeness delay AFTER the body, like get() — it used to run
-                    # mid-response, which held the connection through the sleep.
+                    # Politeness delay after the body, like get(): sleeping
+                    # mid-response would hold the connection through the sleep.
                     time.sleep(self._delay)
-                    return b"".join(chunks).decode("utf-8", "replace"), OK
-            except _FetchFailure as exc:
+                    return raw.decode("utf-8", "replace"), OK
+            except _FetchError as exc:
                 outcome = exc.reason
                 time.sleep(self._delay)  # failures pay the politeness delay too
                 break  # retrying cannot change this verdict

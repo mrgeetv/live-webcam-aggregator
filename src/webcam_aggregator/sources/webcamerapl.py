@@ -1,14 +1,22 @@
+"""webcamera.pl source: the map markers plus category listings, ROT13-decoded HLS."""
+
 from __future__ import annotations
 
 import json
 import re
 import string
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 from urllib.parse import urlsplit
 
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, predisc_key
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    predisc_key,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _BASE = "https://www.webcamera.pl"
 
@@ -42,22 +50,25 @@ _VIDEO_SRC = re.compile(r'"video_src":"((?:[^"\\]|\\.)*+)"')
 _A, _L = string.ascii_uppercase, string.ascii_lowercase
 _ROT13 = str.maketrans(_A + _L, _A[13:] + _A[:13] + _L[13:] + _L[:13])
 
-_H1 = re.compile(r'<h1 id="cam-description-toggler">([^<]*)', re.I)
+_H1 = re.compile(r'<h1 id="cam-description-toggler">([^<]*)', re.IGNORECASE)
 # Trailing listing badges, not part of the cam's name. There are three badge words,
 # so a chain is at most three long; the cap also keeps each match attempt short,
 # since every gap in a chain is a place one can start.
 _BADGE = re.compile(
-    r"(?<!\s)(?:\s*(?:[-–]\s*)?(?:nowość|nowosc|kup dostęp)){1,3}\s*$", re.I
+    r"(?<!\s)(?:\s*(?:[-–]\s*)?(?:nowość|nowosc|kup dostęp)){1,3}\s*$", re.IGNORECASE
 )
 # Compilation feeds that rotate through other cams' streams (one shared tv_cam
 # feed per playlist) — dups of cams we already carry, and the PREMIUM ones are
 # paywalled besides.
-_SKIP_NAME = re.compile(r"playlist|premium", re.I)
+_SKIP_NAME = re.compile(r"playlist|premium", re.IGNORECASE)
 
 
 def _cam_page(url: str) -> str | None:
-    """Canonical cam-page URL, or None for non-cam links (nav, static assets).
-    A cam lives either on its own subdomain or under www's /kamera/ path."""
+    """Return the canonical cam-page URL, or None for non-cam links.
+
+    Non-cam links are nav and static assets. A cam lives either on its own subdomain
+    or under www's /kamera/ path.
+    """
     s = urlsplit(url)
     host = (s.hostname or "").lower()
     if not host.endswith(".webcamera.pl"):
@@ -85,14 +96,15 @@ def _slug_title(url: str) -> str:
 
 
 class WebcameraPlSource(HtmlScraperSource[str]):
-    """webcamera.pl: ~600 Polish cams (Baltic beaches, Tatra/ski resorts, towns),
-    each on its own subdomain with the HLS URL ROT13-encoded in the inline player
-    config — decoded here at discovery, served by DirectHls. Enumeration is the
-    /mapa marker JSON unioned with the five top-level category listings (the map
-    misses most ski cams; the listings carry the category). ctx is the cam's
-    Polish display name (the page h1). Streams are Nimble: the manifest mints a
-    `nimblesessionid` that must survive into segment fetches, so webcamera.pl is
-    segment-proxied."""
+    """webcamera.pl: Polish cams (Baltic beaches, Tatra/ski resorts, towns).
+
+    Each is on its own subdomain with the HLS URL ROT13-encoded in the inline player
+    config, decoded here at discovery and served by DirectHls. Enumeration is the /mapa
+    marker JSON unioned with the five top-level category listings (the map misses most
+    ski cams; the listings carry the category). ctx is the cam's Polish display name
+    (the page h1). Streams are Nimble: the manifest mints a `nimblesessionid` that must
+    survive into segment fetches, so webcamera.pl is segment-proxied.
+    """
 
     name: str = "webcamerapl"
 

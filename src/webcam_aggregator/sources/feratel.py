@@ -1,16 +1,20 @@
+"""feratel.com portal source: sitemap -> webtv cam pages."""
+
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     predisc_key,
     with_location_parts,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # feratel.com's own portal lists every public cam: the sitemap carries the
 # /en/webcams/<country>/<region>/<slug>-<cam id> detail pages (the one- and
@@ -28,13 +32,15 @@ _NAME = re.compile(r"^Webcams in ([^<]*?)-\s*Livecams")
 
 
 class FeratelSource(HtmlScraperSource[str]):
-    """feratel.com portal -> ~1000 Alpine/European cams (ski, lake, town views).
+    """feratel.com portal -> Alpine/European cams (ski, lake, town views).
+
     The candidate is the canonical webtv.feratel.com/webtv/?cam=<id> player page,
-    resolved by the existing metatag extractor (og:video -> a panorama-sweep MP4
-    that serve_stream 302s to the player; an offline or still-image-only cam has
-    no og:video content URL and drops as resolve-failed). Near-all are place
-    views -> blanket "Travel & Events", matching where the geo title fallback
-    would put them. ctx is the cam name from the page <title>."""
+    resolved by the existing metatag extractor (og:video -> a panorama-sweep MP4 that
+    serve_stream 302s to the player; an offline or still-image-only cam has no og:video
+    content URL and drops as resolve-failed). Near-all are place views -> blanket
+    "Travel & Events", matching where the geo title fallback would put them. ctx is the
+    cam name from the page <title>.
+    """
 
     name: str = "feratel"
 

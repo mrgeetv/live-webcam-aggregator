@@ -18,7 +18,7 @@ class _FakeFetch:
         return _STREAMS_JSON if "streams.json" in url else None
 
 
-def test_explore_keeps_live_m3u8_and_dedups():
+def test_explore_keeps_live_m3u8_and_dedups() -> None:
     cands = list(ExploreOrgSource(_FakeFetch()).discover())
     by_title = {c.title: c for c in cands}
 
@@ -34,7 +34,7 @@ def test_explore_keeps_live_m3u8_and_dedups():
         assert (c.predisc_key or "").startswith("hls:")  # direct HLS
 
 
-def test_explore_handles_missing_and_bad_json():
+def test_explore_handles_missing_and_bad_json() -> None:
     class _Broken:
         def get(self, url: str, _timeout: float = 20.0) -> str | None:
             return "not json" if "streams.json" in url else None

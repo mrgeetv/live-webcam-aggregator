@@ -10,7 +10,10 @@ def _player(m3u8: str, h1: str | None = None) -> str:
     # the site ships video_src ROT13-obfuscated inside JSON (slashes escaped)
     src = codecs.encode(m3u8, "rot13").replace("/", "\\/")
     head = f'<h1 id="cam-description-toggler">{h1}</h1>' if h1 is not None else ""
-    return f'{head}<script>var STREAM_PLAYER_CONFIG = {{"video_src":"{src}","autoplay":true}};</script>'
+    return (
+        f"{head}<script>var STREAM_PLAYER_CONFIG = "
+        f'{{"video_src":"{src}","autoplay":true}};</script>'
+    )
 
 
 _MARKERS = {
@@ -59,8 +62,7 @@ def _listing(*hrefs: str) -> str:
 
 _PAGES = {
     _BASE + "/mapa": _MAPA,
-    _BASE
-    + "/kategoria,plaze-i-morze": _listing(
+    _BASE + "/kategoria,plaze-i-morze": _listing(
         "https://hel.webcamera.pl/",
         "https://jaroslawiec.webcamera.pl/",  # inactive marker: stays skipped
         "https://www.webcamera.pl/",  # nav noise, not a cam page
@@ -69,8 +71,7 @@ _PAGES = {
     _BASE + "/kategoria,mazury": _listing(),
     # the city street cam is listed under BOTH miasta and gory: miasta wins
     _BASE + "/kategoria,miasta": _listing("https://krupowki.webcamera.pl/"),
-    _BASE
-    + "/kategoria,stacje-narciarskie": _listing(
+    _BASE + "/kategoria,stacje-narciarskie": _listing(
         "https://czarnagora.webcamera.pl/",  # not on the map at all
         "https://mp4cam.webcamera.pl/",
         "https://offline.webcamera.pl/",
@@ -106,7 +107,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_webcamerapl_discovers_decodes_and_categorises():
+def test_webcamerapl_discovers_decodes_and_categorises() -> None:
     cands = list(WebcameraPlSource(_FakeFetch()).discover())
     by_title = {c.title: c for c in cands}
 
@@ -141,7 +142,7 @@ def test_webcamerapl_discovers_decodes_and_categorises():
         assert (c.predisc_key or "").startswith("hls:")
 
 
-def test_webcamerapl_survives_dead_site():
+def test_webcamerapl_survives_dead_site() -> None:
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None

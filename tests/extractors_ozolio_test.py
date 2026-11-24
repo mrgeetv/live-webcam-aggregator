@@ -1,6 +1,11 @@
+from typing import TYPE_CHECKING
+
 import pytest
 
 from webcam_aggregator.extractors.ozolio import OzolioResolver
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _TARGET = "https://www.ozolio.com/explore/BFWA000002E5"
 
@@ -41,19 +46,20 @@ _OPEN_ROLL = """{
 }"""
 
 
-def _fetch(init: str, opened: str, calls: list[str]):
+def _fetch(init: str, opened: str, calls: list[str]) -> Callable[[str], str]:
     def fetch(url: str) -> str:
         calls.append(url)
         if "cmd=init" in url:
             return init
         if "cmd=open" in url:
             return opened
-        raise AssertionError(f"unexpected fetch {url}")
+        msg = f"unexpected fetch {url}"
+        raise AssertionError(msg)
 
     return fetch
 
 
-def test_ozolio_resolves_live_stream():
+def test_ozolio_resolves_live_stream() -> None:
     calls: list[str] = []
     out = OzolioResolver(_fetch(_INIT, _OPEN_LIVE, calls)).resolve(_TARGET)
 
@@ -61,25 +67,28 @@ def test_ozolio_resolves_live_stream():
     assert out.stream_type == "hls"
     # the Wowza session is minted for whoever fetches the manifest, so the TTL
     # must stay short enough to re-resolve before it lapses
-    assert out.ttl_seconds is not None and out.ttl_seconds <= 240
+    assert out.ttl_seconds is not None
+    assert out.ttl_seconds <= 240
 
     # call 1: init carries the CID and the gating `document` param (urlencoded)
     assert len(calls) == 2
-    assert "cmd=init" in calls[0] and "oid=CID_BFWA000002E5" in calls[0]
+    assert "cmd=init" in calls[0]
+    assert "oid=CID_BFWA000002E5" in calls[0]
     assert (
         "document=https%3A%2F%2Frelay.ozolio.com%2Fpub.api"
         "%3Fcmd%3Dexplore%26oid%3DCID_BFWA000002E5%26channel%3D0" in calls[0]
     )
     # call 2: open uses the session id from init
-    assert "cmd=open" in calls[1] and "oid=SID_KIYC000AF552" in calls[1]
+    assert "cmd=open" in calls[1]
+    assert "oid=SID_KIYC000AF552" in calls[1]
 
 
-def test_ozolio_canned_loop_is_rejected():
+def test_ozolio_canned_loop_is_rejected() -> None:
     with pytest.raises(ValueError, match="canned loop"):
         OzolioResolver(_fetch(_INIT, _OPEN_ROLL, [])).resolve(_TARGET)
 
 
-def test_ozolio_no_session_raises():
+def test_ozolio_no_session_raises() -> None:
     # the relay's refusal shape is an HTML error page, not JSON
     html = "<html><h2>ERROR: 403 Forbidden</h2></html>"
     with pytest.raises(ValueError, match="non-JSON"):
@@ -89,29 +98,30 @@ def test_ozolio_no_session_raises():
         OzolioResolver(_fetch('{"channel": []}', _OPEN_LIVE, [])).resolve(_TARGET)
 
 
-def test_ozolio_open_without_source_raises():
+def test_ozolio_open_without_source_raises() -> None:
     with pytest.raises(ValueError, match="no stream"):
         OzolioResolver(_fetch(_INIT, '{"output": {"media": "LIVE"}}', [])).resolve(
             _TARGET
         )
 
 
-def test_ozolio_target_without_cid_raises():
+def test_ozolio_target_without_cid_raises() -> None:
     with pytest.raises(ValueError, match="no camera id"):
         OzolioResolver(lambda _u: "").resolve("https://www.ozolio.com/about-us/")
 
 
-def test_ozolio_cid_prefixed_target_parses_the_bare_id():
+def test_ozolio_cid_prefixed_target_parses_the_bare_id() -> None:
     # a CID_-prefixed explore URL must yield the bare id, not capture "CID" and
     # silently query oid=CID_CID
     calls: list[str] = []
     OzolioResolver(_fetch(_INIT, _OPEN_LIVE, calls)).resolve(
         "https://www.ozolio.com/explore/CID_BFWA000002E5"
     )
-    assert "oid=CID_BFWA000002E5" in calls[0] and "CID_CID" not in calls[0]
+    assert "oid=CID_BFWA000002E5" in calls[0]
+    assert "CID_CID" not in calls[0]
 
 
-def test_ozolio_error_messages_carry_no_url():
+def test_ozolio_error_messages_carry_no_url() -> None:
     # errors feed the aggregated resolve-failed detail at INFO; a URL would leak
     # session ids and shatter one failure mode into per-URL buckets
     for init, opened, target in [
@@ -119,6 +129,6 @@ def test_ozolio_error_messages_carry_no_url():
         ('{"x": 1}', _OPEN_LIVE, _TARGET),
         (_INIT, _OPEN_LIVE, "https://elsewhere.example/"),
     ]:
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ValueError, match="ozolio:") as exc:
             OzolioResolver(_fetch(init, opened, [])).resolve(target)
         assert "http" not in str(exc.value)

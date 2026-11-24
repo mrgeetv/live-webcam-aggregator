@@ -7,7 +7,7 @@ from webcam_aggregator.extractors.skyline import SkylineResolver
 _FIX = Path(__file__).parent / "fixtures"
 
 
-def test_skyline_resolver_builds_hd_auth_manifest_url():
+def test_skyline_resolver_builds_hd_auth_manifest_url() -> None:
     page = (_FIX / "skyline_cam.html").read_text()  # a real, trimmed cam page
     r = SkylineResolver(lambda _u: page).resolve(
         "https://www.skylinewebcams.com/en/webcam/x.html"
@@ -23,8 +23,8 @@ def test_skyline_resolver_builds_hd_auth_manifest_url():
     assert r.ttl_seconds == 60
 
 
-def test_skyline_resolver_raises_when_no_token():
-    with pytest.raises(ValueError) as exc:
+def test_skyline_resolver_raises_when_no_token() -> None:
+    with pytest.raises(ValueError, match="skyline:") as exc:
         SkylineResolver(lambda _u: "<strong>OFFLINE</strong>").resolve(
             "https://www.skylinewebcams.com/en/webcam/x.html"
         )

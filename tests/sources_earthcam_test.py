@@ -1,10 +1,18 @@
-from webcam_aggregator.sources.earthcam import EarthCamSource
+from webcam_aggregator.sources.earthcam import (
+    EarthCamSource,
+    _routable,  # pyright: ignore[reportPrivateUsage]
+)
 
 # get_locations_network wraps places in {"data":[...]}; get_locations is a bare list.
 _NETWORK_JSON = """{"status":"200","data":[{"places":[
- {"name":"Abbey Road Crossing Cam","url":"https://www.earthcam.com/world/england/london/abbeyroad/","country":"England","city":"London"},
- {"name":"Times Square","url":"https://www.earthcam.com/usa/newyork/timessquare/?cam=tsrobo1","country":"United States","state":"New York","city":"New York"},
- {"name":"Client Landing","url":"https://www.earthcam.com/clients/uky/","country":"United States"},
+ {"name":"Abbey Road Crossing Cam",
+  "url":"https://www.earthcam.com/world/england/london/abbeyroad/",
+  "country":"England","city":"London"},
+ {"name":"Times Square",
+  "url":"https://www.earthcam.com/usa/newyork/timessquare/?cam=tsrobo1",
+  "country":"United States","state":"New York","city":"New York"},
+ {"name":"Client Landing","url":"https://www.earthcam.com/clients/uky/",
+  "country":"United States"},
  {"name":"My Cam","url":"http://myearthcam.com/seaair"}
 ]}]}"""
 _GLOBAL_JSON = """[{"places":[
@@ -24,7 +32,7 @@ class _FakeFetch:
         return None
 
 
-def test_earthcam_keeps_routable_drops_unservable_and_dedups():
+def test_earthcam_keeps_routable_drops_unservable_and_dedups() -> None:
     cands = list(EarthCamSource(_FakeFetch()).discover())
     by_target = {c.target_url: c for c in cands}
 
@@ -33,7 +41,8 @@ def test_earthcam_keeps_routable_drops_unservable_and_dedups():
     assert abbey in by_target
     assert any("/usa/newyork/timessquare/" in t for t in by_target)
 
-    # partner YouTube normalised to a watch URL + de-duped across BOTH feeds (one, not two)
+    # partner YouTube normalised to a watch URL + de-duped across BOTH feeds (one,
+    # not two)
     yt = [c for c in cands if c.predisc_key == "yt:aaaaaaaaaaa"]
     assert len(yt) == 1
     assert yt[0].target_url == "https://www.youtube.com/watch?v=aaaaaaaaaaa"
@@ -51,7 +60,7 @@ def test_earthcam_keeps_routable_drops_unservable_and_dedups():
     assert by_target[abbey].title == "Abbey Road Crossing Cam — London, England"
 
 
-def test_earthcam_handles_missing_and_bad_json():
+def test_earthcam_handles_missing_and_bad_json() -> None:
     class _Broken:
         def get(self, url: str, _timeout: float = 20.0) -> str | None:
             return "not json at all" if "network" in url else None
@@ -59,11 +68,7 @@ def test_earthcam_handles_missing_and_bad_json():
     assert list(EarthCamSource(_Broken()).discover()) == []
 
 
-def test_earthcam_reserved_youtube_embed_paths_are_not_video_ids():
-    from webcam_aggregator.sources.earthcam import (
-        _routable,  # pyright: ignore[reportPrivateUsage]
-    )
-
+def test_earthcam_reserved_youtube_embed_paths_are_not_video_ids() -> None:
     assert _routable("https://www.youtube.com/embed/videoseries?list=PLx") is None
     assert _routable("https://www.youtube.com/embed/live_stream?channel=UCx") is None
     assert _routable("https://www.youtube.com/embed/aaaaaaaaaaa") == (

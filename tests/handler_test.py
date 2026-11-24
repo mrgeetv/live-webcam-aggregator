@@ -9,9 +9,7 @@ import threading
 import time
 import urllib.parse
 from http.server import ThreadingHTTPServer
-from typing import Any
-
-import pytest
+from typing import TYPE_CHECKING, Any
 
 from webcam_aggregator.app import CatalogueStore, make_handler
 from webcam_aggregator.cache import ResolveCache
@@ -19,6 +17,11 @@ from webcam_aggregator.catalogue import build_catalogue
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.signing import sign
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    import pytest
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -46,21 +49,21 @@ _RESOLVED_URL = "https://cdn.example/cam/playlist.m3u8"
 class _FakeSource:
     name: str = "fake"
 
-    def discover(self):  # type: ignore[override]
+    def discover(self) -> Iterator[Candidate]:
         yield _CANDIDATE
 
 
-def _make_store(ready: bool = True) -> tuple[CatalogueStore, str]:
+def _make_store(*, ready: bool = True) -> tuple[CatalogueStore, str]:
     store = CatalogueStore()
     if ready:
         entries = build_catalogue(
             [_FakeSource()],
-            drop_reason_for=lambda c: None,
+            drop_reason_for=lambda _c: None,
             youtube_live=lambda ids: {i: i for i in ids},
             history={},
         )
         store.swap(entries)
-        entry_id = list(store.snapshot().keys())[0]
+        entry_id = next(iter(store.snapshot().keys()))
     else:
         entry_id = "irrelevant"
     return store, entry_id
@@ -108,7 +111,7 @@ def _start_server(
         store,
         cache,
         _BASE_URL,
-        _manifest_fetch,
+        manifest_fetch=_manifest_fetch,
         source_status=lambda: ss,
         segment_fetch=_segment_fetch,
     )
@@ -273,8 +276,10 @@ def test_health_returns_correct_json() -> None:
 
 
 def test_health_unhealthy_when_source_failed() -> None:
-    """A source that crashed / returned 0 this cycle flips healthy False and is named,
-    even though the store is ready (the empty-guard is still masking it in the playlist).
+    """A source that crashed or returned 0 this cycle flips healthy to False.
+
+    The source is named, even though the store is ready (the empty-guard is still
+    masking it in the playlist).
     """
     store, _ = _make_store()  # ready=True
     status = {
@@ -293,8 +298,11 @@ def test_health_unhealthy_when_source_failed() -> None:
 
 
 def test_health_not_healthy_during_cold_start() -> None:
-    """Before the first build completes (not ready), healthy is False even with no
-    failing sources — guards against a fresh container reporting a false all-clear."""
+    """Before the first build completes (not ready), healthy is False.
+
+    That holds even with no failing sources, which guards against a fresh container
+    reporting a false all-clear.
+    """
     store, _ = _make_store(ready=False)
     server, port = _start_server(store, source_status=_healthy_status())
     try:

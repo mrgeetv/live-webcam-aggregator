@@ -1,10 +1,18 @@
+"""worldcams.tv source: list pages -> cam detail pages -> embeds."""
+
 from __future__ import annotations
 
 import re
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, with_location
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    with_location,
+)
+
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 _MAX_LIST_PAGES = 80
 # Tag keyword in a lookahead, tag skipped possessively (why: airportwebcams._TITLE).
@@ -19,6 +27,8 @@ _Ctx = tuple[str, dict[str, str]]
 
 
 class WorldcamsSource(HtmlScraperSource[_Ctx]):
+    """worldcams.tv cams: list pages in sequence, detail pages concurrently."""
+
     name: str = "worldcams"
 
     @override

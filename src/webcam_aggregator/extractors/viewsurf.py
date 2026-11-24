@@ -1,15 +1,21 @@
+"""Viewsurf extractor: joada embed uuid -> the platform API's HLS manifest URL."""
+
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # viewsurf cams play through Quanteec's joada.net player. The embed URL carries the
 # cam's stable uuid; the player asks the platform API for the current sources:
 #   GET https://platforms<N>.joada.net/api/videos/manifest/<uuid>
-#     -> {"m3u8": "https://<delivery>/contents/encodings/<live|vod>/<uuid>/master.m3u8", …}
+#     -> {"m3u8": "https://<delivery>/contents/encodings/<live|vod>/<uuid>/
+#                  master.m3u8", …}
 #
 # The HLS chain is open: no token in any URL, and manifests + fMP4 segments serve
 # without a Referer — so nothing here needs _PROXY_SEGMENT_HOSTS. But the delivery
@@ -24,15 +30,20 @@ _UUID = re.compile(r"[?&]uuid=([0-9a-f-]+)")
 
 
 class ViewsurfResolver:
+    """Resolve a viewsurf joada embed to its HLS URL through the platform API."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a response body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to the HLS URL for its uuid, trying each API host."""
         m = _UUID.search(target_url)
         if not m:
-            raise ValueError("viewsurf: no uuid in embed url")
+            msg = "viewsurf: no uuid in embed url"
+            raise ValueError(msg)
         uuid = m.group(1)
         # A dead platform host can answer with an HTML maintenance page (a 200, not a
         # raised fetch), so treat a non-JSON body as a failure and fall through to the
@@ -51,8 +62,10 @@ class ViewsurfResolver:
                 doc = parsed
                 break
         if doc is None:
-            raise ValueError("viewsurf: no manifest from any api host")
+            msg = "viewsurf: no manifest from any api host"
+            raise ValueError(msg)
         m3u8 = doc.get("m3u8")
         if not isinstance(m3u8, str) or not m3u8:
-            raise ValueError("viewsurf: no m3u8 in manifest api response")
+            msg = "viewsurf: no m3u8 in manifest api response"
+            raise ValueError(msg)
         return Resolved(url=m3u8, stream_type="hls", ttl_seconds=1800)

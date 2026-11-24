@@ -1,9 +1,11 @@
 import logging
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from webcam_aggregator.sources.skyline import SkylineSource
+
+if TYPE_CHECKING:
+    import pytest
 
 _BASE = "https://www.skylinewebcams.com"
 _SITEMAP = f"{_BASE}/sitemap_en.xml"
@@ -33,8 +35,9 @@ def _sitemap(*paths: str) -> str:
     return f'<?xml version="1.0"?><urlset>{locs}</urlset>'
 
 
-# Everything is exercised through the public discover(); the per-page hooks are internal.
-def test_skyline_discover_enumerates_cams_from_the_sitemap():
+# Everything is exercised through the public discover(); the per-page hooks are
+# internal.
+def test_skyline_discover_enumerates_cams_from_the_sitemap() -> None:
     own = "/en/webcam/italia/lazio/roma/roma-colosseo.html"
     yt = "/en/webcam/united-states/florida/jacksonville/bald-eagle-s-nest.html"
     off = "/en/webcam/italia/abruzzo/chieti/roccacaramanico.html"
@@ -78,7 +81,7 @@ def test_skyline_discover_enumerates_cams_from_the_sitemap():
 
 def test_skyline_categories_come_from_the_category_pages(
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     beach = "/en/webcam/espana/canarias/santa-cruz-de-tenerife/playa-las-vistas.html"
     drone = "/en/webcam/italia/lazio/roma/drone-cam.html"
     fetch = _FakeFetch(

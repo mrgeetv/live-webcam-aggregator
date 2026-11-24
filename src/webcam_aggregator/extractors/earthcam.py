@@ -1,9 +1,14 @@
+"""EarthCam extractor: cam page -> its live, token-bearing m3u8."""
+
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # EarthCam pages embed the live HLS in a JSON config (forward-slashes \/-escaped):
 #   https:\/\/videos-N.earthcam.com\/<path>\/playlist.m3u8?t=<token>&td=<ts>
@@ -15,19 +20,24 @@ _LIVE_RUN = re.compile(r"https:(?:\\?/){2}videos-\d+\.earthcam\.com[^\"'\s]+")
 
 
 class EarthcamResolver:
+    """Resolve an EarthCam page to its live HLS URL."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a page body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to the live HLS URL in its page; raise if offline."""
         body = self._fetch(target_url)
         m = next((r for r in _LIVE_RUN.finditer(body) if ".m3u8" in r.group(0)), None)
         if not m:
             # no URL in the message: it feeds the aggregated resolve-failed detail
             # at INFO, where a URL would shatter one failure mode into per-cam
             # buckets (liveness already logs the URL at DEBUG)
-            raise ValueError("earthcam: no live HLS (offline?)")
+            msg = "earthcam: no live HLS (offline?)"
+            raise ValueError(msg)
         return Resolved(
             url=m.group(0).replace("\\/", "/"), stream_type="hls", ttl_seconds=120
         )

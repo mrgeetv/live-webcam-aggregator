@@ -1,5 +1,7 @@
-"""The pre-commit check that hadolint's pinned image tag follows its rev
-(scripts/check_hadolint_pin.py)."""
+"""Tests for the pre-commit check that hadolint's pinned image tag follows its rev.
+
+The check is scripts/check_hadolint_pin.py.
+"""
 
 from __future__ import annotations
 
@@ -34,4 +36,5 @@ def test_bumped_rev_with_stale_tag_names_both_versions() -> None:
     config = _CONFIG.format(rev="v2.16.0", tag="v2.15.1")
     message = check_hadolint_pin.mismatch(config)
     assert message is not None
-    assert "v2.16.0" in message and "v2.15.1" in message
+    assert "v2.16.0" in message
+    assert "v2.15.1" in message

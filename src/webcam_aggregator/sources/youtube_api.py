@@ -1,12 +1,18 @@
+"""YouTube Data API source: live-stream search and the liveness lookup."""
+
 from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable, Iterable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..logging_redaction import scrub
-from ..models import Candidate
+from webcam_aggregator.logging_redaction import scrub
+from webcam_aggregator.models import Candidate
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
+
+    from googleapiclient._apis.youtube.v3.resources import YouTubeResource
 
 log = logging.getLogger("webcam-aggregator.sources.youtube")
 
@@ -38,21 +44,25 @@ class YoutubeApiSource:
     fails. httplib2 evicts a connection from its pool only on `socket.timeout` — a
     `BrokenPipeError` leaves the dead socket in place, so every later call reuses it and
     fails instantly (no round trip) for as long as the client lives, which across a
-    long-lived process means cycle after cycle. `num_retries` does not help: googleapiclient
-    retries through that same pooled connection. Replacing the client replaces the Http
-    object, and with it the pool.
+    long-lived process means cycle after cycle. `num_retries` does not help:
+    googleapiclient retries through that same pooled connection. Replacing the client
+    replaces the Http object, and with it the pool.
     """
 
     name: str = "youtube-api"
-    _new_client: Callable[[], Any]
-    _c: Any | None
+    _new_client: Callable[[], YouTubeResource]
+    _c: YouTubeResource | None
     _query: str
     _max: int
     _lock: threading.Lock
 
     def __init__(
-        self, client_factory: Callable[[], Any], query: str, max_videos: int = 1000
+        self,
+        client_factory: Callable[[], YouTubeResource],
+        query: str,
+        max_videos: int = 1000,
     ) -> None:
+        """Take a client factory (not a client), the search `query` and a video cap."""
         self._new_client = client_factory
         self._c = None
         self._query = query
@@ -66,7 +76,7 @@ class YoutubeApiSource:
         self._lock = threading.Lock()
 
     @property
-    def _client(self) -> Any:
+    def _client(self) -> YouTubeResource:
         if self._c is None:
             self._c = self._new_client()
         return self._c
@@ -76,6 +86,7 @@ class YoutubeApiSource:
         self._c = None
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield live videos from `search.list`, paging back with `publishedBefore`."""
         # YouTube caps an eventType=live search at ~100 results via pageToken (it
         # reports an inflated totalResults but returns an empty page 3). Paginate by
         # walking backwards in time with publishedBefore instead — each window is a
@@ -96,7 +107,9 @@ class YoutubeApiSource:
             try:
                 with self._lock:
                     resp = self._client.search().list(**params).execute()
-            except Exception as exc:
+            # Any failure (an HttpError, a wedged socket's BrokenPipeError) ends this
+            # search with what it has; it must never abort the build.
+            except Exception as exc:  # noqa: BLE001
                 # Report what ACTUALLY went wrong. Blaming API quota for every failure
                 # misdiagnoses the common ones — a wedged socket raises BrokenPipeError
                 # with no HTTP status at all. NEVER format the exception raw:
@@ -125,12 +138,15 @@ class YoutubeApiSource:
                 break
             before = len(seen)
             for it in items:
-                vid = it["id"]["videoId"]
-                if vid in seen:
+                # Both keys are optional in the API's schema: skip an item without
+                # them rather than let one end the whole search.
+                vid = it.get("id", {}).get("videoId")
+                title = it.get("snippet", {}).get("title")
+                if not vid or title is None or vid in seen:
                     continue
                 seen.add(vid)
                 yield Candidate(
-                    title=it["snippet"]["title"],
+                    title=title,
                     angle_key=None,
                     category=None,
                     source="youtube-api",
@@ -162,11 +178,13 @@ class YoutubeApiSource:
                 self._drop_client()
                 raise
             for it in resp.get("items", []):
+                vid = it.get("id")
                 snip = it.get("snippet", {})
                 details = it.get("liveStreamingDetails", {})
                 if (
-                    snip.get("liveBroadcastContent") == "live"
+                    vid
+                    and snip.get("liveBroadcastContent") == "live"
                     and "actualEndTime" not in details
                 ):
-                    live[it["id"]] = _YT_CATEGORIES.get(snip.get("categoryId", ""), "")
+                    live[vid] = _YT_CATEGORIES.get(snip.get("categoryId", ""), "")
         return live

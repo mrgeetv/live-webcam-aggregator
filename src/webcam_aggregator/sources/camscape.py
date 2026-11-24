@@ -1,3 +1,5 @@
+"""camscape.com source: sitemap -> cam pages -> embeds, camsecure resolved early."""
+
 from __future__ import annotations
 
 import json
@@ -6,9 +8,13 @@ import re
 from typing import override
 from urllib.parse import urlsplit
 
-from ..models import Candidate
-from .base import HtmlScraperSource, predisc_key, with_location_parts
-from .camsecure import hls_from_player, player_iframe
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    predisc_key,
+    with_location_parts,
+)
+from webcam_aggregator.sources.camsecure import hls_from_player, player_iframe
 
 log = logging.getLogger("webcam-aggregator.camscape")
 
@@ -78,7 +84,8 @@ _WEBCAM_SITEMAP = re.compile(
 )
 _CAM = re.compile(r"<loc>(https://www\.camscape\.com/webcam/[a-z0-9-]+/)</loc>")
 # The cam's own tags are its `where-link`s. Every page's nav also links a seasonal
-# category (/showing/christmas/), so an unanchored /showing/ match tags every cam with it.
+# category (/showing/christmas/), so an unanchored /showing/ match tags every cam with
+# it.
 _TAG = re.compile(r'class="where-link" href="/showing/([a-z0-9-]+)/"')
 _LOC = re.compile(r'class="where-link" href="/location/([a-z0-9-]+)/"')
 _STREAMS = '<script id="streams-data" type="application/json">'
@@ -86,9 +93,12 @@ _CHANNEL = re.compile(r"[?&]channel=([A-Za-z0-9_]+)")
 
 
 def _is_camsecure(url: str) -> bool:
-    """A camsecure embed (camsecure.co / .uk / .co.uk, any subdomain), resolved to its
-    HLS below. Read from the hostname's labels: as a regex, a run of label repeats and
-    the `camsecure.` literal compete for the same characters."""
+    """Match a camsecure embed (camsecure.co / .uk / .co.uk, any subdomain).
+
+    The embed is resolved to its HLS below. It is read from the hostname's labels: as a
+    regex, a run of label repeats and the `camsecure.` literal compete for the same
+    characters.
+    """
     parts = urlsplit(url)
     labels = (parts.hostname or "").split(".")
     return "camsecure" in labels[:-1] and parts.path.startswith("/")
@@ -112,6 +122,8 @@ def _streams(html: str) -> list[dict[str, object]]:
 
 
 class CamscapeSource(HtmlScraperSource[_Ctx]):
+    """camscape.com cams, listed by its sitemaps; each page's JSON holds the embeds."""
+
     name: str = "camscape"
 
     @override
@@ -123,7 +135,8 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         unmapped = sorted(s for s in slugs if s not in _CATEGORY)
         if unmapped:
             log.warning(
-                "camscape: %d category page(s) not in _CATEGORY (-> Unmapped Category): %s",
+                "camscape: %d category page(s) not in _CATEGORY "
+                "(-> Unmapped Category): %s",
                 len(unmapped),
                 ", ".join(unmapped),
             )
@@ -141,7 +154,8 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         category = next((_CATEGORY[t] for t in tags if _CATEGORY.get(t)), None)
         if category is None:
             # No mapped tag: surface an unknown tag so it lands in "Unmapped Category"
-            # (+ gets logged); else None -> "Other" (untagged, or only None-mapped tags).
+            # (+ gets logged); else None -> "Other" (untagged, or only None-mapped
+            # tags).
             category = next((t for t in tags if t not in _CATEGORY), None)
         locs = dict.fromkeys(_LOC.findall(html))
         location = [loc.replace("-", " ").title() for loc in locs]
@@ -158,7 +172,7 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         )
 
     def _camsecure_hls(self, embed: str) -> str | None:
-        """A camsecure embed -> its direct HLS, or None if it doesn't resolve.
+        """Resolve a camsecure embed to its direct HLS, or None if it doesn't resolve.
 
         camscape embeds camsecure players (including white-label ones for third
         parties, which are absent from camsecure's own sitemap and so unreachable
@@ -168,7 +182,8 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         `portland_harbour_webcam.html` serves `weymouthsailing.m3u8`. The URL is a
         static open-CDN path (no token), which is why the camsecure source stores
         it the same way. Only a handful of embeds per build, so a serial hop is
-        cheaper than the duplicate channels we would otherwise ship."""
+        cheaper than the duplicate channels we would otherwise ship.
+        """
         page = self._fetch.get(embed) or ""
         direct = hls_from_player(page, embed)
         if direct:

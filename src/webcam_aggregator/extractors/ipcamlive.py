@@ -1,13 +1,19 @@
+"""IPCamLive extractor: player page `address` + `streamid` -> the stream's m3u8."""
+
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
 
-# ipcamlive embeds: g*.ipcamlive.com/player/player.php?alias=<id>. The player page exposes
-# `var address` + `var streamid`, which build <address>streams/<streamid>/stream.m3u8.
-# streamid is EMPTY for an offline cam -> unresolvable (raise; liveness validation drops it).
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# ipcamlive embeds: g*.ipcamlive.com/player/player.php?alias=<id>. The player page
+# exposes `var address` + `var streamid`, which build
+# <address>streams/<streamid>/stream.m3u8. streamid is EMPTY for an offline cam ->
+# unresolvable (raise; liveness validation drops it).
 #
 # Route ONLY player/player.php URLs and bare alias landing pages here. Direct
 # s*.ipcamlive.com/streams/<id>/stream.m3u8 URLs (the majority) must fall through to
@@ -25,12 +31,14 @@ _STREAMID = re.compile(r'var\s+streamid\s*=\s*["\']([^"\']+)["\']')
 # would route here and surface as resolve-failed rather than no-extractor. Accepted:
 # candidates only arrive from scraped embeds, and a denylist of the site's own pages
 # would be guesswork that rots.
-_ALIAS_URL = re.compile(r"^https?://(?:www\.)?ipcamlive\.com/([A-Za-z0-9_-]+)/?$", re.I)
+_ALIAS_URL = re.compile(
+    r"^https?://(?:www\.)?ipcamlive\.com/([A-Za-z0-9_-]+)/?$", re.IGNORECASE
+)
 _PLAYER = "https://g0.ipcamlive.com/player/player.php?alias="
 
 
 def is_alias_page(url: str) -> bool:
-    """True for a bare https://www.ipcamlive.com/<alias> landing page."""
+    """Return True for a bare https://www.ipcamlive.com/<alias> landing page."""
     return _ALIAS_URL.match(url) is not None
 
 
@@ -40,19 +48,24 @@ def _player_url(target_url: str) -> str:
 
 
 class IpcamliveResolver:
+    """Resolve an ipcamlive player or share page to its HLS URL."""
+
     _fetch: Callable[[str], str]
 
     def __init__(self, fetch: Callable[[str], str]) -> None:
+        """Take the `fetch` callable that returns a page body as text."""
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to its HLS URL, raising if the cam is offline."""
         player_url = _player_url(target_url)
         body = self._fetch(player_url)
         addr = _ADDRESS.search(body)
         sid = _STREAMID.search(body)
         if not (addr and sid):
             # no URL in the message — see the aggregated-detail rule in AGENTS.md
-            raise ValueError("ipcamlive: no address/streamid (offline?)")
+            msg = "ipcamlive: no address/streamid (offline?)"
+            raise ValueError(msg)
         base = addr.group(1).rstrip("/")
         return Resolved(
             url=f"{base}/streams/{sid.group(1)}/stream.m3u8",

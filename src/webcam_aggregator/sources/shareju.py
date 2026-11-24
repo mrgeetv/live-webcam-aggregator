@@ -1,12 +1,18 @@
+"""Share-Ju (its-i.com) source: the /camera JSON-LD index of Japanese YouTube lives."""
+
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
-from ..fetch import FetcherProtocol
-from ..models import Candidate
-from .base import predisc_key
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import predisc_key
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from webcam_aggregator.fetch import FetcherProtocol
 
 # Share-Ju (its-i.com) lists every cam on the ONE /camera index as a schema.org
 # ItemList of VideoObjects (name, YouTube embedUrl, per-cam page url, address, and
@@ -22,7 +28,7 @@ _LD_JSON = re.compile(
 # Every name is wrapped in the same boilerplate:
 # 【ライブカメラ映像再生】<cam name>【Share-Ju】公開カメラ
 _NAME_PREFIX = re.compile(r"^【[^】]*】")
-_NAME_SUFFIX = re.compile(r"【Share-Ju】.*$", re.M)
+_NAME_SUFFIX = re.compile(r"【Share-Ju】.*$", re.MULTILINE)
 # The cam's tags sit in the description as このカメラに付されているタグ（tag tag …）.
 # The tags run to the first ）; the span also stops at the next tag block, so an
 # unclosed one isn't rescanned from every block after it.
@@ -88,26 +94,30 @@ def _category(item: dict[str, object]) -> str | None:
 
 
 class SharejuSource:
-    """Share-Ju (its-i.com) Japanese live-cam directory, via the /camera index's
-    JSON-LD ItemList. Almost every cam is a Japanese-titled YouTube live an English
-    SEARCH_QUERY never surfaces; the few third-party iframes stay visible
-    `no-extractor` drops."""
+    """Share-Ju (its-i.com) Japanese live-cam directory.
+
+    Cams come from the /camera index's JSON-LD ItemList. Almost every cam is a
+    Japanese-titled YouTube live an English SEARCH_QUERY never surfaces; the few
+    third-party iframes stay visible `no-extractor` drops.
+    """
 
     name: str = "shareju"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each entry in the index's JSON-LD ItemList."""
         html = self._fetch.get(_INDEX)
         if not html:
             return
         seen: set[str] = set()
         for block in _LD_JSON.findall(html):
             try:
-                # strict=False: the blob carries raw control characters inside
-                # strings (a literal newline in one embedUrl), which strict JSON rejects.
+                # strict=False: the blob carries raw control characters inside strings
+                # (a literal newline in one embedUrl), which strict JSON rejects.
                 data = json.loads(block, strict=False)
             except ValueError:
                 continue

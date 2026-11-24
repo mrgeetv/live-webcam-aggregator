@@ -1,13 +1,28 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
+import googleapiclient.discovery
 import pytest
 
-from webcam_aggregator.app import origin_of
+import webcam_aggregator.app as _app
+from webcam_aggregator.app import (
+    NoExtractorError,
+    _source_status_for,  # pyright: ignore[reportPrivateUsage]
+    make_liveness_check,
+    origin_of,
+)
+from webcam_aggregator.catalogue import Hist
+from webcam_aggregator.config import Config
 from webcam_aggregator.extractors.base import Resolved
+from webcam_aggregator.fetch import (
+    Fetcher,
+    _ImpersonatingSession,  # pyright: ignore[reportPrivateUsage]
+)
 from webcam_aggregator.models import Candidate
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 # ---------------------------------------------------------------------------
 # origin_of helper — must return the scheme+host with trailing slash
@@ -42,25 +57,23 @@ def test_origin_of_no_trailing_slash_duplication() -> None:
 
 
 def test_resolver_fetch_failures_carry_the_outcome_but_no_url() -> None:
-    """The message feeds the aggregated resolve-failure detail and the serve-time
-    resolve-failed line: the outcome says why, and a URL would leak its query."""
-    import webcam_aggregator.app as _app
-    from webcam_aggregator.fetch import Fetcher
+    """The resolver error message carries the outcome but no URL.
 
+    The message feeds the aggregated resolve-failure detail and the serve-time
+    resolve-failed line: the outcome says why, and a URL would leak its query.
+    """
     resolver_get = _app._resolver_get  # pyright: ignore[reportPrivateUsage]
     baltic_post = _app._baltic_post  # pyright: ignore[reportPrivateUsage]
     f = Fetcher(delay=0.0, retries=1)  # loopback: refused before any request
-    with pytest.raises(ValueError) as got:
+    with pytest.raises(ValueError, match="resolver fetch failed") as got:
         resolver_get(f)("http://127.0.0.1/cam?tok=SECRET")
     assert str(got.value) == "resolver fetch failed: blocked-ip"
-    with pytest.raises(ValueError) as posted:
+    with pytest.raises(ValueError, match="resolver post failed") as posted:
         baltic_post(f)("http://127.0.0.1/ajax", {"a": "b"})
     assert str(posted.value) == "resolver post failed: blocked-ip"
 
 
 def test_baltic_post_sends_xhr_and_site_origin_referer() -> None:
-    import webcam_aggregator.app as _app
-
     _baltic_post = _app._baltic_post  # pyright: ignore[reportPrivateUsage]
 
     captured: dict[str, Any] = {}
@@ -104,8 +117,11 @@ def _probe_candidate(target: str = "https://x/p.m3u8") -> Candidate:
 def _upstream(
     pages: dict[str, str | tuple[None, str]],
 ) -> Callable[[str], tuple[str | None, str]]:
-    """A fake probe fetch: a str is a 200 body, a tuple a failed fetch and its
-    outcome, and an unlisted URL a 404."""
+    """Fake the probe fetch.
+
+    A str is a 200 body, a tuple a failed fetch and its outcome, and an unlisted URL a
+    404.
+    """
 
     def fetch(url: str) -> tuple[str | None, str]:
         page = pages.get(url, (None, "http-404"))
@@ -115,9 +131,6 @@ def _upstream(
 
 
 def test_liveness_check_fetch_verifies_hls() -> None:
-    from webcam_aggregator.app import make_liveness_check
-    from webcam_aggregator.extractors.base import Resolved
-
     def resolve(_id: str, _url: str) -> Resolved:
         return Resolved(url="https://cdn.x/p.m3u8", stream_type="hls", ttl_seconds=None)
 
@@ -131,12 +144,12 @@ def test_liveness_check_fetch_verifies_hls() -> None:
 
 
 def test_liveness_rejects_an_empty_playlist() -> None:
-    """A CDN handed an expired token answers 200 with a well-formed but empty
-    playlist rather than a 404 — listing that cam ships a stream no player can
-    start, so liveness must judge on content, not the #EXTM3U header."""
-    from webcam_aggregator.app import make_liveness_check
-    from webcam_aggregator.extractors.base import Resolved
+    """An empty 200 playlist is dead, whatever its header says.
 
+    A CDN handed an expired token answers 200 with a well-formed but empty playlist
+    rather than a 404. Listing that cam ships a stream no player can start, so liveness
+    must judge on content, not the #EXTM3U header.
+    """
     url = "https://hd-auth.x/live.m3u8?a=x"
 
     def resolve(_id: str, _url: str) -> Resolved:
@@ -160,21 +173,21 @@ def _master_resolve(_id: str, _url: str) -> Resolved:
 
 
 def test_liveness_accepts_a_master_playlist() -> None:
-    """Requiring segments alone would drop every master playlist — variants, not
-    #EXTINF — which is what most CDN top-level URLs return."""
-    from webcam_aggregator.app import make_liveness_check
+    """Requiring segments alone would drop every master playlist.
 
+    Variants, not #EXTINF — which is what most CDN top-level URLs return.
+    """
     variant = "#EXTM3U\n#EXTINF:2.0,\nseg.ts\n"
     fetch = _upstream({_MASTER_URL: _MASTER, _VARIANT_URL: variant})
     assert make_liveness_check(_master_resolve, fetch)(_probe_candidate()) is None
 
 
 def test_liveness_rejects_a_master_whose_variant_is_dead() -> None:
-    """A master playlist can answer 200 while the variant behind it is gone — a
-    15-byte `#EXT-X-ENDLIST` body, a header-only stub, a 404 chunklist, an origin
-    500 — so the master alone says nothing about whether a player can start it."""
-    from webcam_aggregator.app import make_liveness_check
+    """A master playlist can answer 200 while the variant behind it is gone.
 
+    A 15-byte `#EXT-X-ENDLIST` body, a header-only stub, a 404 chunklist, an origin 500
+    — so the master alone says nothing about whether a player can start it.
+    """
     dead: list[str | tuple[None, str]] = [
         "#EXT-X-ENDLIST\n",
         "#EXTM3U\n#EXT-X-VERSION:3\n",
@@ -193,12 +206,12 @@ def test_liveness_rejects_a_master_whose_variant_is_dead() -> None:
 
 
 def test_liveness_keeps_a_master_whose_variant_was_refused() -> None:
-    """A refused or failed variant fetch is not a dead cam. MediaMTX behaves as if
-    it keeps one HLS session per client IP, 401ing the earlier one when a build's
-    concurrent probes open another; a shedding or flaky host fails for reasons of
-    its own."""
-    from webcam_aggregator.app import make_liveness_check
+    """A refused or failed variant fetch is not a dead cam.
 
+    MediaMTX behaves as if it keeps one HLS session per client IP, 401ing the earlier
+    one when a build's concurrent probes open another; a shedding or flaky host fails
+    for reasons of its own.
+    """
     for outcome in ("http-401", "http-403", "http-503", "timeout", "conn-error"):
         fetch = _upstream({_MASTER_URL: _MASTER, _VARIANT_URL: (None, outcome)})
         check = make_liveness_check(_master_resolve, fetch)
@@ -207,10 +220,10 @@ def test_liveness_keeps_a_master_whose_variant_was_refused() -> None:
 
 def test_liveness_check_distinguishes_missing_extractor() -> None:
     """A gap in our coverage must not read the same as a cam being off air."""
-    from webcam_aggregator.app import NoExtractorError, make_liveness_check
 
     def resolve(_id: str, url: str) -> Resolved:
-        raise NoExtractorError(f"no extractor for {url}")
+        msg = f"no extractor for {url}"
+        raise NoExtractorError(msg)
 
     check = make_liveness_check(resolve, _upstream({}))
     assert check(_probe_candidate("https://rtsp.me/abc")) == "no-extractor"
@@ -218,10 +231,10 @@ def test_liveness_check_distinguishes_missing_extractor() -> None:
 
 def test_liveness_check_reports_resolver_detail() -> None:
     """The detail is what separates "yt-dlp is broken" from "this cam is off air"."""
-    from webcam_aggregator.app import make_liveness_check
 
     def resolve(_id: str, _url: str) -> Resolved:
-        raise ValueError("yt-dlp failed: Sign in to confirm you are not a bot")
+        msg = "yt-dlp failed: Sign in to confirm you are not a bot"
+        raise ValueError(msg)
 
     reason = make_liveness_check(resolve, _upstream({}))(_probe_candidate())
     assert reason is not None
@@ -230,14 +243,14 @@ def test_liveness_check_reports_resolver_detail() -> None:
 
 
 def test_liveness_check_detail_strips_url_query_strings() -> None:
-    """An extractor error can embed its target URL, token-carrying query and all; the
-    detail is aggregated at INFO, where the rule is hostnames/paths only."""
-    from webcam_aggregator.app import make_liveness_check
+    """An extractor error can embed its target URL, token-carrying query and all.
+
+    The detail is aggregated at INFO, where the rule is hostnames/paths only.
+    """
 
     def resolve(_id: str, _url: str) -> Resolved:
-        raise ValueError(
-            "no address/streamid in https://g0.ipcamlive.com/player/player.php?alias=TOKEN"
-        )
+        msg = "no address/streamid in https://g0.ipcamlive.com/player/player.php?alias=TOKEN"
+        raise ValueError(msg)
 
     reason = make_liveness_check(resolve, _upstream({}))(_probe_candidate())
     assert reason is not None
@@ -246,9 +259,6 @@ def test_liveness_check_detail_strips_url_query_strings() -> None:
 
 
 def test_liveness_check_trusts_non_hls_resolve() -> None:
-    from webcam_aggregator.app import make_liveness_check
-    from webcam_aggregator.extractors.base import Resolved
-
     def resolve(_id: str, _url: str) -> Resolved:
         return Resolved(url="https://cdn.x/v.mp4", stream_type="mp4", ttl_seconds=None)
 
@@ -258,15 +268,14 @@ def test_liveness_check_trusts_non_hls_resolve() -> None:
 def test_build_app_starts_without_youtube_when_client_init_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed YouTube client init must degrade gracefully (scrapers still build),
-    not crash startup."""
-    import googleapiclient.discovery
+    """A failed YouTube client init degrades gracefully.
 
-    import webcam_aggregator.app as _app
-    from webcam_aggregator.config import Config
+    The scrapers still build, and startup does not crash.
+    """
 
-    def _boom(*_a: Any, **_k: Any) -> Any:
-        raise RuntimeError("no creds")
+    def _boom(*_a: object, **_k: object) -> NoReturn:
+        msg = "no creds"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(googleapiclient.discovery, "build", _boom)
 
@@ -284,8 +293,9 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
     assert store is not None
     assert callable(rebuild)
     assert callable(source_status)
-    # Cold start: no rebuild has run, so nothing is unhealthy yet (the top-level `ready`
-    # gates that window) and every expected source is listed at zero — never an empty {}.
+    # Cold start: no rebuild has run, so nothing is unhealthy yet (the top-level
+    # `ready` gates that window) and every expected source is listed at zero — never
+    # an empty {}.
     st = source_status()
     assert st["unhealthy"] == []
     assert st["sources"], "expected the source roster to be listed at cold start"
@@ -307,23 +317,19 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
 def test_only_fingerprint_gated_sources_get_the_impersonating_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """wildlife-trusts' index 403s the requests client on its TLS fingerprint; the
-    `impersonate=True` it is built with is the whole fix, so it must survive wiring
-    changes — and must not leak onto sources that don't need it."""
-    import webcam_aggregator.app as _app
-    from webcam_aggregator.config import Config
-    from webcam_aggregator.fetch import (
-        _ImpersonatingSession,  # pyright: ignore[reportPrivateUsage]
-    )
+    """wildlife-trusts' index 403s the requests client on its TLS fingerprint.
 
+    The `impersonate=True` it is built with is the whole fix, so it must survive wiring
+    changes — and must not leak onto sources that don't need it.
+    """
     seen: dict[str, Any] = {}
 
     def recorder(name: str) -> type:
         class _Rec:
-            def __init__(self, fetch: Any) -> None:
+            def __init__(self, fetch: object) -> None:
                 seen[name] = fetch
 
-            def discover(self) -> Any:
+            def discover(self) -> Iterator[Candidate]:
                 return iter(())
 
         _Rec.name = name  # pyright: ignore[reportAttributeAccessIssue]
@@ -347,13 +353,10 @@ def test_only_fingerprint_gated_sources_get_the_impersonating_transport(
 
 
 def test_health_sources_stay_lean() -> None:
-    """Per-source payload is kept/discovered/crashed/status only; the diagnostic
-    detail lives on the per-cycle log lines."""
-    from webcam_aggregator.app import (
-        _source_status_for,  # pyright: ignore[reportPrivateUsage]
-    )
-    from webcam_aggregator.catalogue import Hist
+    """Per-source payload is kept/discovered/crashed/status only.
 
+    The diagnostic detail lives on the per-cycle log lines.
+    """
     history = {"skyline": Hist(last_raw_kept=0, last_discovered=11, last_crashed=False)}
     st = _source_status_for(["skyline"], history)
     assert st["sources"]["skyline"] == {

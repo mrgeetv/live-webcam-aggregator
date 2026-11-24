@@ -1,13 +1,19 @@
+"""EarthCam source: its mapsearch JSON API, keeping URLs an extractor can serve."""
+
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from ..fetch import FetcherProtocol
-from ..models import Candidate
-from .base import predisc_key, with_location_parts
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import predisc_key, with_location_parts
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from webcam_aggregator.fetch import FetcherProtocol
 
 _API = "https://www.earthcam.com/api/mapsearch"
 # Network = EarthCam's OWN cams (earthcam.com/world/ pages our extractor resolves).
@@ -27,10 +33,13 @@ _YT = re.compile(
 
 
 def _routable(url: str) -> tuple[str, str | None] | None:
-    """EarthCam's map is a meta-aggregator across thousands of sites; keep only URLs that
-    route to an extractor we already have. Returns (target_url, predisc_key) or None to
-    drop. EarthCam-own geographic cam pages (`/usa/`, `/world/`) resolve; its `/clients/`
-    + `/top25/` landing pages and `myearthcam.com` roots don't, so they fall through."""
+    """Return (target_url, predisc_key) for a map URL we can route, or None to drop it.
+
+    EarthCam's map is a meta-aggregator across thousands of sites; keep only URLs that
+    route to an extractor we already have. EarthCam-own geographic cam pages (`/usa/`,
+    `/world/`) resolve; its `/clients/` + `/top25/` landing pages and `myearthcam.com`
+    roots don't, so they fall through.
+    """
     m = _YT.search(url)
     if m:
         return f"https://www.youtube.com/watch?v={m.group(1)}", f"yt:{m.group(1)}"
@@ -52,7 +61,8 @@ def _places(raw: str | None) -> list[dict[str, object]]:
         doc = json.loads(raw)
     except ValueError:
         return []
-    # get_locations_network wraps the list in {"data": [...]}; get_locations is a bare list.
+    # get_locations_network wraps the list in {"data": [...]}; get_locations is a bare
+    # list.
     groups = doc["data"] if isinstance(doc, dict) and "data" in doc else doc
     out: list[dict[str, object]] = []
     if isinstance(groups, list):
@@ -64,18 +74,23 @@ def _places(raw: str | None) -> list[dict[str, object]]:
 
 
 class EarthCamSource:
-    """EarthCam's mapsearch JSON API as a source. Most of its ~4000 mapped cams are one-off
-    external sites we can't serve, so `_routable` keeps only the ones that hit an existing
-    extractor: EarthCam's own `/world/` cams, plus partner YouTube / balticlivecam /
-    ipcamlive / direct-HLS streams. No category in the feed -> all land in "Other"."""
+    """EarthCam's mapsearch JSON API as a source.
+
+    Most of its mapped cams are one-off external sites we can't serve, so
+    `_routable` keeps only the ones that hit an existing extractor: EarthCam's own
+    `/world/` cams, plus partner YouTube / balticlivecam / ipcamlive / direct-HLS
+    streams. No category in the feed -> all land in "Other".
+    """
 
     name: str = "earthcam"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield each routable EarthCam cam once, across its two feeds."""
         seen: set[str] = set()
         for endpoint in (_NETWORK, _GLOBAL):
             for p in _places(self._fetch.get(endpoint)):

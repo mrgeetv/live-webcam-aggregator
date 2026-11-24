@@ -1,16 +1,20 @@
+"""airportwebcams.net source: airport cams via each YouTube channel's /live URL."""
+
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     extract_candidates,
     predisc_key,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # The "by webcam speed" index is the enumeration seam: its <strong>Streaming</strong>
 # section lists exactly the ~700 pages with a live stream, so we never fetch the
@@ -32,15 +36,18 @@ _OCCASIONAL = "Live streamers with regular broadcasts"
 # possessively: with `[^<>]*KEY[^<>]*`, every repeat of KEY in one unclosed tag
 # rescans the rest of it.
 _TITLE = re.compile(r'<(?=[^<>]*?rel="bookmark")[^<>]*+>([^<]+)')
-_TITLE_TAIL = re.compile(r"(?<!\s)\s*Webcams?\s*$", re.I)
+_TITLE_TAIL = re.compile(r"(?<!\s)\s*Webcams?\s*$", re.IGNORECASE)
 
 
 class AirportWebcamsSource(HtmlScraperSource[str]):
-    """airportwebcams.net: an airport-cam directory whose pages link each camera's
-    YouTube channel (its /streams page) rather than a fixed video id — the current
-    live stream is resolved via the channel's /live URL at build/serve time. A
-    channel not currently live is a resolve-failed drop; that churn is normal for
-    this source. All cams -> category Airports; ctx is the page's airport title."""
+    """airportwebcams.net: airport cams, resolved via each YouTube channel's /live URL.
+
+    The site is an airport-cam directory whose pages link each camera's YouTube channel
+    (its /streams page) rather than a fixed video id; the current live stream is
+    resolved via the channel's /live URL at build/serve time. A channel not currently
+    live is a resolve-failed drop; that churn is normal for this source. All cams ->
+    category Airports; ctx is the page's airport title.
+    """
 
     name: str = "airportwebcams"
 

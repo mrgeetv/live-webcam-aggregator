@@ -88,7 +88,8 @@ The app is two phases, decoupled by a catalogue snapshot:
    proxied, the player polls `/stream/<id>` as its live playlist, so with
    `PROXY_YOUTUBE=true` a dud cached resolve still holds until its TTL.
 
-**`build_app()` in `app.py` is the wiring seam.** To extend:
+**`build_app()` in `app.py` is the wiring seam**, with its parts in the helpers beside it
+(`_build_resolvers`, `_build_sources`). To extend:
 
 - **Candidates are normalised at the extraction seam** (`extract_candidates`): a
   site-relative embed is resolved against its page (worldcams' `streams[]` array mixes
@@ -116,7 +117,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   `thread_map`, which holds every result until the last call finishes — a whole
   sitemap's pages at once, stacked across the sources building together. Maps with
   small results stay on `thread_map` (the docstrings say why).
-  Add the instance to `active_sources` in `build_app`, built with
+  Add the instance to `active_sources` in `app._build_sources`, built with
   `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
   `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
   dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
@@ -131,7 +132,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   project-structure tree in the same change.
 - **Add an extractor** — implement the `Extractor` protocol (`extractors/base.py`):
   `resolve(target_url) -> Resolved(url, stream_type, ttl_seconds)`. Add it to the
-  `_extractor_set` factory in `build_app` AND a predicate to `build_registry`
+  `_extractor_set` factory in `app._build_resolvers` AND a predicate to `build_registry`
   (startup validation raises if a rule names an extractor not in the dict). The one
   factory builds TWO sets: the build-time one (its fetcher is paced + stats-wired,
   because liveness re-fetches source sites en masse) and the serve-time one (unpaced
@@ -185,7 +186,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   `categories.ALL_CATEGORIES` — a test guards the README list matches.
 - **Diagnostics come free** — failures aggregate at two seams, so a new source or
   extractor is diagnosable without extra work. Each source gets its **own `Fetcher`
-  carrying its own `FetchStats`** (wired in `build_app._source_fetcher`; the keys must
+  carrying its own `FetchStats`** (wired in `app._build_sources`' `_source_fetcher`; the keys must
   match `Source.name` and a startup check raises if they don't), and `catalogue`
   reports that source's fetch outcome on its own `kept / discovered` line. Per-source,
   NOT global: a fully blocked source makes very few requests (skyline: a dozen), so a global
@@ -557,7 +558,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   requests/curl 403, curl_cffi 200; not IP reputation). The index move above is necessary
   but not sufficient — with the plain `Fetcher` discovery is a flat 403 and 0 cams — so the
   source is built with `impersonate=True` (`_source_fetcher("cxtvlive", impersonate=True)`
-  in `build_app`), fetching through the browser-fingerprint curl_cffi path shared with
+  in `app._build_sources`), fetching through the browser-fingerprint curl_cffi path shared with
   wildlife-trusts. The `HostPacer` (429/503 only) does not back off on the
   403, so a gated build just burns every fetch fast — a sudden `Nx http-403
   www.cxtvlive.com` on the source line is this gate, not a code fault.
@@ -734,9 +735,9 @@ comment, never the incident.
 The suite is **fully offline** — no real-endpoint/live tests (sources, resolvers,
 and the HTTP handler are exercised with injected fakes + real sockets on port 0).
 The gate is `pre-commit` (which runs `pytest` + a coverage floor as a `files:`-gated
-hook) plus the same checks in CI — not ruff/mypy. The `pytest` hook runs
-`scripts/run-pytest.sh`, which prefers `.venv/bin/pytest` and falls back to
-`pytest` on `PATH` — no venv activation needed to commit.
+hook) plus the same checks in CI. The Python hooks (ruff, pytest,
+basedpyright, vulture) run through `uv run --locked` from the project venv, so they
+use the versions pinned in `uv.lock` and no venv activation is needed to commit.
 
 ## Agent skills
 
@@ -765,7 +766,7 @@ by blocking `git commit` when the current branch is `main` or `master`.
 The hook script lives at `.claude/hooks/block-commit-to-main.sh`.
 
 `.claude/settings.json` also carries two **non-blocking** editing reminders: editing
-`requirements*.txt` recalls the dependency-version rule (check latest, pin new,
+`pyproject.toml` recalls the dependency-version rule (check latest, pin new,
 never auto-bump existing); editing a `src/webcam_aggregator/*.py` module recalls to
 add/update the matching `*_test.py`.
 
@@ -819,14 +820,14 @@ What keeps each pin current once it's in (`.github/dependabot.yml` unless noted)
 
 | Pin | Updated by |
 | --- | --- |
-| `requirements*.txt` | Dependabot pip, daily (yt-dlp skips the cooldown) |
+| `pyproject.toml` dependencies + `uv.lock` | Dependabot uv, daily (yt-dlp skips the cooldown), transitive pins included; the `dev` group, which holds every Python tool the hooks run, bumps as `chore(deps)` |
 | workflow `uses:` | Dependabot github-actions |
-| `.pre-commit-config.yaml` `rev:` + python hooks' `additional_dependencies` | Dependabot pre-commit (it skips `repo: local` hooks, so a versioned tool goes in its upstream hook repo) |
+| `.pre-commit-config.yaml` `rev:` | Dependabot pre-commit (it skips `repo: local` hooks, so a non-Python tool goes in its upstream hook repo; a Python one goes in the `dev` group and runs as a local `uv run` hook) |
 | hadolint's `entry:` image tag | by hand, in that Dependabot PR: `check-hadolint-pin` fails it until the tag matches `rev:` |
 | semantic-release + plugins | Dependabot npm on `tools/release/package.json` (not under `.github/`: Dependabot refuses npm changes there), which `release.yml` reads; majors by hand, with a semantic-release-action that runs the Node they need |
-| deno `FROM` | Dependabot docker (majors held) |
+| deno and uv `FROM`s | Dependabot docker (deno majors held) |
 | DHI python bases: same-tag patches | `base-images.yml` rebuild (see *Base Image Updates*) |
-| DHI python bases, `.python-version`, compose, pyright: version bumps | by hand, prompted by `base-images.yml`'s issue (see *Python Version Synchronization*) |
+| DHI python bases, `.python-version`, compose, pyright, `requires-python`: version bumps | by hand, prompted by `base-images.yml`'s issue (see *Python Version Synchronization*) |
 
 ## Pre-commit Behavior
 
@@ -868,17 +869,18 @@ When updating this file:
 
 Pre-commit hooks enforced:
 
-- **black** - Python code formatting
-- **flake8** - Python linting (ignores: E501, E203)
+- **ruff format** - Python code formatting (Black's style), including Python code blocks in Markdown
+- **ruff check** - Python linting; settings and the reasons for every ignored rule in `pyproject.toml`'s `[tool.ruff]`. Reports only: `uv run ruff check --fix` applies the safe fixes
 - **shellcheck** - Shell script validation (severity: warning)
 - **markdownlint-cli2** - Markdown formatting (CHANGELOG.md excluded)
 - **hadolint** - Dockerfile linting
 - **conventional-pre-commit** - Commit message validation (strict mode with forced scopes)
-- **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, and pyrightconfig.json
+- **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, pyrightconfig.json, and pyproject.toml's `requires-python`
+- **uv-lock** - fails the commit when `uv.lock` no longer matches `pyproject.toml`
 - **check-hadolint-pin** - hadolint's pinned `entry:` image tag must match its `rev:` (Dependabot bumps only the `rev:`)
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
-- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `scripts/`, `tests/`, or `requirements*.txt` change. Runs via `scripts/run-pytest.sh` (prefers `.venv/bin/pytest`, falls back to `PATH`). Also runs in CI.
-- **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what flake8/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name.
+- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `scripts/`, `tests/`, `pyproject.toml` or `uv.lock` change. Also runs in CI.
+- **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what ruff/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name. Configured in `pyproject.toml`'s `[tool.vulture]`.
 
 ## Python Version Synchronization
 
@@ -888,8 +890,9 @@ This project enforces Python version consistency:
 - `Dockerfile` - `ARG RUNTIME_IMAGE` default must use `dhi.io/python:{version}-alpine{alpine}`
 - `docker-compose.yml` - `RUNTIME_IMAGE` build arg must use `python:{version}-slim`
 - `pyrightconfig.json` - Must have `pythonVersion` matching .python-version
+- `pyproject.toml` - `requires-python` must be `=={version}.*`
 - Pre-commit hook validates synchronization automatically
-- CI uses .python-version for GitHub Actions Python setup
+- CI's uv installs the Python that .python-version names
 
 **When updating Python version:**
 
@@ -898,8 +901,10 @@ This project enforces Python version consistency:
    (an alpine-only bump is just this step)
 3. Update `docker-compose.yml` `RUNTIME_IMAGE` and `BUILD_IMAGE` args to match
 4. Update `pyrightconfig.json` pythonVersion to match
-5. Pre-commit hook validates consistency
-6. Test Docker build before committing
+5. Update `pyproject.toml` `requires-python` to match, then run `uv lock` (the
+   lock records it, and the `uv-lock` hook fails the commit until it does)
+6. Pre-commit hook validates consistency
+7. Test Docker build before committing
 
 ## Base Image Updates
 

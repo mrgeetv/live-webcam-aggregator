@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import http.client
 import json
+import threading
 import time
-from collections.abc import Iterable, Iterator
 from http.server import ThreadingHTTPServer
+from typing import TYPE_CHECKING
 
 from webcam_aggregator.app import CatalogueStore, make_handler
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.catalogue import build_catalogue
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 # ---------------------------------------------------------------------------
 # Fake source
@@ -80,32 +84,30 @@ def test_end_to_end_server() -> None:
 
     entries = build_catalogue(
         [FakeSource()],
-        drop_reason_for=lambda c: None,
+        drop_reason_for=lambda _c: None,
         youtube_live=_youtube_live,
         history={},
     )
     store.swap(entries)
 
     assert len(entries) == 1, f"expected 1 entry, got {len(entries)}"
-    entry_id = list(store.snapshot().keys())[0]
+    entry_id = next(iter(store.snapshot().keys()))
 
     # Start server on port 0 (OS assigns free port)
     handler_cls = make_handler(
         store,
         cache,
         _BASE_URL,
-        _manifest_fetch,
+        manifest_fetch=_manifest_fetch,
         source_status=lambda: {
             "sources": {"youtube-api": {"kept": 1, "discovered": 1, "crashed": False}},
             "unhealthy": [],
             "last_build_seconds": None,
         },
-        segment_fetch=lambda u, r: ((200, "video/mp2t", None, b"seg"), "ok"),
+        segment_fetch=lambda _u, _r: ((200, "video/mp2t", None, b"seg"), "ok"),
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
     port = server.server_address[1]
-
-    import threading
 
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
@@ -119,9 +121,9 @@ def test_end_to_end_server() -> None:
         assert resp.status == 200, f"playlist status={resp.status}"
         playlist_body = resp.read().decode()
         assert "/stream/" in playlist_body, f"no /stream/ in playlist:\n{playlist_body}"
-        assert (
-            'group-title="Beaches"' in playlist_body
-        ), f'no group-title="Beaches" in playlist:\n{playlist_body}'
+        assert 'group-title="Beaches"' in playlist_body, (
+            f'no group-title="Beaches" in playlist:\n{playlist_body}'
+        )
 
         # --- /stream/<id> → 200 rewritten manifest ---
         conn.request("GET", f"/stream/{entry_id}")
@@ -129,13 +131,13 @@ def test_end_to_end_server() -> None:
         assert resp.status == 200, f"/stream status={resp.status}"
         stream_body = resp.read().decode()
         # The chunklist_w1.m3u8 (child manifest) must be proxied via /stream/<id>/m?u=
-        assert (
-            f"/stream/{entry_id}/m?u=" in stream_body
-        ), f"no child-manifest proxy in stream body:\n{stream_body}"
+        assert f"/stream/{entry_id}/m?u=" in stream_body, (
+            f"no child-manifest proxy in stream body:\n{stream_body}"
+        )
         # The segment must be an absolute URL pointing at the CDN
-        assert (
-            "https://cdn.x/cam/seg_1.ts" in stream_body
-        ), f"no absolute segment URL in stream body:\n{stream_body}"
+        assert "https://cdn.x/cam/seg_1.ts" in stream_body, (
+            f"no absolute segment URL in stream body:\n{stream_body}"
+        )
 
         # --- /health → 200 JSON with streams: 1 ---
         conn.request("GET", "/health")

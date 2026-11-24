@@ -1,17 +1,21 @@
+"""cxtvlive.com source: the map feed unioned with the sitemap, then cam pages."""
+
 from __future__ import annotations
 
 import json
 import re
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import (
+from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     extract_candidates,
     with_location,
     with_location_parts,
 )
+
+if TYPE_CHECKING:
+    from webcam_aggregator.models import Candidate
 
 _BASE = "https://www.cxtvlive.com/live-camera/"
 _SITEMAP = "https://www.cxtvlive.com/sitemap.php"
@@ -23,10 +27,14 @@ _TITLE = re.compile(r"<h1[^<>]*>([^<]{1,120})</h1>")
 # shared ladder emits it as `…/live` beside the real video embed. Drop it when the page
 # has a real candidate too (same reasoning as beachcam) — keep it only if it's the lone
 # signal, when it IS the cam.
-_YT_CHANNEL_LIVE = re.compile(r"youtube\.com/(?:channel/[\w-]+|@[\w.-]+)/live$", re.I)
+_YT_CHANNEL_LIVE = re.compile(
+    r"youtube\.com/(?:channel/[\w-]+|@[\w.-]+)/live$", re.IGNORECASE
+)
 
 # Quality/format tags the map lists as a "category" alongside the real one
 # ("High Definition · Cities"): skip them so the content category wins.
+# A map feed entry is read up to index 7 (name, slug, geo, categories at 2/3/5/7).
+_FEED_FIELDS = 8
 _NOISE_TAGS = {"high definition", "high definition hd"}
 
 # Per-cam context carried from _page_meta to _title_for: the title base and the map's
@@ -35,10 +43,12 @@ _Ctx = tuple[str, list[str]]
 
 
 def _primary_category(field: object) -> str | None:
-    """The first real content category in a map entry's "A · B" category field,
-    skipping quality tags like "High Definition". None when nothing's left."""
-    for seg in str(field).split("·"):
-        seg = seg.strip()
+    """Return the first real content category in a map entry's "A · B" category field.
+
+    Quality tags like "High Definition" are skipped. None when nothing's left.
+    """
+    for raw in str(field).split("·"):
+        seg = raw.strip()
         if seg and seg.lower() not in _NOISE_TAGS:
             return seg
     return None
@@ -50,6 +60,8 @@ def _geo_parts(field: object) -> list[str]:
 
 
 class CxtvliveSource(HtmlScraperSource[_Ctx]):
+    """cxtvlive.com cams; the feed carries each cam's category and geo."""
+
     name: str = "cxtvlive"
 
     # slug -> (raw category, cam name, geo parts); populated by _page_urls from the map
@@ -71,7 +83,7 @@ class CxtvliveSource(HtmlScraperSource[_Ctx]):
             except ValueError:
                 data = {}
             for p in data.get("p", []):
-                if not isinstance(p, list) or len(p) < 8:
+                if not isinstance(p, list) or len(p) < _FEED_FIELDS:
                     continue
                 name, slug, geo, cats = p[2], p[3], p[5], p[7]
                 if not isinstance(slug, str) or not slug:
@@ -88,10 +100,10 @@ class CxtvliveSource(HtmlScraperSource[_Ctx]):
         return [_BASE + s for s in slugs if not (s in seen or seen.add(s))]
 
     @override
-    def _candidates(self, html: str, url: str):
+    def _candidates(self, html: str, url: str) -> list[Candidate]:
         cands = list(extract_candidates(html, page_url=url, source=self.name))
         real = [c for c in cands if not _YT_CHANNEL_LIVE.search(c.target_url)]
-        return real if real else cands
+        return real or cands
 
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, _Ctx]:

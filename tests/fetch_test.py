@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import http.server
 import logging
+import os
 import socket
+import ssl
+import tempfile
 import threading
 import time
-from collections.abc import Iterator
-from typing import Any
+import urllib.parse
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, override
 from unittest.mock import patch
 
 import pytest
@@ -15,13 +20,14 @@ from curl_cffi import requests as curl_requests
 
 from webcam_aggregator.fetch import (
     MAX_BYTES,
+    SEGMENT_MAX_BYTES,
     UA,
     Fetcher,
     FetchStats,
     HostPacer,
     _as_requests_error,  # pyright: ignore[reportPrivateUsage]
     _classify,  # pyright: ignore[reportPrivateUsage]
-    _FetchFailure,  # pyright: ignore[reportPrivateUsage]
+    _FetchError,  # pyright: ignore[reportPrivateUsage]
     _ImpersonatingSession,  # pyright: ignore[reportPrivateUsage]
     _pin,  # pyright: ignore[reportPrivateUsage]
     _PinDNS,  # pyright: ignore[reportPrivateUsage]
@@ -31,19 +37,28 @@ from webcam_aggregator.fetch import (
     thread_imap,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+# One `socket.getaddrinfo` result.
+_AddrInfo = tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _mock_getaddrinfo(ip: str):
+def _mock_getaddrinfo(ip: str) -> list[tuple[None, None, None, None, tuple[str, int]]]:
     """Return a monkeypatch for socket.getaddrinfo that resolves to a single IP."""
     return [(None, None, None, None, (ip, 0))]
 
 
 def _url_is_safe(url: str) -> bool:
-    """Test predicate over the real gate: True iff the URL resolves to a non-private
-    IP (i.e. the Fetcher would be allowed to fetch it)."""
+    """Return True iff the URL resolves to a non-private IP.
+
+    This is a test predicate over the real gate: the Fetcher would be allowed to fetch
+    the URL.
+    """
     return _validate_ip(url)[0] is not None
 
 
@@ -147,7 +162,7 @@ def test_fetcher_does_not_follow_redirect_to_private(
     class _Resp:
         is_redirect: bool = True
         is_permanent_redirect: bool = False
-        headers: dict[str, str] = {"Location": "http://127.0.0.1/secret"}
+        headers: ClassVar[dict[str, str]] = {"Location": "http://127.0.0.1/secret"}
 
         def raise_for_status(self) -> None: ...
 
@@ -195,7 +210,7 @@ def test_get_segment_happy_relay(monkeypatch: pytest.MonkeyPatch) -> None:
         is_redirect: bool = False
         is_permanent_redirect: bool = False
         status_code: int = 206
-        headers: dict[str, str] = {
+        headers: ClassVar[dict[str, str]] = {
             "Content-Type": "video/mp2t",
             "Content-Range": "bytes 0-65535/1000000",
         }
@@ -233,7 +248,7 @@ def test_get_segment_refuses_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
     class _RedirectResp:
         is_redirect: bool = True
         is_permanent_redirect: bool = False
-        headers: dict[str, str] = {"Location": "https://other.example/seg.ts"}
+        headers: ClassVar[dict[str, str]] = {"Location": "https://other.example/seg.ts"}
 
         def close(self) -> None: ...
 
@@ -257,8 +272,6 @@ def test_get_returns_none_after_request_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """All retry attempts raise RequestException → Fetcher.get returns None."""
-    import requests
-
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -277,8 +290,6 @@ def test_get_retries_on_request_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """First attempt raises RequestException, second succeeds → returns content."""
-    import requests
-
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -300,7 +311,8 @@ def test_get_retries_on_request_exception(
     def fake_get(_self: object, _url: str, **_k: object) -> _GoodResp:
         call_count[0] += 1
         if call_count[0] == 1:
-            raise requests.RequestException("transient failure")
+            msg = "transient failure"
+            raise requests.RequestException(msg)
         return _GoodResp()
 
     monkeypatch.setattr("requests.Session.get", fake_get)
@@ -322,7 +334,7 @@ def test_get_redirect_no_location_returns_none(
     class _NoLocResp:
         is_redirect: bool = True
         is_permanent_redirect: bool = False
-        headers: dict[str, str] = {}  # no Location
+        headers: ClassVar[dict[str, str]] = {}  # no Location
 
         def close(self) -> None: ...
 
@@ -335,8 +347,6 @@ def test_get_segment_labels_a_request_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A RequestException in get_segment is a failure labelled as get() labels it."""
-    import requests
-
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -353,8 +363,6 @@ def test_get_segment_labels_a_request_exception(
 
 def test_get_oversized_body_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """Body exceeding MAX_BYTES ceiling → _fetch_following returns None."""
-    from webcam_aggregator.fetch import MAX_BYTES
-
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -379,10 +387,10 @@ def test_get_oversized_body_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_get_respects_custom_byte_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A raised byte_cap accepts a body the default cap would reject — so the manifest
-    fetcher can pull large DVR playlists."""
-    from webcam_aggregator.fetch import MAX_BYTES
+    """A raised byte_cap accepts a body the default cap would reject.
 
+    So the manifest fetcher can pull large DVR playlists.
+    """
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -413,8 +421,6 @@ def test_get_respects_custom_byte_cap(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_get_segment_refuses_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
     """A segment exceeding the SEGMENT_MAX_BYTES ceiling is refused as too-large."""
-    from webcam_aggregator.fetch import SEGMENT_MAX_BYTES
-
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -424,7 +430,7 @@ def test_get_segment_refuses_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
         is_redirect: bool = False
         is_permanent_redirect: bool = False
         status_code: int = 200
-        headers: dict[str, str] = {"Content-Type": "video/mp2t"}
+        headers: ClassVar[dict[str, str]] = {"Content-Type": "video/mp2t"}
 
         def iter_content(self, _n: int) -> object:
             return iter([b"x" * (SEGMENT_MAX_BYTES + 1)])
@@ -442,7 +448,7 @@ def test_get_segment_refuses_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_post_blocks_unsafe_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    """post must return None for private/loopback URLs without calling the session."""
+    """Post must return None for private/loopback URLs without calling the session."""
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("127.0.0.1"),
@@ -477,9 +483,7 @@ def test_referer_for_gated_hosts() -> None:
 
 
 def test_post_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A successful POST returns the decoded body and the call carried supplied headers and data."""
-    import urllib.parse
-
+    """A successful POST returns the decoded body; the call carried headers and data."""
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -567,7 +571,7 @@ def test_post_caller_can_override_content_type(
 
 
 def test_post_refuses_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A redirect response from a POST must return None (admin-ajax shouldn't redirect)."""
+    """A redirect response to a POST must return None (admin-ajax mustn't redirect)."""
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -576,7 +580,7 @@ def test_post_refuses_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
     class _RedirectResp:
         is_redirect: bool = True
         is_permanent_redirect: bool = False
-        headers: dict[str, str] = {"Location": "https://other.example/login"}
+        headers: ClassVar[dict[str, str]] = {"Location": "https://other.example/login"}
 
         def close(self) -> None: ...
 
@@ -604,8 +608,6 @@ def test_scrape_workers_bad_value_warns_and_returns_default(
     monkeypatch.setenv("SCRAPE_WORKERS", "abc")
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.fetch"):
         result = resolve_scrape_workers()
-    import os
-
     expected_default = min(16, (os.cpu_count() or 2) * 4)
     assert result == expected_default
     assert "SCRAPE_WORKERS" in caplog.text
@@ -646,9 +648,11 @@ def test_validate_ip_returns_public(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_pin_dns_pins_getaddrinfo_then_clears() -> None:
-    """Inside `with _PinDNS(host, ip)`, getaddrinfo resolves the host to the pinned
-    IP (so the socket dials it); the hostname stays in the URL, so urllib3 still does
-    SNI/Host/cert against it. The pin is cleared on exit. Scheme-agnostic by design."""
+    """Inside `with _PinDNS(host, ip)`, getaddrinfo resolves the host to the pinned IP.
+
+    The socket dials the pinned IP; the hostname stays in the URL, so urllib3 still does
+    SNI/Host/cert against it. The pin is cleared on exit. Scheme-agnostic by design.
+    """
     host = "cam.example"
     with _PinDNS(host, "203.0.113.7"):
         infos = socket.getaddrinfo(host, 443)
@@ -672,9 +676,11 @@ class _PinStubResp:
 def test_fetcher_pins_to_validated_ip_not_a_second_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rebinding simulation: the resolver returns a PUBLIC IP at validation time;
-    the connection must be pinned to THAT ip (host kept for SNI/Host) via _PinDNS,
-    never a fresh lookup at connect time."""
+    """Rebinding simulation: the resolver returns a PUBLIC IP at validation time.
+
+    The connection must be pinned to THAT ip (host kept for SNI/Host) via _PinDNS, never
+    a fresh lookup at connect time.
+    """
     monkeypatch.setattr(
         "webcam_aggregator.fetch.socket.getaddrinfo",
         lambda *_a, **_k: _mock_getaddrinfo("93.184.216.34"),
@@ -721,31 +727,29 @@ def test_fetcher_get_blocks_private_resolution(
 def test_fetcher_tls_verified_against_hostname_while_connecting_to_ip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """End-to-end proof (offline, real sockets): stand up an HTTPS server on
-    127.0.0.1:0 with a self-signed cert for hostname 'pinned.test'. Resolver maps
-    'pinned.test' -> 127.0.0.1. The Fetcher must connect to the pinned IP yet
-    complete the TLS handshake by validating the cert AGAINST THE HOSTNAME.
+    """End-to-end proof (offline, real sockets) that a pinned connection verifies TLS.
+
+    Stand up an HTTPS server on 127.0.0.1:0 with a self-signed cert for hostname
+    'pinned.test'. Resolver maps 'pinned.test' -> 127.0.0.1. The Fetcher must connect to
+    the pinned IP yet complete the TLS handshake by validating the cert AGAINST THE
+    HOSTNAME.
 
     This is the regression guard for the hard requirement: connecting to the IP
     must not weaken TLS. If cert validation were done against the IP (or disabled),
-    this fetch would fail."""
-    import ssl
-    import tempfile
-
+    this fetch would fail.
+    """
     crypto = pytest.importorskip("cryptography")
-    from datetime import datetime, timedelta, timezone
-
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography import x509  # noqa: PLC0415 - optional dep, see importorskip
+    from cryptography.hazmat.primitives import hashes, serialization  # noqa: PLC0415 - optional dep, see importorskip
+    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415 - optional dep, see importorskip
+    from cryptography.x509.oid import NameOID  # noqa: PLC0415 - optional dep, see importorskip
 
     hostname = "pinned.test"
 
     # --- self-signed cert with SAN = pinned.test ---
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -764,27 +768,24 @@ def test_fetcher_tls_verified_against_hostname_while_connecting_to_ip(
     tmp = tempfile.TemporaryDirectory()
     cert_path = f"{tmp.name}/cert.pem"
     key_path = f"{tmp.name}/key.pem"
-    with open(cert_path, "wb") as fh:
-        fh.write(cert.public_bytes(serialization.Encoding.PEM))
-    with open(key_path, "wb") as fh:
-        fh.write(
-            key.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.TraditionalOpenSSL,
-                serialization.NoEncryption(),
-            )
+    Path(cert_path).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    Path(key_path).write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
         )
+    )
 
     class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"#EXTM3U pinned-ok")
 
-        def log_message(  # noqa: A002 # pyright: ignore[reportImplicitOverride]
-            self, format: str, *args: object
-        ) -> None: ...
+        @override
+        def log_message(self, format: str, *args: object) -> None: ...
 
     httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -903,8 +904,10 @@ def test_one_outcome_per_call_not_per_retry() -> None:
 
 
 def test_get_with_outcome_says_why_a_fetch_failed() -> None:
-    """A caller judging a cam needs to tell "gone" (404) from "not for you right
-    now" (401) — `get` collapses both to None."""
+    """A caller can tell "gone" (404) from "not for you right now" (401).
+
+    `get` collapses both to None.
+    """
     f = Fetcher(delay=0.0, retries=1)
     resp = requests.Response()
     resp.status_code = 404
@@ -921,9 +924,11 @@ def test_get_with_outcome_says_why_a_fetch_failed() -> None:
 
 
 def test_failure_mid_redirect_attributed_to_the_failing_hop() -> None:
-    """An HTTPError raised on hop 2 of a redirect chain must be counted against the
-    host that failed, not the URL the caller asked for — otherwise the "0 ok (11x
-    http-403 …)" line names the wrong host."""
+    """An HTTPError on hop 2 of a redirect chain counts against the host that failed.
+
+    It is not counted against the URL the caller asked for; otherwise the "0 ok (11x
+    http-403 ...)" line names the wrong host.
+    """
     s = FetchStats()
     f = Fetcher(delay=0.0, retries=1, stats=s)
     resp = requests.Response()
@@ -948,15 +953,14 @@ def test_success_records_ok() -> None:
 
 
 def test_politeness_delay_still_runs_on_non_retryable_failure() -> None:
-    """A bot-wall serving redirect loops must NOT become unthrottled hammering: these
-    paths used to hit time.sleep(delay) via the success return, and must keep doing so.
+    """A bot-wall serving redirect loops must NOT become unthrottled hammering.
+
+    These paths hit time.sleep(delay) via the success return, and must keep doing so.
     """
     s = FetchStats()
     f = Fetcher(delay=1.0, retries=3, stats=s)
     with (
-        patch.object(
-            Fetcher, "_fetch_following", side_effect=_FetchFailure("too-large")
-        ),
+        patch.object(Fetcher, "_fetch_following", side_effect=_FetchError("too-large")),
         patch("webcam_aggregator.fetch.time.sleep") as slept,
     ):
         assert f.get("https://e.example/x") is None
@@ -1057,14 +1061,14 @@ def test_classify_http_error_without_response_falls_back() -> None:
 def test_scrape_workers_blank_means_unset(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """docker-compose forwards `${SCRAPE_WORKERS:-}` as "" when it isn't in .env —
-    that must take the default silently, not warn about a bad int."""
-    import os as _os
+    """docker-compose forwards `${SCRAPE_WORKERS:-}` as "" when it isn't in .env.
 
+    That must take the default silently, not warn about a bad int.
+    """
     monkeypatch.setenv("SCRAPE_WORKERS", "")
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.fetch"):
         result = resolve_scrape_workers()
-    assert result == min(16, (_os.cpu_count() or 2) * 4)
+    assert result == min(16, (os.cpu_count() or 2) * 4)
     assert caplog.text == ""
 
 
@@ -1074,11 +1078,13 @@ def test_scrape_workers_blank_means_unset(
 
 
 def _cookie_server() -> tuple[http.server.HTTPServer, threading.Thread, int]:
-    """The MediaMTX shape: /index 302s to /child setting a cookie; /child echoes the
-    Cookie header it received (or "none")."""
+    """Serve the MediaMTX shape: /index 302s to /child setting a cookie.
+
+    /child echoes the Cookie header it received (or "none").
+    """
 
     class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             if self.path == "/index":
                 self.send_response(302)
                 self.send_header("Location", "/child")
@@ -1091,9 +1097,8 @@ def _cookie_server() -> tuple[http.server.HTTPServer, threading.Thread, int]:
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(  # noqa: A002 # pyright: ignore[reportImplicitOverride]
-            self, format: str, *args: object
-        ) -> None: ...
+        @override
+        def log_message(self, format: str, *args: object) -> None: ...
 
     httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -1107,6 +1112,7 @@ def _cookie_server() -> tuple[http.server.HTTPServer, threading.Thread, int]:
 )
 def test_fetcher_cookie_jar_only_when_asked(
     monkeypatch: pytest.MonkeyPatch,
+    *,
     keep_cookies: bool,
     expected: str,
     impersonate: bool,
@@ -1139,22 +1145,26 @@ def test_fetcher_cookie_jar_only_when_asked(
 def test_requests_transport_never_resolves_a_name_outside_the_pin(
     monkeypatch: pytest.MonkeyPatch, path: str
 ) -> None:
-    """urllib3 does not always resolve the host urlsplit validated. Validation sees a
-    public address; any other name resolves to the internal server here, so reaching
-    it would be a rebinding/SSRF bypass. The pin must refuse every lookup it didn't
-    validate."""
+    """urllib3 does not always resolve the host urlsplit validated.
+
+    Validation sees a public address; any other name resolves to the internal server
+    here, so reaching it would be a rebinding/SSRF bypass. The pin must refuse every
+    lookup it didn't validate.
+    """
     httpd, thread, port = _cookie_server()  # the "internal" server, on 127.0.0.1
     hits: list[str] = []
-    handler = httpd.RequestHandlerClass
-    orig: Any = getattr(handler, "do_GET")
+    handler: Any = httpd.RequestHandlerClass
+    orig: Any = handler.do_GET
 
-    def counting(self: Any) -> None:
+    def counting(self: http.server.BaseHTTPRequestHandler) -> None:
         hits.append(self.path)
         orig(self)
 
     monkeypatch.setattr(handler, "do_GET", counting)
 
-    def resolver(host: Any, port: Any = None, *_a: Any, **_k: Any) -> Any:
+    def resolver(
+        host: str, port: int | str | None = None, *_a: object, **_k: object
+    ) -> list[_AddrInfo]:
         validated = host in ("b\u00fccher.test", "%61bc.test", "public.test")
         ip = "93.184.216.34" if validated else "127.0.0.1"
         addr = (ip, int(port or 0))
@@ -1175,7 +1185,9 @@ def test_requests_transport_never_resolves_a_name_outside_the_pin(
 
 @pytest.mark.parametrize("impersonate", [False, True])
 @pytest.mark.parametrize("port", ["99999", "-1", "abc", "0"])
-def test_a_bad_port_is_a_bad_scheme_not_a_crash(port: str, impersonate: bool) -> None:
+def test_a_bad_port_is_a_bad_scheme_not_a_crash(
+    port: str, *, impersonate: bool
+) -> None:
     stats = FetchStats()
     f = Fetcher(delay=0.0, retries=1, stats=stats, impersonate=impersonate)
     assert f.get(f"http://cam.example:{port}/x") is None
@@ -1193,13 +1205,15 @@ def test_a_bad_port_is_a_bad_scheme_not_a_crash(port: str, impersonate: bool) ->
 def pinned_server(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[int, list[dict[str, str]]]]:
-    """Plain-HTTP server on 127.0.0.1:0. Validation resolves every name to loopback
-    except `private.test` (10.0.0.1, which stays blocked). Yields (port, the request
-    headers it saw, names lowercased)."""
+    """Plain-HTTP server on 127.0.0.1:0.
+
+    Validation resolves every name to loopback except `private.test` (10.0.0.1, which
+    stays blocked). Yields (port, the request headers it saw, names lowercased).
+    """
     seen: list[dict[str, str]] = []
 
     class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             seen.append({k.lower(): v for k, v in self.headers.items()})
             if self.path == "/hop":
                 self.send_response(302)
@@ -1219,7 +1233,7 @@ def pinned_server(
                 self.end_headers()
                 self.wfile.write(body)
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             seen.append({k.lower(): v for k, v in self.headers.items()})
             n = int(self.headers.get("Content-Length") or 0)
             body = b"posted " + self.rfile.read(n)
@@ -1228,9 +1242,8 @@ def pinned_server(
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(  # noqa: A002 # pyright: ignore[reportImplicitOverride]
-            self, format: str, *args: object
-        ) -> None: ...
+        @override
+        def log_message(self, format: str, *args: object) -> None: ...
 
     httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
     port = httpd.server_address[1]
@@ -1305,10 +1318,12 @@ def test_impersonating_fetcher_feeds_shedding_to_the_pacer(
 def test_impersonating_fetcher_dials_the_pin_whatever_libcurl_makes_of_the_host(
     pinned_server: tuple[int, list[dict[str, str]]],
 ) -> None:
-    """urlsplit reads `bücher.test`; libcurl IDNA-encodes it to `xn--bcher-kva.test`.
-    A pin keyed by urlsplit's host would miss and let libcurl resolve the name
-    itself (here: fail; in the wild: a rebinding window). Every connection must go to
-    the validated IP regardless."""
+    """Urlsplit reads `bücher.test`; libcurl IDNA-encodes it to `xn--bcher-kva.test`.
+
+    A pin keyed by urlsplit's host would miss and let libcurl resolve the name itself
+    (here: fail; in the wild: a rebinding window). Every connection must go to the
+    validated IP regardless.
+    """
     port, _ = pinned_server
     f = Fetcher(delay=0.0, retries=1, impersonate=True)
     assert f.get(f"http://b\u00fccher.test:{port}/page") == "pinned-ok"
@@ -1318,13 +1333,17 @@ def test_impersonating_fetcher_refuses_a_response_from_an_unpinned_ip(
     pinned_server: tuple[int, list[dict[str, str]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Backstop for a parser difference the wildcard cannot cover (the RESOLVE entry
-    still keys on the port): libcurl reporting any IP but the validated one is a
-    blocked fetch, whatever came back."""
-    port, _ = pinned_server
-    real = curl_requests.Session.request
+    """Backstop for a parser difference the wildcard cannot cover.
 
-    def elsewhere(self: Any, *a: Any, **k: Any) -> Any:
+    The RESOLVE entry still keys on the port: libcurl reporting any IP but the validated
+    one is a blocked fetch, whatever came back.
+    """
+    port, _ = pinned_server
+    real: Any = curl_requests.Session.request
+
+    def elsewhere(
+        self: curl_requests.Session[curl_requests.Response], *a: object, **k: object
+    ) -> curl_requests.Response:
         resp = real(self, *a, **k)
         resp.primary_ip = "10.0.0.9"
         return resp
@@ -1339,9 +1358,11 @@ def test_impersonating_fetcher_refuses_a_response_from_an_unpinned_ip(
 def test_impersonating_fetcher_accepts_a_reused_connection_to_an_earlier_pin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Round-robin DNS: the second validation of a host picks a different IP, and
-    libcurl reuses its keep-alive connection to the first. That IP was validated, so
-    the page is served — not thrown away as blocked-ip."""
+    """Round-robin DNS: a second validated IP is served, not thrown away as blocked-ip.
+
+    The second validation of a host picks a different IP, and libcurl reuses its
+    keep-alive connection to the first. That IP was validated, so the page is served.
+    """
     servers: list[http.server.ThreadingHTTPServer] = []
     for ip in ("127.0.0.1", "127.0.0.2"):
 
@@ -1349,15 +1370,14 @@ def test_impersonating_fetcher_accepts_a_reused_connection_to_an_earlier_pin(
             protocol_version: str = "HTTP/1.1"  # keep-alive, so libcurl can reuse
             body: bytes = ip.encode()
 
-            def do_GET(self) -> None:  # noqa: N802
+            def do_GET(self) -> None:
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(self.body)))
                 self.end_headers()
                 self.wfile.write(self.body)
 
-            def log_message(  # noqa: A002 # pyright: ignore[reportImplicitOverride]
-                self, format: str, *args: object
-            ) -> None: ...
+            @override
+            def log_message(self, format: str, *args: object) -> None: ...
 
         port = servers[0].server_address[1] if servers else 0
         server = http.server.ThreadingHTTPServer((ip, port), _H)
@@ -1369,7 +1389,7 @@ def test_impersonating_fetcher_accepts_a_reused_connection_to_an_earlier_pin(
         t.start()
     answer = ["127.0.0.1"]
 
-    def resolver(*_a: Any, **_k: Any) -> Any:
+    def resolver(*_a: object, **_k: object) -> list[_AddrInfo]:
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (answer[0], 0))]
 
     monkeypatch.setattr("webcam_aggregator.fetch.socket.getaddrinfo", resolver)
@@ -1391,11 +1411,13 @@ def test_impersonating_fetcher_accepts_a_reused_connection_to_an_earlier_pin(
 def test_impersonating_session_aborts_the_transfer_past_its_limit(
     pinned_server: tuple[int, list[dict[str, str]]],
 ) -> None:
-    """The transport stops reading at its limit (plus the chunk that crossed it); the
-    Fetcher's own cap then refuses the body."""
+    """The transport stops reading at its limit (plus the chunk that crossed it).
+
+    The Fetcher's own cap then refuses the body.
+    """
     port, _ = pinned_server
     with _PinDNS("pinned.test", "127.0.0.1"):
-        resp = _ImpersonatingSession(1000, True).get(
+        resp = _ImpersonatingSession(1000, keep_cookies=True).get(
             f"http://pinned.test:{port}/big", timeout=5
         )
     body = b"".join(resp.iter_content(65536))
@@ -1419,9 +1441,11 @@ def test_impersonating_get_segment_survives_a_pin_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port, _ = pinned_server
-    real = curl_requests.Session.request
+    real: Any = curl_requests.Session.request
 
-    def elsewhere(self: Any, *a: Any, **k: Any) -> Any:
+    def elsewhere(
+        self: curl_requests.Session[curl_requests.Response], *a: object, **k: object
+    ) -> curl_requests.Response:
         resp = real(self, *a, **k)
         resp.primary_ip = "10.0.0.9"
         return resp
@@ -1432,10 +1456,15 @@ def test_impersonating_get_segment_survives_a_pin_failure(
 
 
 def test_impersonating_session_refuses_an_unpinned_host() -> None:
-    """Outside a _PinDNS block libcurl would resolve the name itself, reopening the
-    rebinding window, so the transport refuses before sending anything."""
+    """The transport refuses a request made outside a _PinDNS block.
+
+    Outside one, libcurl would resolve the name itself, reopening the rebinding window,
+    so the transport refuses before sending anything.
+    """
     with pytest.raises(RuntimeError):
-        _ImpersonatingSession(MAX_BYTES, True).get("http://pinned.test/", timeout=1)
+        _ImpersonatingSession(MAX_BYTES, keep_cookies=True).get(
+            "http://pinned.test/", timeout=1
+        )
 
 
 @pytest.mark.parametrize(
@@ -1456,9 +1485,11 @@ def test_impersonating_errors_classify_like_requests_ones(
 
 
 def test_thread_imap_streams_in_order_without_running_ahead() -> None:
-    """Results arrive in input order, and a consumer that hasn't taken the next one
-    yet holds back the work: a scrape must not buffer every page body of a
-    large sitemap before the first is parsed."""
+    """Results arrive in input order, and a slow consumer holds back the work.
+
+    A consumer that hasn't taken the next result yet holds back the work: a scrape must
+    not buffer every page body of a large sitemap before the first is parsed.
+    """
     started: list[int] = []
     lock = threading.Lock()
 

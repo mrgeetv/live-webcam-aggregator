@@ -1,12 +1,20 @@
+"""livefromiceland.is source: the WP REST cam list, one ipcamlive player each."""
+
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, with_location_parts
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    with_location_parts,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # The site serves no sitemap, so the `webcam` post type's WP REST collection is
 # the cam index: ~32 cams, well inside WP's per_page ceiling of 100, so one call
@@ -21,14 +29,16 @@ _PLAYER = re.compile(
     r"https://g0\.ipcamlive\.com/player/player\.php\?alias=[A-Za-z0-9_-]+"
 )
 _TITLE = re.compile(r"<title>([^<]*)</title>")
-_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Live From Iceland\s*$", re.I)
+_SITE_TAIL = re.compile(r"(?<!\s)\s*[–-]\s*Live From Iceland\s*$", re.IGNORECASE)
 
 
 class LiveFromIcelandSource(HtmlScraperSource[str]):
-    """livefromiceland.is: ~32 cams (volcanoes, glaciers, Reykjavík, harbours), one
-    ipcamlive player per page, served by the existing ipcamlive extractor. ctx is the
-    page <title> with the site boilerplate tail stripped; the site has no per-cam
-    category -> None (the title fallback categorises what it can)."""
+    """livefromiceland.is: cams of volcanoes, glaciers, Reykjavík and harbours.
+
+    One ipcamlive player per page, served by the existing ipcamlive extractor. ctx is
+    the page <title> with the site boilerplate tail stripped; the site has no per-cam
+    category -> None (the title fallback categorises what it can).
+    """
 
     name: str = "livefromiceland"
 

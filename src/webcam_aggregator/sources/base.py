@@ -1,16 +1,20 @@
+"""Shared source machinery: the `Source` protocol, extraction ladder, title helpers."""
+
 from __future__ import annotations
 
 import html as htmllib
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator
 from dataclasses import replace
 from html.entities import html5
-from typing import Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import unquote, urljoin, urlsplit
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.models import Candidate
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 # `embed/videoseries?list=` (a playlist) and `embed/live_stream?channel=` (a channel's
 # current live) are 11 characters long, exactly like a video id: the lookahead keeps
@@ -32,10 +36,10 @@ _WC_STREAMS = re.compile(
 )
 _WC_PLAYER = re.compile(r"worldcams\.tv\\?/player\?url=([^\"'\s\\]+)")
 _IFRAME_SRC = re.compile(r'src=\\?"([^"\\]+)')
-_IFRAME_TAG = re.compile(r'<iframe[^<>]+src=["\']([^"\']+)["\']', re.I)
+_IFRAME_TAG = re.compile(r'<iframe[^<>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
 # Still-image "cams" listed alongside real streams (worldcams' streams[] array, the
 # EarthCam long tail). Matched on the URL PATH so a query string can't false-trigger.
-_IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.I)
+_IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.IGNORECASE)
 # A feratel cam's identity is its numeric id, not the URL shape: the same cam appears
 # as webtv.feratel.com/webtv/?cam=<id> (our canonical form) and as webtvfc.… with
 # extra design/pg params in third-party embeds, so keying on the id is what lets the
@@ -61,14 +65,18 @@ _NEVER_A_STREAM_HOSTS = ("googletagmanager.com", "waze.com")
 # The link text stops at the next <a or </a, so an unclosed link costs one span, not
 # a scan to the end of the page.
 _ATTRIBUTION_BLOCK = re.compile(
-    r"Source:\s*(?:&nbsp;\s*)?<a\b[^<>]*>(?:[^<]|<(?!/?a\b))*+</a>", re.I
+    r"Source:\s*(?:&nbsp;\s*)?<a\b[^<>]*>(?:[^<]|<(?!/?a\b))*+</a>", re.IGNORECASE
 )
 
 
 class Source(Protocol):
+    """A cam source: a `name` and a `discover()` that yields its candidates."""
+
     name: str
 
-    def discover(self) -> Iterable[Candidate]: ...
+    def discover(self) -> Iterable[Candidate]:
+        """Yield this source's candidate cams."""
+        ...
 
 
 def _strip_attribution(html: str) -> str:
@@ -76,13 +84,15 @@ def _strip_attribution(html: str) -> str:
 
 
 def _not_a_stream(target: str) -> bool:
-    """True for an embed target that can never be a stream, so must not become a
-    candidate: a non-http(s) placeholder (a consent manager parks embeds on
-    about:blank), a still image (worldcams and the EarthCam long tail list JPEG cams
-    beside real ones), or a host serving no video at all (_NEVER_A_STREAM_HOSTS,
-    subdomain-aware so `www.`/`ns.` variants match without listing each one). Left
-    in, each is a doomed `no-extractor` drop inflating the counts that say which
-    extractor to write next."""
+    """Return True for an embed target that can never be a stream.
+
+    Such a target must not become a candidate: a non-http(s) placeholder (a consent
+    manager parks embeds on about:blank), a still image (worldcams and the EarthCam long
+    tail list JPEG cams beside real ones), or a host serving no video at all
+    (_NEVER_A_STREAM_HOSTS, subdomain-aware so `www.`/`ns.` variants match without
+    listing each one). Left in, each is a doomed `no-extractor` drop inflating the
+    counts that say which extractor to write next.
+    """
     parts = urlsplit(target)
     host = (parts.hostname or "").lower()
     return (
@@ -105,6 +115,11 @@ def _angle_targets(html: str) -> list[tuple[str | None, str]]:
 
 
 def predisc_key(target: str) -> str | None:
+    """Return the dedup key for a target URL, or None to never merge it.
+
+    The key is `yt:<id>` for YouTube, `feratel:<cam id>` for feratel, and
+    `hls:<normalised url>` for a direct m3u8.
+    """
     t = (
         unquote(re.sub(r"^https?:.*?url=", "", target))
         if "player?url=" in target
@@ -166,10 +181,12 @@ def _location_parts(page_url: str) -> list[str]:
 
 
 def with_location_parts(title: str, parts: list[str], *, drop: str = "") -> str:
-    """Append the location `parts` (general -> specific) the title doesn't already name,
-    keeping the cam's category (`drop`) out of the suffix and dropping repeated parts
-    (some breadcrumbs name the same place at two levels, e.g. a parish == its only town).
-    Shared by URL-path sources and sources whose geo lives elsewhere (a breadcrumb)."""
+    """Append the location `parts` (general -> specific) the title doesn't already name.
+
+    Keeps the cam's category (`drop`) out of the suffix and drops repeated parts (some
+    breadcrumbs name the same place at two levels, e.g. a parish == its only town).
+    Shared by URL-path sources and sources whose geo lives elsewhere (a breadcrumb).
+    """
     nt = _norm(title)
     dn = _norm(drop)
     extra: list[str] = []
@@ -197,21 +214,31 @@ def with_location(title: str, page_url: str, *, drop: str = "") -> str:
 
 
 def extract_candidates(html: str, *, page_url: str, source: str) -> Iterator[Candidate]:
+    """Yield the stream candidates embedded in a cam page's HTML.
+
+    Targets that can never be a stream are dropped here, and site-relative embeds are
+    resolved against `page_url`.
+    """
     clean = _strip_attribution(html)
     # Prefer the structured streams[<id>] = '<iframe…>' embeds (keyed by stream-id);
     # fall back to a whole-page scan when a page has no such array.
     pairs: list[tuple[str | None, str]] = _angle_targets(clean)
     if not pairs:
-        plain: list[str] = []
-        for m in _YT_VIDEO.finditer(clean):
-            plain.append(f"https://www.youtube.com/watch?v={m.group(1)}")
-        for m in _YT_PLAYLIST.finditer(clean):
-            plain.append(f"https://www.youtube.com/embed?list={m.group(1)}")
-        for pm in _WC_PLAYER.finditer(clean):
-            plain.append("https://worldcams.tv/player?url=" + pm.group(1))
-        for mm in _URL_RUN.finditer(clean):
-            if ".m3u8" in mm.group(0):
-                plain.append(mm.group(0))
+        plain = [
+            f"https://www.youtube.com/watch?v={m.group(1)}"
+            for m in _YT_VIDEO.finditer(clean)
+        ]
+        plain.extend(
+            f"https://www.youtube.com/embed?list={m.group(1)}"
+            for m in _YT_PLAYLIST.finditer(clean)
+        )
+        plain.extend(
+            "https://worldcams.tv/player?url=" + m.group(1)
+            for m in _WC_PLAYER.finditer(clean)
+        )
+        plain.extend(
+            m.group(0) for m in _URL_RUN.finditer(clean) if ".m3u8" in m.group(0)
+        )
         cm = _YT_CHANNEL.search(clean)
         if cm:
             plain.append("https://www.youtube.com/" + cm.group(1) + "/live")
@@ -247,31 +274,35 @@ def extract_candidates(html: str, *, page_url: str, source: str) -> Iterator[Can
         )
 
 
-Ctx = TypeVar("Ctx")
+class HtmlScraperSource[Ctx](ABC):
+    """Shared crawl loop for HTML scraper sources.
 
-
-class HtmlScraperSource(ABC, Generic[Ctx]):
-    """Shared crawl loop for HTML scraper sources. Subclasses supply three hooks —
-    how to find the cam detail-page URLs, the per-page (category, context), and the
-    per-candidate title. The concurrent fetch (`thread_imap`), empty-page skipping, and
-    `extract_candidates` wiring live here, so each source stays a handful of regexes.
-    `Ctx` is whatever per-page state a source precomputes once (e.g. a stream-id ->
-    name map) and reuses across that page's candidates in `_title_for`."""
+    Subclasses supply three hooks: how to find the cam detail-page URLs, the per-page
+    (category, context), and the per-candidate title. The concurrent fetch
+    (`thread_imap`), empty-page skipping, and `extract_candidates` wiring live here, so
+    each source stays a handful of regexes. `Ctx` is whatever per-page state a source
+    precomputes once (e.g. a stream-id -> name map) and reuses across that page's
+    candidates in `_title_for`.
+    """
 
     name: str
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used to crawl the site."""
         self._fetch = fetch
 
     @abstractmethod
     def _page_urls(self) -> list[str]:
-        """All cam detail-page URLs to scrape (e.g. from a sitemap or paginated list)."""
+        """Return the cam detail-page URLs to scrape (from a sitemap, a listing...)."""
 
     @abstractmethod
     def _page_meta(self, html: str, url: str) -> tuple[str | None, Ctx]:
-        """Per-page (category, context). Computed once per page; ctx is handed to
-        `_title_for` for every candidate on the page."""
+        """Return the per-page (category, context).
+
+        Computed once per page; ctx is handed to `_title_for` for every candidate on the
+        page.
+        """
 
     @abstractmethod
     def _title_for(
@@ -280,14 +311,18 @@ class HtmlScraperSource(ABC, Generic[Ctx]):
         """Display title for one candidate, given its page's category + context."""
 
     def _candidates(self, html: str, url: str) -> Iterable[Candidate]:
-        """Per-page candidate extraction. Defaults to the shared extraction ladder;
-        override for sources whose embeds it doesn't recognise (a player config with a
-        site-specific token, a YouTube id in a JS var, …)."""
+        """Extract the candidates from one page.
+
+        Defaults to the shared extraction ladder; override for sources whose embeds it
+        doesn't recognise (a player config with a site-specific token, a YouTube id in a
+        JS var, ...).
+        """
         return extract_candidates(html, page_url=url, source=self.name)
 
     def discover(self) -> Iterator[Candidate]:
+        """Fetch the cam pages concurrently and yield their candidates."""
         urls = self._page_urls()
-        for url, html in zip(urls, thread_imap(self._fetch.get, urls)):
+        for url, html in zip(urls, thread_imap(self._fetch.get, urls), strict=True):
             if not html:
                 continue
             category, ctx = self._page_meta(html, url)

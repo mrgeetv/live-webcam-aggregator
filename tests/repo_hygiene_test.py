@@ -19,8 +19,9 @@ _DATE = re.compile(r"\b20\d{2}-\d{2}(?:-\d{2})?\b")
 # Named consumer infrastructure/services that belong to whoever runs this, not to it —
 # VPNs, uptime tooling, and the operator's edge proxy alike.
 _PRIVATE_INFRA = re.compile(
-    r"\b(protonvpn|nordvpn|mullvad|tailscale|wireguard|uptime[- ]kuma|caddy(?:file)?)\b",
-    re.I,
+    r"\b(protonvpn|nordvpn|mullvad|tailscale|wireguard"
+    r"|uptime[- ]kuma|caddy(?:file)?)\b",
+    re.IGNORECASE,
 )
 
 
@@ -36,8 +37,11 @@ def _shipped_files() -> list[Path]:
 
 
 def test_no_dates_in_shipped_source() -> None:
-    """A date in a comment means "this is when it happened to me", which is of no use
-    to a reader and pins the code to a moment. State the hazard instead."""
+    """Shipped source carries no dates.
+
+    A date in a comment means "this is when it happened to me", which is of no use to a
+    reader and pins the code to a moment. State the hazard instead.
+    """
     offenders = [
         f"{p.relative_to(_ROOT)}:{n}: {ln.strip()}"
         for p in _shipped_files()
@@ -60,8 +64,10 @@ def test_no_private_infrastructure_named_in_shipped_source() -> None:
 
 
 def test_no_api_key_shaped_literals_in_the_repo() -> None:
-    """A real Google API key is AIza + 35 chars. Test fixtures deliberately break the
-    shape (an underscore-laden fake), so anything matching the real pattern is a leak.
+    """A real Google API key is AIza + 35 chars.
+
+    Test fixtures deliberately break the shape (an underscore-laden fake), so anything
+    matching the real pattern is a leak.
     """
     key_like = re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")
     offenders: list[str] = []

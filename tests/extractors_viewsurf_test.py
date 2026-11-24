@@ -1,6 +1,11 @@
+from typing import TYPE_CHECKING
+
 import pytest
 
 from webcam_aggregator.extractors.viewsurf import ViewsurfResolver
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _UUID = "e6b6f1cd-ae5d-40f2-3032-3630-6d61-63-a744-dbccb109af26d"
 _TARGET = f"https://platforms5.joada.net/embeded/embeded.html?uuid={_UUID}&type=live"
@@ -16,14 +21,15 @@ _MANIFEST = f"""{{
 }}"""
 
 
-def _fetch(responses: dict[str, str], calls: list[str]):
+def _fetch(responses: dict[str, str], calls: list[str]) -> Callable[[str], str]:
     def fetch(url: str) -> str:
         calls.append(url)
         for host, body in responses.items():
             if url.startswith(host):
                 return body
         # the wired resolver fetch raises rather than returning None
-        raise ValueError("resolver fetch failed")
+        msg = "resolver fetch failed"
+        raise ValueError(msg)
 
     return fetch
 
@@ -38,7 +44,8 @@ def test_viewsurf_resolves_via_manifest_api() -> None:
     assert out.stream_type == "hls"
     # no token in the chain, but the API picks the delivery host per call and can
     # rebalance — don't cache the URL as permanent
-    assert out.ttl_seconds is not None and out.ttl_seconds <= 1800
+    assert out.ttl_seconds is not None
+    assert out.ttl_seconds <= 1800
 
     assert len(calls) == 1
     assert calls[0] == f"https://platforms8.joada.net/api/videos/manifest/{_UUID}"
@@ -98,6 +105,6 @@ def test_viewsurf_error_messages_carry_no_url() -> None:
         ({}, "https://platforms5.joada.net/embeded/embeded.html"),
     ]
     for responses, target in cases:
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ValueError, match="viewsurf:") as exc:
             ViewsurfResolver(_fetch(responses, [])).resolve(target)
         assert "http" not in str(exc.value)

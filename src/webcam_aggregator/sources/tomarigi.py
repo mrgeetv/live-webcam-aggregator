@@ -1,12 +1,17 @@
+"""tomarigi.me source: region listings -> cam pages -> YouTube embeds."""
+
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
-from .base import decode_entities, predisc_key
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import decode_entities, predisc_key
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # The /world/spots/<region> listings (paginated /<n>) are the complete index: together
 # they link every cam, Japanese ones included (under asia). Both map views are
@@ -27,9 +32,9 @@ _LD_JSON = re.compile(
 )
 
 # Every cam page's VideoObject description ends with a sentence naming the cam's
-# category: "…(提供: <channel>)。<category>のライブカメラを地図から探せる…". That is the
-# only per-cam category on the page, and unlike the /spots/<slug> listings it covers
-# the international cams too.
+# category, in the shape …(提供: <channel>)。<category>のライブカメラを地図から探せる….
+# That is the only per-cam category on the page, and unlike the /spots/<slug>
+# listings it covers the international cams too.
 _CATEGORY = re.compile(r"。([^」。]{1,8})のライブカメラ")
 
 # The site's categories -> categories._MAP keys (mapped to the unified taxonomy at
@@ -61,7 +66,7 @@ def _category(description: str) -> str | None:
 
 
 def _video_object(html: str) -> dict[str, object] | None:
-    """The cam page's VideoObject JSON-LD (it also carries a WebSite block)."""
+    """Return the cam page's VideoObject JSON-LD (it also carries a WebSite block)."""
     for block in _LD_JSON.findall(html):
         try:
             data = json.loads(block)
@@ -73,19 +78,23 @@ def _video_object(html: str) -> dict[str, object] | None:
 
 
 class TomarigiSource:
-    """tomarigi.me (とまり木): a curated directory of YouTube live cams —
+    """tomarigi.me (とまり木): a curated directory of YouTube live cams.
+
     Japanese-branded but mostly international. Sitemap -> region listing pages ->
-    per-cam page, whose VideoObject JSON-LD carries the YouTube embed URL, the name
-    and the category, so there is nothing to extract from the player and every cam
-    dedups by its `yt:` key. A page with no VideoObject (a withdrawn cam) drops."""
+    per-cam page, whose VideoObject JSON-LD carries the YouTube embed URL, the name and
+    the category, so there is nothing to extract from the player and every cam dedups by
+    its `yt:` key. A page with no VideoObject (a withdrawn cam) drops.
+    """
 
     name: str = "tomarigi"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each cam page, read from its VideoObject JSON-LD."""
         xml = self._fetch.get(_SITEMAP) or ""
         listings: set[str] = set(_LISTING_LOC.findall(xml))
         read: set[str] = set()
@@ -97,7 +106,7 @@ class TomarigiSource:
                 listings.update(_LISTING_HREF.findall(html or ""))
         pages = sorted(_SITE + path for path in spots)
         seen: set[str] = set()
-        for page, html in zip(pages, thread_imap(self._fetch.get, pages)):
+        for page, html in zip(pages, thread_imap(self._fetch.get, pages), strict=True):
             item = _video_object(html or "")
             if item is None:
                 continue

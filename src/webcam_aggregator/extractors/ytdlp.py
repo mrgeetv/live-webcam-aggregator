@@ -1,11 +1,16 @@
+"""yt-dlp extractor: resolve a video or channel URL to one muxed HLS stream URL."""
+
 from __future__ import annotations
 
 import re
 import subprocess
 import time
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .base import Resolved
+from webcam_aggregator.extractors.base import Resolved
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # We hand the player ONE url, so we need a *muxed* rendition (youtube's live
 # itags 91-96, video and audio in a single HLS ladder). Only some player clients
@@ -25,30 +30,40 @@ _TIMEOUT = 60
 # resolve-failure aggregate, so both go: with the id left in, one failure mode
 # across every cam reads as a handful of single-cam buckets. The serve-path warning
 # names the cam through its target URL.
-_ERROR_SUBJECT = re.compile(r"^(ERROR: \[[\w:]+\]) [^\s:]+: ", re.M)
+_ERROR_SUBJECT = re.compile(r"^(ERROR: \[[\w:]+\]) [^\s:]+: ", re.MULTILINE)
 _REPORT_PLEA = re.compile(r";? please report this issue on [^\n]*")
 
 
 def _default_run(argv: list[str]) -> str:
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=_TIMEOUT)
+        # No shell, and the argv ends its options with `--`, so a target URL can
+        # never be read as a flag.
+        r = subprocess.run(  # noqa: S603
+            argv, capture_output=True, text=True, timeout=_TIMEOUT, check=False
+        )
     except subprocess.TimeoutExpired:
         # its own message is the whole argv, which buries the reason in the
         # truncated resolve-failure detail
-        raise ValueError(f"yt-dlp timed out after {_TIMEOUT}s") from None
+        msg = f"yt-dlp timed out after {_TIMEOUT}s"
+        raise ValueError(msg) from None
     if r.returncode != 0 or not r.stdout.strip():
         reason = _REPORT_PLEA.sub("", _ERROR_SUBJECT.sub(r"\1 ", r.stderr)).strip()
-        raise ValueError(f"yt-dlp failed: {reason[:200]}")
+        msg = f"yt-dlp failed: {reason[:200]}"
+        raise ValueError(msg)
     return r.stdout.strip()
 
 
 class YtDlpExtractor:
+    """Resolve a target URL to a muxed HLS stream URL by running yt-dlp."""
+
     _run: Callable[[list[str]], str]
 
     def __init__(self, run: Callable[[list[str]], str] = _default_run) -> None:
+        """Take the `run` callable that runs yt-dlp's argv and returns its stdout."""
         self._run = run
 
     def resolve(self, target_url: str) -> Resolved:
+        """Resolve `target_url` to one muxed HLS URL; its expiry, if any, is the TTL."""
         # Prefer an HLS (m3u8) format. Some live streams default to a DASH .mpd,
         # which our HLS manifest proxy can't serve; fall back to best if no HLS.
         out = self._run(
@@ -70,7 +85,8 @@ class YtDlpExtractor:
         # a line would silently serve an audio-only cam that looks healthy.
         lines = out.splitlines()
         if len(lines) != 1:
-            raise ValueError("yt-dlp returned a split format, not a muxed stream")
+            msg = "yt-dlp returned a split format, not a muxed stream"
+            raise ValueError(msg)
         url = lines[0]
         m = re.search(r"expire[/=](\d+)", url)
         ttl = int(m.group(1)) - int(time.time()) if m else None

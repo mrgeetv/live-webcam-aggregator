@@ -55,7 +55,7 @@ class _FakeFetch:
         return None  # the other country pages: fetch failed
 
 
-def test_livespotting_two_hop_discovery():
+def test_livespotting_two_hop_discovery() -> None:
     cands = list(LivespottingSource(_FakeFetch()).discover())
     by_url = {c.target_url: c for c in cands}
 
@@ -88,7 +88,7 @@ def test_livespotting_two_hop_discovery():
     assert not any("elgcq5ks" in c.source_page_url for c in cands)
 
 
-def test_livespotting_survives_all_fetches_failing():
+def test_livespotting_survives_all_fetches_failing() -> None:
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None

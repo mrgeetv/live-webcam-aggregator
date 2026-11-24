@@ -29,7 +29,8 @@ _PAGES = {
     "https://www.resortcams.com/webcams/greeneville-tn/": _GREENEVILLE_HTML,
     # no player in the static HTML (JS-built cam) -> yields nothing, drops
     "https://www.resortcams.com/webcams/sugar-ski/": (
-        "<title>Sugar Ski &amp; Country Club Sugar Mountain Web Cam - Resort Cams</title>"
+        "<title>Sugar Ski &amp; Country Club Sugar Mountain Web Cam"
+        " - Resort Cams</title>"
     ),
 }
 
@@ -39,7 +40,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_resortcams_discovers_direct_hls_with_clean_titles():
+def test_resortcams_discovers_direct_hls_with_clean_titles() -> None:
     cands = list(ResortCamsSource(_FakeFetch()).discover())
     by_title = {c.title: c for c in cands}
 
@@ -63,7 +64,7 @@ def test_resortcams_discovers_direct_hls_with_clean_titles():
         assert (c.predisc_key or "").startswith("hls:")
 
 
-def test_resortcams_handles_missing_sitemap():
+def test_resortcams_handles_missing_sitemap() -> None:
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None

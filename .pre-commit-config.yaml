@@ -7,7 +7,6 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
-      - id: check-ast
       - id: check-case-conflict
       - id: check-docstring-first
       - id: check-executables-have-shebangs
@@ -23,7 +22,6 @@ repos:
       - id: mixed-line-ending
       - id: name-tests-test
       - id: no-commit-to-branch
-      - id: requirements-txt-fixer
       - id: trailing-whitespace
 
   - repo: https://github.com/compilerla/conventional-pre-commit
@@ -38,20 +36,6 @@ repos:
             --scopes,
             "docker,api,playlist,scraper,config,deps,ci,docs",
           ]
-
-  - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 26.10.1
-    hooks:
-      - id: black
-        language_version: python3
-
-  - repo: https://github.com/PyCQA/flake8
-    rev: 7.5.0
-    hooks:
-      - id: flake8
-        # --extend-ignore (not --ignore) keeps flake8's black-compatible defaults
-        # (E704, W503, …) and just adds E501/E203 on top — per black's guidance.
-        args: ["--extend-ignore=E501,E203"]
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
@@ -71,13 +55,41 @@ repos:
       - id: hadolint-docker
         entry: ghcr.io/hadolint/hadolint:v2.15.1 hadolint
 
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.9
+    hooks:
+      # Fails the commit when uv.lock no longer matches pyproject.toml.
+      - id: uv-lock
+
+  # The Python tools run from the project venv (`uv run`), pinned once in uv.lock,
+  # so the hooks check against the same dependency versions the app and tests use.
+  # --locked syncs the venv first and fails on a stale lock instead of rewriting it.
   - repo: local
     hooks:
+      # Ruff settings live in pyproject.toml. Both hooks run over the whole project,
+      # the files ruff itself finds, so the hook and a bare `ruff check` agree.
+      # The formatter also formats the Python code blocks in Markdown files.
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --locked ruff format
+        language: system
+        types_or: [python, pyi, markdown]
+        pass_filenames: false
+
+      # Linting reports and never fixes; `uv run ruff check --fix` applies the
+      # safe fixes by hand. Ruff also reports syntax errors, so no check-ast.
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --locked ruff check
+        language: system
+        types_or: [python, pyi, toml]
+        pass_filenames: false
+
       - id: check-python-version
         name: Check Python version consistency
         entry: scripts/check-python-version.sh
         language: system
-        files: '^(\.python-version|Dockerfile|docker-compose\.yml|pyrightconfig\.json)$'
+        files: '^(\.python-version|Dockerfile|docker-compose\.yml|pyrightconfig\.json|pyproject\.toml)$'
         pass_filenames: false
 
       - id: check-hadolint-pin
@@ -89,50 +101,36 @@ repos:
 
       - id: pytest
         name: pytest (with coverage)
-        # The wrapper prefers .venv/bin/pytest and falls back to PATH, so the hook
-        # works whatever shell state the commit runs from (agents, editor git UIs, CI).
-        entry: scripts/run-pytest.sh
+        entry: uv run --locked pytest
         language: system
         pass_filenames: false
         # Only run when code/tests/deps change (skip doc-only commits).
-        files: '^(src/|scripts/|tests/|pytest\.ini|requirements.*\.txt)'
+        files: '^(src/|scripts/|tests/|pytest\.ini|pyproject\.toml|uv\.lock)'
         # Coverage floor lives here (not in pytest.ini addopts) so ad-hoc/partial
-        # runs aren't tripped; floor sits a few points below the achieved ~88%.
+        # runs aren't tripped. It is a regression guard, set below what the suite
+        # achieves.
         args:
           - "--cov=webcam_aggregator"
           - "--cov-report=term-missing"
           - "--cov-fail-under=85"
 
-  # Upstream's own hook repo rather than a local hook: Dependabot skips local hooks,
-  # so a pin there would never be bumped.
-  - repo: https://github.com/jendrikseipp/vulture
-    rev: v2.16
-    hooks:
       - id: vulture
         name: vulture (dead code)
+        # Settings in pyproject.toml's [tool.vulture]. It reads the whole package
+        # every run, since dead code is a property of the package, not of a file.
+        entry: uv run --locked vulture
+        language: system
         files: '^src/'
-        # confidence 60 catches dead functions/attributes/fields (not just imports,
-        # which flake8/basedpyright already get). Framework-dispatched HTTP-handler
-        # methods (do_GET/log_message) are false positives, so ignore them by name.
-        args:
-          - "src/webcam_aggregator/"
-          - "--min-confidence"
-          - "60"
-          - "--ignore-names"
-          - "do_GET,log_message"
+        pass_filenames: false
+
+      - id: basedpyright
+        name: basedpyright
+        entry: uv run --locked basedpyright
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
     rev: v0.24.2
     hooks:
       - id: markdownlint-cli2
-
-  - repo: https://github.com/DetachHead/basedpyright-pre-commit-mirror
-    rev: 1.40.2
-    hooks:
-      - id: basedpyright
-        additional_dependencies:
-          - google-api-python-client-stubs==1.40.0
-          - types-psutil==7.2.2.20261111
-          - types-requests==2.33.0.20261030
-          - pytest==9.2.0  # so basedpyright can resolve pytest types in tests/
-          - curl_cffi==0.17.0  # fetch.py imports it; ships its own type hints

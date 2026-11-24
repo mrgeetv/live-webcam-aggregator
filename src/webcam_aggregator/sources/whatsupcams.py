@@ -1,13 +1,22 @@
+"""whatsupcams.com source: Yoast sitemaps -> cam pages -> CDN API direct HLS."""
+
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from ..fetch import FetcherProtocol, thread_imap
-from ..models import Candidate
-from .base import decode_entities, predisc_key, with_location_parts
+from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    decode_entities,
+    predisc_key,
+    with_location_parts,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _SITEMAP_INDEX = "https://www.whatsupcams.com/en/sitemap_index.xml"
 _LOC = re.compile(r"<loc>([^<]+)</loc>")
@@ -23,6 +32,8 @@ _OG_TITLE = re.compile(r'property="og:title" content="([^"]+)"')
 # no Referer, no session binding; served by DirectHls). The cdn-0NN host varies
 # per cam, so the URL cannot be derived from the id — this API is the mapping.
 _API = "https://www.whatsupcams.com/cdn-api/streams/"
+# Path segments in a cam page URL: en/webcams/<country>/<region>/<town>/<slug>.
+_CAM_PAGE_DEPTH = 6
 
 
 def _on_site(url: str) -> bool:
@@ -31,18 +42,22 @@ def _on_site(url: str) -> bool:
 
 
 class WhatsupcamsSource:
-    """whatsupcams.com (Croatian-run network, Adriatic-heavy): Yoast sitemap ->
-    per-cam pages (cam id + title) -> per-id CDN API (direct open HLS). A page
-    without a wgt embed id isn't a cam page and drops; an id whose API fetch
-    fails drops. No per-cam category in the page -> "Other" (title fallback)."""
+    """whatsupcams.com: a Croatian-run, Adriatic-heavy network of cams.
+
+    Yoast sitemap -> per-cam pages (cam id + title) -> per-id CDN API (direct open HLS).
+    A page without a wgt embed id isn't a cam page and drops; an id whose API fetch
+    fails drops. No per-cam category in the page -> "Other" (title fallback).
+    """
 
     name: str = "whatsupcams"
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
+        """Take the `fetch` used for every request."""
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
+        """Yield a candidate for each cam page whose CDN API call returns an HLS URL."""
         idx = self._fetch.get(_SITEMAP_INDEX) or ""
         maps = [
             u
@@ -56,12 +71,15 @@ class WhatsupcamsSource:
                 # the sitemap also lists the bare /en/webcams/ archive page. Anchor to
                 # our own host too: a tampered sitemap must not steer the build-time
                 # fetcher at arbitrary third-party hosts.
-                if _on_site(loc) and len(urlsplit(loc).path.strip("/").split("/")) >= 6:
+                depth = len(urlsplit(loc).path.strip("/").split("/"))
+                if _on_site(loc) and depth >= _CAM_PAGE_DEPTH:
                     pages.add(loc)
         page_list = sorted(pages)
         # hop 1: cam pages -> (page, title, cam id)
         found: list[tuple[str, str, str]] = []
-        for page, html in zip(page_list, thread_imap(self._fetch.get, page_list)):
+        for page, html in zip(
+            page_list, thread_imap(self._fetch.get, page_list), strict=True
+        ):
             m = _WGT_ID.search(html or "")
             if not m:
                 continue
@@ -71,7 +89,7 @@ class WhatsupcamsSource:
         # hop 2: per-id CDN API -> the cam's HLS URL (concurrent)
         seen: set[str] = set()
         raws = thread_imap(self._fetch.get, [_API + f[2] for f in found])
-        for (page, title, _cam_id), raw in zip(found, raws):
+        for (page, title, _cam_id), raw in zip(found, raws, strict=True):
             try:
                 data = json.loads(raw or "")
             except ValueError:

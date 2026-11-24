@@ -1,3 +1,5 @@
+"""SkylineWebcams source: sitemap -> cam pages with their own HLS or a YouTube embed."""
+
 from __future__ import annotations
 
 import json
@@ -5,10 +7,14 @@ import logging
 import re
 from typing import override
 
-from ..extractors.skyline import stream_token
-from ..fetch import thread_imap
-from ..models import Candidate
-from .base import HtmlScraperSource, decode_entities, with_location_parts
+from webcam_aggregator.extractors.skyline import stream_token
+from webcam_aggregator.fetch import thread_imap
+from webcam_aggregator.models import Candidate
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    with_location_parts,
+)
 
 log = logging.getLogger("webcam-aggregator.skyline")
 
@@ -47,9 +53,10 @@ _CAT_INDEX = re.compile(r"/en/live-cams-category/([a-z0-9-]+)-cams\.html")
 _CAM_LINK = re.compile(rf'href="({_CAM_PATH})"')
 
 _H1 = re.compile(r"<h1[^<>]*>([^<]{1,120})</h1>")
-_LIVECAM_SUFFIX = re.compile(r"(?<!\s)\s*live cam\s*$", re.I)
+_LIVECAM_SUFFIX = re.compile(r"(?<!\s)\s*live cam\s*$", re.IGNORECASE)
 _LD_JSON = re.compile(
-    r'<script type="application/ld\+json">((?:[^<]|<(?!/?script))*+)</script>', re.I
+    r'<script type="application/ld\+json">((?:[^<]|<(?!/?script))*+)</script>',
+    re.IGNORECASE,
 )
 
 # Skyline's own Clappr HLS (its token lapses unless the page is re-fetched, so it is
@@ -64,9 +71,11 @@ _Ctx = tuple[str, list[str]]
 
 
 def _breadcrumb_geo(html: str) -> list[str]:
-    """The English place names from the page's JSON-LD BreadcrumbList (country ->
-    region -> city), minus its "Live Cams" root, which links the /en/webcam.html
-    index rather than a place."""
+    """Return the English place names from the page's JSON-LD BreadcrumbList.
+
+    The names run country -> region -> city, minus its "Live Cams" root, which links the
+    /en/webcam.html index rather than a place.
+    """
     for blob in _LD_JSON.findall(html):
         try:
             ld = json.loads(blob)
@@ -85,13 +94,17 @@ def _breadcrumb_geo(html: str) -> list[str]:
 
 
 class SkylineSource(HtmlScraperSource[_Ctx]):
+    """skylinewebcams.com cams, from `sitemap_en.xml`, categorised from its pages."""
+
     name: str = "skyline"
     _cat: dict[str, str | None]  # cam URL -> category, filled by _page_urls
 
     def _category_slugs(self) -> list[str]:
-        """Skyline's category slugs from its index page, so a newly-added category
-        surfaces instead of being silently missed. Falls back to the known slugs if the
-        index is unreachable."""
+        """Return Skyline's category slugs from its index page.
+
+        A newly-added category surfaces instead of being silently missed. Falls back to
+        the known slugs if the index is unreachable.
+        """
         html = self._fetch.get(f"{_BASE}/en/categories.html") or ""
         return list(dict.fromkeys(_CAT_INDEX.findall(html))) or list(_CATEGORY)
 
@@ -104,7 +117,8 @@ class SkylineSource(HtmlScraperSource[_Ctx]):
         unmapped = sorted(s for s in slugs if s not in _CATEGORY)
         if unmapped:
             log.warning(
-                "skyline: %d category page(s) not in _CATEGORY (-> Unmapped Category): %s",
+                "skyline: %d category page(s) not in _CATEGORY "
+                "(-> Unmapped Category): %s",
                 len(unmapped),
                 ", ".join(unmapped),
             )
@@ -113,7 +127,9 @@ class SkylineSource(HtmlScraperSource[_Ctx]):
         # passes through as the raw slug, which maps to "Unmapped Category"). A cam on
         # several category pages takes the first in the index's order; one on none
         # stays uncategorised.
-        for slug, html in zip(slugs, thread_imap(self._fetch.get, cat_urls)):
+        for slug, html in zip(
+            slugs, thread_imap(self._fetch.get, cat_urls), strict=True
+        ):
             cat = _CATEGORY.get(slug, slug)
             for rel in _CAM_LINK.findall(html or ""):
                 u = f"{_BASE}{rel}"

@@ -1,5 +1,9 @@
-from webcam_aggregator.fetch import FetcherProtocol
+from typing import TYPE_CHECKING
+
 from webcam_aggregator.sources.worldcams import WorldcamsSource
+
+if TYPE_CHECKING:
+    from webcam_aggregator.fetch import FetcherProtocol
 
 
 class _FakeFetcher:
@@ -13,8 +17,7 @@ class _FakeFetcher:
 
 
 _LIST = (
-    '<div class="cam-promo__title">'
-    '<a href="/norway/finse/railroad-station">A</a></div>'
+    '<div class="cam-promo__title"><a href="/norway/finse/railroad-station">A</a></div>'
 )
 _CAM = (
     "<h1>Finse Railroad Station</h1>"
@@ -75,7 +78,7 @@ def test_skips_camera_page_returning_none() -> None:
 
 
 _MULTI_LIST = (
-    '<div class="cam-promo__title">' '<a href="/spain/gran-canaria/beaches">B</a></div>'
+    '<div class="cam-promo__title"><a href="/spain/gran-canaria/beaches">B</a></div>'
 )
 _MULTI_CAM = (
     "<h1>Gran Canaria Beaches Webcam</h1>"

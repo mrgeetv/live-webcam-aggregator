@@ -7,7 +7,9 @@ _FIX = Path(__file__).parent / "fixtures"
 # double-dash title: only the trailing site boilerplate is stripped
 _HEIMAKLETTUR_HTML = """
 <title>Vestmannaeyjar &#8211; Heimaklettur &#8211; Live From Iceland</title>
-<iframe data-lazyloaded="1" src="about:blank" data-litespeed-src="https://g0.ipcamlive.com/player/player.php?alias=heimaklettur" width="100%" height="100%"></iframe>
+<iframe data-lazyloaded="1" src="about:blank"
+data-litespeed-src="https://g0.ipcamlive.com/player/player.php?alias=heimaklettur"
+width="100%" height="100%"></iframe>
 """
 
 _PAGES = {
@@ -17,9 +19,13 @@ _PAGES = {
     "https://livefromiceland.is/webcam/hekla/": (
         _FIX / "livefromiceland_cam.html"
     ).read_text(),
-    "https://livefromiceland.is/webcam/vestmannaeyjar-heimaklettur/": _HEIMAKLETTUR_HTML,
+    "https://livefromiceland.is/webcam/vestmannaeyjar-heimaklettur/": (
+        _HEIMAKLETTUR_HTML
+    ),
     # no player in the static HTML -> yields nothing, drops
-    "https://livefromiceland.is/webcam/reykjavikurtjorn/": "<title>Reykjavíkurtjörn</title>",
+    "https://livefromiceland.is/webcam/reykjavikurtjorn/": (
+        "<title>Reykjavíkurtjörn</title>"
+    ),
 }
 
 
@@ -28,7 +34,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_livefromiceland_extracts_lazy_ipcamlive_players():
+def test_livefromiceland_extracts_lazy_ipcamlive_players() -> None:
     cands = list(LiveFromIcelandSource(_FakeFetch()).discover())
     by_target = {c.target_url: c for c in cands}
 
@@ -52,7 +58,7 @@ def test_livefromiceland_extracts_lazy_ipcamlive_players():
     assert not any("about" in c.source_page_url for c in cands)
 
 
-def test_livefromiceland_handles_missing_index():
+def test_livefromiceland_handles_missing_index() -> None:
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None
@@ -60,9 +66,12 @@ def test_livefromiceland_handles_missing_index():
     assert list(LiveFromIcelandSource(_Dead()).discover()) == []
 
 
-def test_livefromiceland_handles_a_non_json_index():
-    """A retired endpoint answers with an HTML error page, not JSON. That must
-    drop to zero cams (the empty-guard then reports it), never crash the source."""
+def test_livefromiceland_handles_a_non_json_index() -> None:
+    """A retired endpoint answers with an HTML error page, not JSON.
+
+    That must drop to zero cams (the empty-guard then reports it), never crash the
+    source.
+    """
 
     class _ErrorPage:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
@@ -71,7 +80,7 @@ def test_livefromiceland_handles_a_non_json_index():
     assert list(LiveFromIcelandSource(_ErrorPage()).discover()) == []
 
 
-def test_livefromiceland_handles_a_json_error_object():
+def test_livefromiceland_handles_a_json_error_object() -> None:
     """WP answers a disabled route with a JSON *object*, not the expected array."""
 
     class _RestError:
@@ -81,9 +90,11 @@ def test_livefromiceland_handles_a_json_error_object():
     assert list(LiveFromIcelandSource(_RestError()).discover()) == []
 
 
-def test_livefromiceland_handles_a_json_scalar_index():
-    """A terse error body like `404` parses as a JSON number; iterating it would
-    raise. Any non-list shape must drop to zero cams, never crash the source."""
+def test_livefromiceland_handles_a_json_scalar_index() -> None:
+    """A terse error body like `404` parses as a JSON number; iterating it would raise.
+
+    Any non-list shape must drop to zero cams, never crash the source.
+    """
 
     class _Scalar:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:

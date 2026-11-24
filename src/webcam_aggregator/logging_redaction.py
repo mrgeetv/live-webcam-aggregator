@@ -1,18 +1,21 @@
+"""Log redaction: credential scrubbing, URL trimming and error descriptions."""
+
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, override
+from typing import override
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
-# googleapiclient puts the developer key in the request URI, and HttpError.__str__ (which
-# IS its __repr__) prints that URI — so ANY log of such an exception writes the key to
-# disk. log.exception is the easiest way to do it by accident, since a traceback ends in
-# str(exc). Call sites are responsible for scrubbing; this filter is the backstop that
-# stops a new one regressing it. Unlike the CDN playback tokens in serving.py, this is
-# our own long-lived credential, so it is redacted at every level, DEBUG included.
-# The lookbehind stops words that merely END in "key" (monkey=, turkey=) being eaten,
-# while an underscore still counts as a boundary so session_key=/auth_key= stay covered.
+# googleapiclient puts the developer key in the request URI, and HttpError.__str__
+# (which IS its __repr__) prints that URI — so ANY log of such an exception writes the
+# key to disk. log.exception is the easiest way to do it by accident, since a traceback
+# ends in str(exc). Call sites are responsible for scrubbing; this filter is the
+# backstop that stops a new one regressing it. Unlike the CDN playback tokens in
+# serving.py, this is our own long-lived credential, so it is redacted at every level,
+# DEBUG included. The lookbehind stops words that merely END in "key" (monkey=, turkey=)
+# being eaten, while an underscore still counts as a boundary so session_key=/auth_key=
+# stay covered.
 _KEY_PARAM = re.compile(
     r"(?i)(?<![a-z0-9])((?:developer_?key|api_?key|key)=)[^&\s\"']+"
 )
@@ -36,13 +39,16 @@ _ID_PARAMS = {
 
 
 def trim_url(url: str, *, keep_ids: bool = True) -> str:
-    """A URL cut for an INFO log line to scheme://host/path, plus (with `keep_ids`)
-    any query params that only identify the cam (`_ID_PARAMS`).
+    """Cut a URL for an INFO log line to scheme://host/path.
+
+    With `keep_ids`, also keeps any query params that only identify the cam
+    (`_ID_PARAMS`).
 
     Upstream URLs carry live session credentials in the query string (skyline's
     `?a=<token>`, a beachcam target's `wmsAuthSign`), googlevideo carries its
     playback token in the PATH (`_googlevideo_path`), and any URL can carry
-    userinfo, so all of that goes."""
+    userinfo, so all of that goes.
+    """
     try:
         parts = urlsplit(url)
         name = (parts.hostname or "").rstrip(".")  # `host.` is the same host
@@ -64,10 +70,13 @@ def trim_url(url: str, *, keep_ids: bool = True) -> str:
 
 
 def _googlevideo_path(path: str) -> str:
-    """A googlevideo path cut to its route and video id. After the route the path
-    is key/value pairs carrying the playback credentials (`ip/<our egress IP>`,
-    `sig/…`), so of those only `id/<video>.<n>` is kept, whatever their order. A
-    route other than a manifest's or `videoplayback` keeps nothing but the id."""
+    """Cut a googlevideo path to its route and video id.
+
+    After the route the path is key/value pairs carrying the playback credentials
+    (`ip/<our egress IP>`, `sig/…`), so of those only `id/<video>.<n>` is kept, whatever
+    their order. A route other than a manifest's or `videoplayback` keeps nothing but
+    the id.
+    """
     segs = path.split("/")
     if segs[1:3] == ["api", "manifest"]:
         kept = segs[:4]  # /api/manifest/<kind>
@@ -91,17 +100,23 @@ def trim_urls(text: str, *, keep_ids: bool = True) -> str:
 
 
 def describe_error(exc: BaseException) -> str:
-    """`Type: message` for one INFO log line: credentials scrubbed, every URL the
-    message quotes trimmed (`trim_url`), and line breaks flattened."""
+    """Format one INFO log line as `Type: message`.
+
+    Credentials are scrubbed, every URL the message quotes trimmed
+    (`trim_url`), and line breaks flattened.
+    """
     text = " ".join(trim_urls(scrub(str(exc))).splitlines())
     return f"{type(exc).__name__}: {text}"
 
 
-def _scrub_arg(value: Any) -> Any:
-    """Pre-scrub a log arg's string form. Non-str args are %s-formatted later, and the
-    usual leak shape is `log.warning("…: %s", exc)` where the exception's str carries the
-    key — so the arg has to be scrubbed, not just the format string. Clean values are
-    returned unchanged so formatting (%d and friends) still works."""
+def _scrub_arg(value: object) -> object:
+    """Pre-scrub a log arg's string form.
+
+    Non-str args are %s-formatted later, and the usual leak shape is `log.warning("…:
+    %s", exc)` where the exception's str carries the key — so the arg has to be
+    scrubbed, not just the format string. Clean values are returned unchanged so
+    formatting (%d and friends) still works.
+    """
     if isinstance(value, str):
         return scrub(value)
     text = str(value)

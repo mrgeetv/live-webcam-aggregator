@@ -1,3 +1,5 @@
+"""Environment configuration: a bad value warns and falls back to its default."""
+
 from __future__ import annotations
 
 import logging
@@ -5,7 +7,7 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from .categories import unknown_categories
+from webcam_aggregator.categories import unknown_categories
 
 _DEFAULT_SEARCH_QUERY = (
     "cam|webcam|live|beach|wildlife|aquarium|space|harbor|park|mountain|coast|city"
@@ -14,6 +16,9 @@ _DEFAULT_SEARCH_QUERY = (
 )
 
 log = logging.getLogger("webcam-aggregator.config")
+# The shortest lifetime of an auth token a source bakes into its URLs at discovery
+# (beachcam's wmsAuthSign).
+_BAKED_TOKEN_HOURS = 24
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 # v1 env vars that v2 ignores — warn so migrators aren't caught out by silent no-ops.
@@ -27,6 +32,8 @@ _LEGACY_VARS: dict[str, str | None] = {
 
 @dataclass(frozen=True)
 class Config:
+    """Validated settings read from the environment by `load`."""
+
     youtube_api_key: str
     public_base_url: str
     catalogue_interval_hours: int
@@ -55,7 +62,7 @@ def _csv_set(raw: str) -> frozenset[str]:
     return frozenset(p.strip().casefold() for p in raw.split(",") if p.strip())
 
 
-def _bool_env(env: dict[str, str], key: str, default: bool) -> bool:
+def _bool_env(env: dict[str, str], key: str, *, default: bool) -> bool:
     raw = env.get(key)
     # Blank means unset, not "false": same contract as _int_env — docker-compose passes
     # `FOO=${FOO:-}` through as an empty string when the var isn't in .env, and that
@@ -92,7 +99,7 @@ def _warn_on_suspect_config(cfg: Config) -> None:
     # A few sources bake a discovery-time auth token into the served URL (beachcam's
     # ~24h wmsAuthSign); an interval longer than that lets the token lapse mid-cycle,
     # silently 403-ing those cams. Valid, but worth flagging.
-    if cfg.catalogue_interval_hours > 24:
+    if cfg.catalogue_interval_hours > _BAKED_TOKEN_HOURS:
         log.warning(
             "CATALOGUE_INTERVAL_HOURS=%d is over 24 — sources that carry a per-build "
             "auth token (e.g. beachcam) will lapse before the next rebuild",
@@ -113,10 +120,15 @@ def _warn_legacy_env(env: dict[str, str]) -> None:
 
 
 def load(env: dict[str, str] | None = None) -> Config:
+    """Read and validate the configuration from `env` (default `os.environ`).
+
+    Raise `ValueError` if `YOUTUBE_API_KEY` is missing.
+    """
     e = env if env is not None else dict(os.environ)
     key = e.get("YOUTUBE_API_KEY", "").strip()
     if not key:
-        raise ValueError("YOUTUBE_API_KEY is required")
+        msg = "YOUTUBE_API_KEY is required"
+        raise ValueError(msg)
     cfg = Config(
         youtube_api_key=key,
         public_base_url=e.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"),
@@ -124,7 +136,7 @@ def load(env: dict[str, str] | None = None) -> Config:
         search_query=e.get("SEARCH_QUERY", "").strip() or _DEFAULT_SEARCH_QUERY,
         log_level=e.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         exclude_categories=_csv_set(e.get("EXCLUDE_CATEGORIES", "")),
-        proxy_youtube=_bool_env(e, "PROXY_YOUTUBE", False),
+        proxy_youtube=_bool_env(e, "PROXY_YOUTUBE", default=False),
         max_parallel_sources=_int_env(e, "MAX_PARALLEL_SOURCES", 4, 1),
     )
     _warn_on_suspect_config(cfg)

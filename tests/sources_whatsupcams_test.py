@@ -39,7 +39,8 @@ _SITEMAP2 = f"""<urlset>
 # trimmed from the live page: the wgt embedUrl is the page's own cam id; the
 # snapshot thumbnails include the "nearby cams" strip's ids and must not be used
 _PODSTRANA_HTML = """
-<meta property="og:title" content="Podstrana Beach Webcam &#8211; Live View from Hotel Split" />
+<meta property="og:title" content="Podstrana Beach Webcam &#8211; Live View \
+from Hotel Split" />
 <script>{"embedUrl":"https://services.whatsupcams.com/wgt/hr_podstrana01/",
 "thumbnailUrl":"https://cdn.whatsupcams.com/snapshot/hr_podstrana01.jpg"}</script>
 <img src="https://cdn.whatsupcams.com/snapshot/hr_bol02.jpg">
@@ -85,7 +86,7 @@ class _FakeFetch:
         return _PAGES.get(url)
 
 
-def test_whatsupcams_sitemap_page_api_discovery():
+def test_whatsupcams_sitemap_page_api_discovery() -> None:
     cands = list(WhatsupcamsSource(_FakeFetch()).discover())
     by_url = {c.target_url: c for c in cands}
 
@@ -100,8 +101,7 @@ def test_whatsupcams_sitemap_page_api_discovery():
     # appended town-first (the title names Podstrana itself)
     pod = by_url["https://cdn-008.whatsupcams.com/hls/hr_podstrana01.m3u8"]
     assert pod.title == (
-        "Podstrana Beach Webcam – Live View from Hotel Split"
-        " — Split Dalmatia, Croatia"
+        "Podstrana Beach Webcam – Live View from Hotel Split — Split Dalmatia, Croatia"
     )
     assert pod.source_page_url == _PODSTRANA
     zoo = by_url["https://cdn-007.whatsupcams.com/hls/hr_zgzoo05.m3u8"]
@@ -116,7 +116,7 @@ def test_whatsupcams_sitemap_page_api_discovery():
         assert (c.predisc_key or "").startswith("hls:")  # direct HLS, mergeable
 
 
-def test_whatsupcams_survives_all_fetches_failing():
+def test_whatsupcams_survives_all_fetches_failing() -> None:
     class _Dead:
         def get(self, _url: str, _timeout: float = 20.0) -> str | None:
             return None
