@@ -17,14 +17,23 @@ RUN apk add --no-cache patchelf \
  && patchelf --set-interpreter /usr/local/lib/glibc/ld-linux-x86-64.so.2 \
              --set-rpath /usr/local/lib/glibc /bin/deno
 
+# uv turns uv.lock into a hashed requirements list for the builder's pip.
+# Written out, not an ARG, for the same Dependabot reason as deno above.
+FROM ghcr.io/astral-sh/uv:0.13.10 AS uv_src
+
 # Stage 1: Build dependencies
 FROM ${BUILD_IMAGE} AS builder
 
 WORKDIR /app
 
-# Copy requirements and install dependencies to isolated directory
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir --target=/deps -r requirements.txt
+# Install the locked runtime dependencies to an isolated directory. pip stays the
+# installer because the -dev image wraps it in Socket Firewall; uv only exports the
+# lock. The export is the whole dependency closure, every pin hashed, so pip checks
+# each download and resolves nothing itself (--no-deps).
+COPY --from=uv_src /uv /usr/local/bin/uv
+COPY pyproject.toml uv.lock ./
+RUN uv export --frozen --no-dev --no-emit-project --output-file requirements.txt \
+ && pip3 install --no-cache-dir --require-hashes --no-deps --target=/deps -r requirements.txt
 
 # Stage 2: Runtime
 FROM ${RUNTIME_IMAGE}

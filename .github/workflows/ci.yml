@@ -31,34 +31,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          # Read Python version from .python-version file
-          python-version-file: ".python-version"
-          # Cache pip dependencies (pre-commit package itself)
-          cache: "pip"
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
+      # uv installs the Python that .python-version names, and caches its downloads
+      # keyed on uv.lock.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
 
       - name: Cache pre-commit hooks
         uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: ~/.cache/pre-commit/
           # Key includes Python version and config hash for proper invalidation
-          key: pre-commit-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          key: pre-commit-${{ hashFiles('.python-version') }}-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
-            pre-commit-${{ steps.setup-python.outputs.python-version }}-
+            pre-commit-${{ hashFiles('.python-version') }}-
 
-      - name: Install dependencies (app + dev, so the pytest hook can import)
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+      # The project venv holds pre-commit and every Python tool the hooks run.
+      - name: Install dependencies
+        run: uv sync --locked
 
       - name: Run pre-commit hooks
-        run: pre-commit run --all-files --show-diff-on-failure
+        run: uv run --locked pre-commit run --all-files --show-diff-on-failure
 
   ci-summary:
     name: Validation Results

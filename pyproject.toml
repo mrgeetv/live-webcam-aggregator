@@ -1,0 +1,43 @@
+[project]
+name = "live-webcam-aggregator"
+# Required by the [project] table, and never changed: releases are versioned by git tag
+# and CHANGELOG (semantic-release), and nothing installs this project as a package.
+version = "0"
+requires-python = "==3.14.*"
+dependencies = [
+    "certifi==2026.10.23",
+    "curl_cffi==0.17.0",
+    "google-api-python-client==2.202.0",
+    "google-auth-httplib2==0.4.4",
+    "google-auth-oauthlib==1.5.0",
+    "psutil==7.2.2",
+    "requests==2.34.2",
+    "yt-dlp==2026.11.23",
+    "yt-dlp-ejs==0.8.0",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright==1.40.2",
+    "google-api-python-client-stubs==1.40.0",
+    "pre-commit==4.7.0",
+    "pytest==9.2.0",
+    "pytest-cov==7.1.0",
+    "pytest-xdist==3.8.0",
+    "types-psutil==7.2.2.20261111",
+    "types-requests==2.33.0.20261030",
+    "vulture==2.16",
+]
+
+[tool.uv]
+# Nothing installs the project itself: the image copies src/ and the tests put it on
+# the path (pytest.ini), so uv only manages the dependencies.
+package = false
+
+[tool.vulture]
+paths = ["src/webcam_aggregator"]
+# 60 catches dead functions, attributes and fields, not just the unused imports the
+# linter and type checker already report. The HTTP handler methods are called by
+# the stdlib server, so they look unused; ignore them by name.
+min_confidence = 60
+ignore_names = ["do_GET", "log_message"]

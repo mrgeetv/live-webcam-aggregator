@@ -1,11 +1,10 @@
 version: 2
 updates:
-  # Python dependencies. yt-dlp breaks whenever YouTube changes its player, and a
-  # release is the only fix, so it is checked every weekday and exempt from the
-  # cooldown (without one, dependabot applies its own default). Everything else
-  # waits out a 7-day cooldown. One pip block only: GitHub rejects a second block that
-  # overlaps this one's directory.
-  - package-ecosystem: "pip"
+  # Python dependencies (pyproject.toml + uv.lock). yt-dlp breaks whenever YouTube
+  # changes its player, and a release is the only fix, so it is checked every weekday
+  # and exempt from the cooldown (without one, dependabot applies its own default).
+  # Everything else waits out a 7-day cooldown.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "daily"
@@ -17,17 +16,26 @@ updates:
         - "yt-dlp"
         - "yt-dlp-ejs"
     groups:
-      # first matching group wins, so this must stay above the catch-all
+      # first matching group wins, so this must stay above the catch-alls
       youtube-extraction:
         patterns:
           - "yt-dlp"
           - "yt-dlp-ejs"
-      python-dependencies:
+      # Split by type because one runtime package in a PR makes the whole PR take
+      # the production prefix.
+      python-runtime:
+        dependency-type: "production"
         patterns:
           - "*"
-    # Proper conventional commit format for strict validation
+      python-dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
+    # fix(deps) for what ships in the image. The dev group (the test and lint
+    # tooling) ships nothing, so it takes chore, as the pre-commit block below does.
     commit-message:
       prefix: "fix(deps)"
+      prefix-development: "chore(deps)"
 
   # GitHub Actions - Weekly on Friday
   - package-ecosystem: "github-actions"
@@ -39,14 +47,15 @@ updates:
       timezone: "Etc/UTC"
     # chore, not fix: semantic-release treats fix as a patch release, so an
     # actions bump would mint a version and rebuild the image despite shipping
-    # nothing. chore is release:false in .releaserc. pip and docker stay on
-    # fix — those do change what ends up in the image.
+    # nothing. chore is release:false in .releaserc. Runtime Python packages and
+    # docker stay on fix — those do change what ends up in the image.
     commit-message:
       prefix: "chore(deps)"
 
-  # pre-commit hooks - Weekly on Friday: each hook's rev, and the additional_dependencies
-  # of python hooks (basedpyright's stubs, vulture). hadolint's pinned entry image is
-  # not touched: check-hadolint-pin fails that PR until the tag is moved to match.
+  # pre-commit hooks - Weekly on Friday: each hook's rev. The Python tools run as
+  # local hooks from the venv, so the uv block above bumps them. hadolint's pinned
+  # entry image is not touched: check-hadolint-pin fails that PR until the tag is
+  # moved to match.
   - package-ecosystem: "pre-commit"
     directory: "/"
     schedule:

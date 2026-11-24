@@ -5,7 +5,7 @@ This guide covers local development setup for contributors and developers who wa
 ## Prerequisites
 
 - Docker and Docker Compose
-- pre-commit (for code quality checks)
+- [uv](https://docs.astral.sh/uv/) (dependencies, tests and the pre-commit hooks)
 
 ## Local Development Setup
 
@@ -106,15 +106,17 @@ built on other base digests or from another commit, re-pushing `latest`, `vX`,
 issue open, *Newer DHI base image tags available*, while dhi.io carries a newer
 python/alpine tag than the Dockerfile uses; those bumps are manual (see *Python
 Version Synchronization* in `AGENTS.md`), and the issue closes itself once they
-land. Dependabot bumps deno's version weekly, holding back majors.
+land. Dependabot bumps deno's version weekly, holding back majors, and the uv image
+the build stage uses to export `uv.lock`.
 
 ## Pre-commit Hooks
 
-This project uses pre-commit hooks for code quality. Install them before making changes:
+This project uses pre-commit hooks for code quality. pre-commit is in the project's
+dev dependencies; install the hooks before making changes:
 
 ```bash
-pip install pre-commit
-pre-commit install
+uv sync
+uv run pre-commit install
 ```
 
 Hooks will run automatically on commit, checking:
@@ -127,38 +129,40 @@ Hooks will run automatically on commit, checking:
 - Conventional commit messages
 - Type checking (basedpyright)
 - **Tests + coverage (pytest)**: runs the full suite with a coverage floor when
-  `src/`, `scripts/`, `tests/`, or `requirements*.txt` change
+  `src/`, `scripts/`, `tests/`, `pyproject.toml` or `uv.lock` change
 - **Dead-code detection (vulture)**: flags unused functions/attributes on `src/`
+- **Lockfile (uv-lock)**: `uv.lock` still matches `pyproject.toml`
 
-> **Note:** the `pytest` hook runs `scripts/run-pytest.sh`, which prefers the
-> project's `.venv` and falls back to `pytest` on `PATH` — no venv activation
-> needed to commit. The same checks run in CI on every pull request, so nothing
-> merges without the tests passing.
+> **Note:** the Python hooks run through `uv run --locked`, from the project's
+> `.venv` with the versions in `uv.lock`, so no venv activation is needed to commit.
+> The same checks run in CI on every pull request, so nothing merges without the
+> tests passing.
 
 To run hooks manually:
 
 ```bash
-pre-commit run --all-files
+uv run pre-commit run --all-files
 ```
 
 ## Testing
 
-The test suite is **fully offline** (no network or API key needed). Create a
-virtualenv with both requirement files, then run pytest:
+The test suite is **fully offline** (no network or API key needed). `uv sync`
+creates `.venv` with the runtime and dev dependencies from `uv.lock`, then:
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
-pytest                                                      # run the suite
-pytest --cov=webcam_aggregator --cov-report=term-missing    # with coverage
+uv run pytest                                                      # run the suite
+uv run pytest --cov=webcam_aggregator --cov-report=term-missing    # with coverage
 ```
+
+Dependencies live in `pyproject.toml` (runtime under `[project]`, test and lint
+tooling in the `dev` group), pinned exactly, and resolved into `uv.lock`. Change one
+with `uv add <pkg>==<version>` (`--dev` for tooling), which updates both files.
 
 The suite runs in **parallel** via `pytest-xdist` (`-n auto`, one worker per CPU, so
 it adapts to whatever box you're on); run `pytest -n 0` to go serial (e.g. for `pdb`).
 
 The same `pytest` + coverage floor runs as a pre-commit hook (when `src/`, `scripts/`,
-`tests/`, or `requirements*.txt` change) and in CI, so a failing test blocks the commit and
+`tests/`, `pyproject.toml` or `uv.lock` change) and in CI, so a failing test blocks the commit and
 the merge. Test files are named `*_test.py` (enforced by the `name-tests-test` hook).
 
 ## Project Structure
@@ -217,7 +221,6 @@ live-webcam-aggregator/
 │           └── windy.py        # windy.com keyless API -> original providers' embeds
 ├── scripts/                    # Helper scripts
 │   ├── run.sh                  # Docker build/run script
-│   ├── run-pytest.sh           # pytest wrapper for the pre-commit hook (prefers .venv)
 │   ├── base_images.py          # Base-digest label, rebuild check + newer DHI tags (base-images.yml)
 │   ├── check_hadolint_pin.py   # pre-commit: hadolint's image tag matches its rev
 │   └── check-python-version.sh
@@ -226,8 +229,8 @@ live-webcam-aggregator/
 ├── .github/workflows/          # CI/CD pipelines
 ├── Dockerfile                  # Container definition
 ├── docker-compose.yml          # Development compose file
-├── requirements.txt            # Python dependencies
-└── requirements-dev.txt        # Development dependencies
+├── pyproject.toml              # Dependencies (runtime + dev group), vulture config
+└── uv.lock                     # Locked dependency versions, every one hashed
 ```
 
 ## Port Configuration

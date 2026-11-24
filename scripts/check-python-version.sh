@@ -4,11 +4,13 @@
 # - Dockerfile ARG defaults (DHI images for CI)
 # - docker-compose.yml build args (standard images for local dev)
 # - pyrightconfig.json pythonVersion (type checker)
+# - pyproject.toml requires-python (uv's lock and venv, ruff's target version)
 
 PYTHON_VERSION_FILE=".python-version"
 DOCKERFILE="Dockerfile"
 COMPOSE_FILE="docker-compose.yml"
 PYRIGHT_CONFIG="pyrightconfig.json"
+PYPROJECT="pyproject.toml"
 
 # Read expected version from .python-version
 if [[ ! -f "$PYTHON_VERSION_FILE" ]]; then
@@ -64,6 +66,23 @@ if [[ -f "$PYRIGHT_CONFIG" ]]; then
         echo "  pyrightconfig.json:   $PYRIGHT_VERSION"
         exit 1
     fi
+fi
+
+# Check pyproject.toml requires-python, which pins one minor version ("==3.14.*")
+if [[ ! -f "$PYPROJECT" ]]; then
+    echo "Error: $PYPROJECT not found"
+    exit 1
+fi
+PYPROJECT_VERSION=$(grep -E '^requires-python *= *"==[0-9]+\.[0-9]+\.\*"' "$PYPROJECT" | sed -E 's/.*"==([0-9]+\.[0-9]+)\.\*".*/\1/')
+if [[ -z "$PYPROJECT_VERSION" ]]; then
+    echo "Error: Could not extract a '==X.Y.*' requires-python from $PYPROJECT"
+    exit 1
+fi
+if [[ "$EXPECTED_VERSION" != "$PYPROJECT_VERSION" ]]; then
+    echo "❌ Python version mismatch in pyproject.toml!"
+    echo "  .python-version:      $EXPECTED_VERSION"
+    echo "  pyproject.toml:       $PYPROJECT_VERSION"
+    exit 1
 fi
 
 echo "✅ Python versions match: $EXPECTED_VERSION"

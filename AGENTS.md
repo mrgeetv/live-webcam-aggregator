@@ -734,9 +734,9 @@ comment, never the incident.
 The suite is **fully offline** — no real-endpoint/live tests (sources, resolvers,
 and the HTTP handler are exercised with injected fakes + real sockets on port 0).
 The gate is `pre-commit` (which runs `pytest` + a coverage floor as a `files:`-gated
-hook) plus the same checks in CI — not ruff/mypy. The `pytest` hook runs
-`scripts/run-pytest.sh`, which prefers `.venv/bin/pytest` and falls back to
-`pytest` on `PATH` — no venv activation needed to commit.
+hook) plus the same checks in CI — not ruff/mypy. The Python hooks (pytest,
+basedpyright, vulture) run through `uv run --locked` from the project venv, so they
+use the versions pinned in `uv.lock` and no venv activation is needed to commit.
 
 ## Agent skills
 
@@ -765,7 +765,7 @@ by blocking `git commit` when the current branch is `main` or `master`.
 The hook script lives at `.claude/hooks/block-commit-to-main.sh`.
 
 `.claude/settings.json` also carries two **non-blocking** editing reminders: editing
-`requirements*.txt` recalls the dependency-version rule (check latest, pin new,
+`pyproject.toml` recalls the dependency-version rule (check latest, pin new,
 never auto-bump existing); editing a `src/webcam_aggregator/*.py` module recalls to
 add/update the matching `*_test.py`.
 
@@ -819,14 +819,14 @@ What keeps each pin current once it's in (`.github/dependabot.yml` unless noted)
 
 | Pin | Updated by |
 | --- | --- |
-| `requirements*.txt` | Dependabot pip, daily (yt-dlp skips the cooldown) |
+| `pyproject.toml` dependencies + `uv.lock` | Dependabot uv, daily (yt-dlp skips the cooldown); the `dev` group, which holds every Python tool the hooks run, bumps as `chore(deps)` |
 | workflow `uses:` | Dependabot github-actions |
-| `.pre-commit-config.yaml` `rev:` + python hooks' `additional_dependencies` | Dependabot pre-commit (it skips `repo: local` hooks, so a versioned tool goes in its upstream hook repo) |
+| `.pre-commit-config.yaml` `rev:` | Dependabot pre-commit (it skips `repo: local` hooks, so a non-Python tool goes in its upstream hook repo; a Python one goes in the `dev` group and runs as a local `uv run` hook) |
 | hadolint's `entry:` image tag | by hand, in that Dependabot PR: `check-hadolint-pin` fails it until the tag matches `rev:` |
 | semantic-release + plugins | Dependabot npm on `tools/release/package.json` (not under `.github/`: Dependabot refuses npm changes there), which `release.yml` reads; majors by hand, with a semantic-release-action that runs the Node they need |
-| deno `FROM` | Dependabot docker (majors held) |
+| deno and uv `FROM`s | Dependabot docker (deno majors held) |
 | DHI python bases: same-tag patches | `base-images.yml` rebuild (see *Base Image Updates*) |
-| DHI python bases, `.python-version`, compose, pyright: version bumps | by hand, prompted by `base-images.yml`'s issue (see *Python Version Synchronization*) |
+| DHI python bases, `.python-version`, compose, pyright, `requires-python`: version bumps | by hand, prompted by `base-images.yml`'s issue (see *Python Version Synchronization*) |
 
 ## Pre-commit Behavior
 
@@ -874,11 +874,12 @@ Pre-commit hooks enforced:
 - **markdownlint-cli2** - Markdown formatting (CHANGELOG.md excluded)
 - **hadolint** - Dockerfile linting
 - **conventional-pre-commit** - Commit message validation (strict mode with forced scopes)
-- **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, and pyrightconfig.json
+- **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, pyrightconfig.json, and pyproject.toml's `requires-python`
+- **uv-lock** - fails the commit when `uv.lock` no longer matches `pyproject.toml`
 - **check-hadolint-pin** - hadolint's pinned `entry:` image tag must match its `rev:` (Dependabot bumps only the `rev:`)
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
-- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `scripts/`, `tests/`, or `requirements*.txt` change. Runs via `scripts/run-pytest.sh` (prefers `.venv/bin/pytest`, falls back to `PATH`). Also runs in CI.
-- **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what flake8/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name.
+- **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `scripts/`, `tests/`, `pyproject.toml` or `uv.lock` change. Also runs in CI.
+- **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what flake8/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name. Configured in `pyproject.toml`'s `[tool.vulture]`.
 
 ## Python Version Synchronization
 
@@ -888,8 +889,9 @@ This project enforces Python version consistency:
 - `Dockerfile` - `ARG RUNTIME_IMAGE` default must use `dhi.io/python:{version}-alpine{alpine}`
 - `docker-compose.yml` - `RUNTIME_IMAGE` build arg must use `python:{version}-slim`
 - `pyrightconfig.json` - Must have `pythonVersion` matching .python-version
+- `pyproject.toml` - `requires-python` must be `=={version}.*`
 - Pre-commit hook validates synchronization automatically
-- CI uses .python-version for GitHub Actions Python setup
+- CI's uv installs the Python that .python-version names
 
 **When updating Python version:**
 
@@ -898,8 +900,10 @@ This project enforces Python version consistency:
    (an alpine-only bump is just this step)
 3. Update `docker-compose.yml` `RUNTIME_IMAGE` and `BUILD_IMAGE` args to match
 4. Update `pyrightconfig.json` pythonVersion to match
-5. Pre-commit hook validates consistency
-6. Test Docker build before committing
+5. Update `pyproject.toml` `requires-python` to match, then run `uv lock` (the
+   lock records it, and the `uv-lock` hook fails the commit until it does)
+6. Pre-commit hook validates consistency
+7. Test Docker build before committing
 
 ## Base Image Updates
 

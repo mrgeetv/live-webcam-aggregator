@@ -267,7 +267,7 @@ class WildlifeTrustsSource:
         body = self._fetch.get(_OEMBED + quote(target, safe="")) or ""
         try:
             found = json.loads(body).get("title", "")
-        except (ValueError, AttributeError):
+        except ValueError, AttributeError:
             return ""
         return found.strip() if isinstance(found, str) else ""
 

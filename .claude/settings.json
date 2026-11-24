@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | grep -qE 'requirements.*\\.txt$' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"You are editing a requirements file. Per AGENTS.md Dependency Version Research: verify each dependency against its current latest (gh release list or PyPI). Pin NEW deps to the latest version unless the user specified one. NEVER auto-bump an existing dep - if one is behind, surface it and ASK first. Report any outdated dep (it may be vulnerable).\"}}' || true"
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | grep -qE '(^|/)pyproject\\.toml$' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"You are editing pyproject.toml, which pins the Python dependencies. Per AGENTS.md Dependency Version Research: verify each dependency against its current latest (gh release list or PyPI). Pin NEW deps to the latest version unless the user specified one. NEVER auto-bump an existing dep - if one is behind, surface it and ASK first. Report any outdated dep (it may be vulnerable). Run uv lock afterwards (or use uv add), so uv.lock matches.\"}}' || true"
           }
         ]
       }
