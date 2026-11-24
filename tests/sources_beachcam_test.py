@@ -5,7 +5,7 @@ from webcam_aggregator.sources.beachcam import BeachcamSource
 _FIX = Path(__file__).parent / "fixtures"
 
 _INDEX = "https://beachcam.meo.pt/livecams/"
-_SIGN_API = "https://services.iol.pt/matrix?userId="
+_TOKEN_API = "https://services.iol.pt/matrix?userId="  # noqa: S105 - a URL, no secret
 # same base64 shape as the real IOL auth token, deliberately not a real one
 _TOK = "dGVzdC1vbmx5LXdtc0F1dGhTaWduLXRva2VuLXZhbHVl=="
 
@@ -21,7 +21,7 @@ _ALVOR_HTML = """
 
 _PAGES = {
     _INDEX: (_FIX / "beachcam_index.html").read_text(),
-    _SIGN_API: _TOK,
+    _TOKEN_API: _TOK,
     "https://beachcam.meo.pt/livecams/carcavelos-calhau/": (
         _FIX / "beachcam_cam.html"
     ).read_text(),
@@ -68,7 +68,7 @@ def test_beachcam_token_special_chars_are_url_encoded() -> None:
     # a space -> signature mismatch -> 403; it must be percent-encoded
     # ≥20 chars (the _TOKEN_SHAPE floor) and carries the base64 '+' and '/'
     plus_tok = "aGVsbG8+d29ybGQ/dGVzdA=="
-    pages = dict(_PAGES, **{_SIGN_API: plus_tok})
+    pages = dict(_PAGES, **{_TOKEN_API: plus_tok})
 
     class _PlusToken:
         def get(self, url: str, _timeout: float = 20.0) -> str | None:
@@ -86,7 +86,7 @@ def test_beachcam_token_special_chars_are_url_encoded() -> None:
 def test_beachcam_token_failure_ships_bare_urls() -> None:
     # an error page is not a token: the bare URL still ships, so liveness sees the
     # cams die (dead-manifest) instead of the whole source vanishing silently
-    pages = dict(_PAGES, **{_SIGN_API: "<html>Forbidden</html>"})
+    pages = dict(_PAGES, **{_TOKEN_API: "<html>Forbidden</html>"})
 
     class _NoToken:
         def get(self, url: str, _timeout: float = 20.0) -> str | None:

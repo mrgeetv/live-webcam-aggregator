@@ -20,7 +20,7 @@ _OG = re.compile(
 
 
 class MetaTagExtractor:
-    """Resolve a page to the stream URL named by its `og:video` meta tag."""
+    """Resolve a page to the stream URL in its `og:video` or `twitter:player` tag."""
 
     _fetch: Callable[[str], str]
 
@@ -29,7 +29,7 @@ class MetaTagExtractor:
         self._fetch = fetch
 
     def resolve(self, target_url: str) -> Resolved:
-        """Resolve `target_url` to its `og:video` URL (mp4 or hls); raise if absent."""
+        """Resolve `target_url` to its meta-tag stream URL (mp4 or hls), or raise."""
         html = self._fetch(target_url)
         m = _OG.search(html)
         if not m:

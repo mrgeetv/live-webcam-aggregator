@@ -61,7 +61,7 @@ class BalticResolver:
             (m for m in _URL_RUN.finditer(fragment) if ".m3u8" in m.group(0)), None
         )
         if not found:
-            msg = f"baltic: no m3u8 in auth_token response for id {cam.group(1)}"
+            msg = "baltic: no m3u8 in auth_token response"
             raise ValueError(msg)
         url = found.group(0)
         epoch = _EPOCH_MS.search(url)

@@ -638,7 +638,7 @@ class HostPacer:
     window would decay its own strikes and the ladder could never reach the
     breaker. At _PACE_BREAK_AT strikes, or when a request would queue longer than
     _PACE_MAX_WAIT, acquire() refuses instead of waiting: the bulk of a
-    hard-blocked source fails fast (as it did before pacing existed) while one
+    hard-blocked source fails fast while one
     probe per decay period keeps testing for recovery.
     """
 

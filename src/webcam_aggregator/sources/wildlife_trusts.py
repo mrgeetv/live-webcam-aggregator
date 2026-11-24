@@ -78,9 +78,8 @@ _TAG_TITLE = re.compile(r"""\btitle=["']([^"'<>]+)""", re.IGNORECASE)
 _GENERIC_TITLE = re.compile(
     r"^(?:youtube( video player)?|video|webcam|iframe)$", re.IGNORECASE
 )
-_QUOTED_TITLE = re.compile(
-    r'^youtube video\s*["“](.+)["”]$', re.IGNORECASE
-)  # one embed plugin
+# One embed plugin titles its iframes `YouTube video "<title>"`.
+_QUOTED_TITLE = re.compile(r'^youtube video\s*["“](.+)["”]$', re.IGNORECASE)
 # A channel's "current live" embed (Scottish Wildlife Trust's ospreys).
 # The query is matched whole and then searched for `channel=`: an optional `…&` span
 # before a required `channel=` re-scans the rest of the URL from every start in it.

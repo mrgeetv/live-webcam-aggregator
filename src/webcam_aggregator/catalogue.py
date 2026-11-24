@@ -117,7 +117,7 @@ def failure_counts(fetches: dict[str, dict[str, int]]) -> dict[str, int]:
 def _log_drop_detail(
     name: str, no_ext_hosts: dict[str, int], details: dict[str, int]
 ) -> None:
-    """Build the two follow-up lines that turn a drop count into something actionable.
+    """Log the two follow-up lines that turn a drop count into something actionable.
 
     They name which hosts have no extractor (i.e. what to write next), and what the
     extractors that DID run actually said (yt-dlp broken vs cam simply off air).
@@ -302,7 +302,7 @@ def _tally(
     )
 
 
-def _guarded(
+def _record_cycle(
     r: _SourceResult, h: Hist, fetches: dict[str, dict[str, int]]
 ) -> list[Candidate]:
     """Log a source's cycle, update its history, and return the candidates to serve.
@@ -426,7 +426,7 @@ def build_catalogue(
     kept_all: list[Candidate] = []
     for r in results:
         fetches = fetch_stats(r.name) if fetch_stats else {}
-        kept_all.extend(_guarded(r, history.setdefault(r.name, Hist()), fetches))
+        kept_all.extend(_record_cycle(r, history.setdefault(r.name, Hist()), fetches))
 
     entries = [_to_entry(c) for c in dedupe(kept_all)]
     if exclude_categories:

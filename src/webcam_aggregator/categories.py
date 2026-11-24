@@ -132,24 +132,16 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         "Animals",
         (
             r"\b(bear|eagle|osprey|falcon|peregrine|hawk|owl|heron|egret|stork|puffin"
-            r"|gannet"
-            r"|kittiwake|\btern\b|penguin|manatee|otter|\bseal\b|sea ?lion|walrus"
-            r"|dolphin|whale"
-            r"|orca|shark|panda|tiger|\blion\b|elephant|giraffe|gorilla|lemur|sloth"
-            r"|monkey|bison"
-            r"|buffalo|\bdeer\b|moose|\belk\b|\bfox\b|\bwolf|\bbat\b|\bbee\b|alpaca"
-            r"|llama|sheep"
-            r"|\bgoat|\bpig\b|horse|pony|cattle|\bcow\b|alligator|crocodile|tortoise"
-            r"|turtle"
-            r"|kitten|pupp|\bcat cam|\bdog\b|guide dogs|\bbird|wildlife|\bzoo\b"
-            r"|aquarium|reef"
-            r"|coral|salmon|hummingbird|feeder|\bnest(s|ing)?\b|aviary|sanctuary|\bgull"
-            r"|\bswan"
+            r"|gannet|kittiwake|\btern\b|penguin|manatee|otter|\bseal\b|sea ?lion"
+            r"|walrus|dolphin|whale|orca|shark|panda|tiger|\blion\b|elephant|giraffe"
+            r"|gorilla|lemur|sloth|monkey|bison|buffalo|\bdeer\b|moose|\belk\b|\bfox\b"
+            r"|\bwolf|\bbat\b|\bbee\b|alpaca|llama|sheep|\bgoat|\bpig\b|horse|pony"
+            r"|cattle|\bcow\b|alligator|crocodile|tortoise|turtle|kitten|pupp|\bcat cam"
+            r"|\bdog\b|guide dogs|\bbird|wildlife|\bzoo\b|aquarium|reef|coral|salmon"
+            r"|hummingbird|feeder|\bnest(s|ing)?\b|aviary|sanctuary|\bgull|\bswan"
             r"|\bduck\b|goose|flamingo|parrot|condor|vulture|badger|hedgehog|squirrel"
-            r"|raccoon"
-            r"|toucan|rhino|\bmares?\b|foal|musk ox|guillemot|roller|canine|safari"
-            r"|africam"
-            r"|\bmara\b|kalahari|savanna|pasture|fishing hole)"
+            r"|raccoon|toucan|rhino|\bmares?\b|foal|musk ox|guillemot|roller|canine"
+            r"|safari|africam|\bmara\b|kalahari|savanna|pasture|fishing hole)"
             r"|動物園|水族館|野鳥|野生動物|コウノトリ"
         ),
     ),
@@ -158,8 +150,7 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         "Religion",
         (
             r"\b(church(es)?|mosque|temple|chapel|basilica|cathedral|minster|abbey"
-            r"|shrine"
-            r"|synagogue)\b"
+            r"|shrine|synagogue)\b"
             r"|神社|神宮|大社|寺院|参道|教会|大仏"
         ),
     ),
@@ -203,8 +194,7 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         "Ports & Ships",
         (
             r"\b(harbou?r|marina|\bpier\b|wharf|\bquay|lifeboat|\byacht|\bdocks?\b"
-            r"|seaport"
-            r"|\bport\b|\bferry\b|shipping|\bhafen\b)"
+            r"|seaport|\bport\b|\bferry\b|shipping|\bhafen\b)"
             r"|漁港|港湾|埠頭|マリーナ|フェリー"
         ),
     ),
@@ -213,10 +203,8 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         "Mountains",
         (
             r"\b(\bski\b|\balps\b|alpine|glacier|volcano|\bpiste|\bsummit|\bmount\b"
-            r"|mountain"
-            r"|\bpeak\b|dolomite|\bdome\b|\bbutte\b|\bmesa\b|\bgorge\b|narciarsk"
-            r"|montagn[ae]\b"
-            r"|bergbahn|gondelbahn|seilbahn|bergstation)"
+            r"|mountain|\bpeak\b|dolomite|\bdome\b|\bbutte\b|\bmesa\b|\bgorge\b"
+            r"|narciarsk|montagn[ae]\b|bergbahn|gondelbahn|seilbahn|bergstation)"
             r"|スキー場|ゲレンデ|山頂|富士山|登山"
         ),
     ),
@@ -226,13 +214,12 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         "Landmarks",
         (
             r"\b(\bbridge|castle|\btowers?\b|\bfort\b|fortress|monument|palace"
-            r"|lighthouse|statue"
-            r"|memorial|\barch\b|citadel|obelisk|granar|windmill)"
+            r"|lighthouse|statue|memorial|\barch\b|citadel|obelisk|granar|windmill)"
             # bridge in the languages our sources actually use. NOT `ponte`: Ponte di
             # Legno is a town, and a Landmarks match here would pre-empt the later
             # Cities rule
-            r"|puente|brücke"
-            r"|お城|城跡|天守|タワー|灯台|展望台"
+            r"|puente"
+            r"|brücke|お城|城跡|天守|タワー|灯台|展望台"
         ),
     ),
     (
@@ -245,18 +232,15 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
             # beach word never takes a definite article in front of it
             r"|promenade|\bcove\b|\bdunes?\b|\bcoast|(?<!the )\bstrand|spiaggia"
             r"|\bplage\b"
-            r"|pla[żž])"
-            r"|海岸|砂浜|ビーチ|海水浴場"
+            r"|pla[żž])|海岸|砂浜|ビーチ|海水浴場"
         ),
     ),
     (
         "Water & Waterways",
         (
             r"\b(\blake|\briver|\bfalls\b|waterfall|\bcanal|lagoon|\bpond|\bloch\b"
-            r"|reservoir"
-            r"|estuary|\bcreek|\bweir\b|fjord|\bdam\b|rapids|\bbay\b|\bcaverns?\b"
-            r"|\bcaves?\b"
-            r"|\bfirth\b|\bsound\b|jezior|jezero)"
+            r"|reservoir|estuary|\bcreek|\bweir\b|fjord|\bdam\b|rapids|\bbay\b"
+            r"|\bcaverns?\b|\bcaves?\b|\bfirth\b|\bsound\b|jezior|jezero)"
             r"|河川|水害|水位|映像監視局|用水|ダム|運河|合流|支流"
             # 川/湖/滝 alone only where they read as the water itself: a monitoring
             # word (or 畔, lakeside) follows, or the name simply ends (西除川,
@@ -271,16 +255,15 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         (
             r"\b(\btraffic|highway|motorway|interstate|freeway|roundabout|expressway"
             r"|\bhwy\b|I-\d{1,3}\b)"
-            r"|国道|県道|道道|市道|道の駅|交差点|高速|自動車道|バイパス|街道|渋滞|道路|トンネル"
-            r"|ラウンドアバウト|インターチェンジ"
+            r"|国道|県道|道道|市道|道の駅|交差点|高速|自動車道|バイパス|街道|渋滞|道路"
+            r"|トンネル|ラウンドアバウト|インターチェンジ"
         ),
     ),
     (
         "Nature & Parks",
         (
             r"\b(national park|\bpark\b|nature reserve|\bgarden|\bforest|\bmeadow"
-            r"|\bvalley"
-            r"|\bcanyon|botanic|\bmoor\b|\bheath\b|\bwoods?\b|wetland)"
+            r"|\bvalley|\bcanyon|botanic|\bmoor\b|\bheath\b|\bwoods?\b|wetland)"
             r"|公園|森林|渓谷|湿原"
         ),
     ),
@@ -288,9 +271,8 @@ _TITLE_RULES: tuple[tuple[str, str], ...] = (
         "Cities",
         (
             r"\b(skyline|cityscape|\bsquare\b|downtown|\bplaza|boulevard|\bcity\b"
-            r"|old town"
-            r"|piazza|\bstreet\b|panorama|\btown\b|village|\bcentre\b|\bcenter\b|centar"
-            r"|altstadt|innenstadt|\brynek\b)"
+            r"|old town|piazza|\bstreet\b|panorama|\btown\b|village|\bcentre\b"
+            r"|\bcenter\b|centar|altstadt|innenstadt|\brynek\b)"
             r"|市街地|商店街|繁華街|歩行者天国"
         ),
     ),

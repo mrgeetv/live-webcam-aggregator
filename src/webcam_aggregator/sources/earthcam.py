@@ -76,7 +76,7 @@ def _places(raw: str | None) -> list[dict[str, object]]:
 class EarthCamSource:
     """EarthCam's mapsearch JSON API as a source.
 
-    Most of its ~4000 mapped cams are one-off external sites we can't serve, so
+    Most of its mapped cams are one-off external sites we can't serve, so
     `_routable` keeps only the ones that hit an existing extractor: EarthCam's own
     `/world/` cams, plus partner YouTube / balticlivecam / ipcamlive / direct-HLS
     streams. No category in the feed -> all land in "Other".

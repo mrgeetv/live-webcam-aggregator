@@ -55,16 +55,13 @@ src = ["src", "scripts", "tests"]
 select = ["ALL"]
 ignore = [
     # Conflict with the formatter (ruff docs: formatter.md, "Conflicting lint rules").
-    "COM812", "COM819", "D206", "D300", "E111", "E114", "E117",
-    "Q000", "Q001", "Q002", "Q003", "Q004", "W191",
+    # The list there also names E111, E114 and E117, which are preview-only.
+    "COM812", "COM819", "D206", "D300", "Q000", "Q001", "Q002", "Q003", "Q004", "W191",
     # The other half of D211 / D212, which stay on.
     "D203", "D213",
     # Its notice pattern needs a year, and shipped source carries no dates
     # (tests/repo_hygiene_test.py).
     "CPY001",
-    # Wants a custom exception class per message; the messages are plain strings by
-    # design (one stable text per failure mode, aggregated in the build log).
-    "TRY003",
     # Counts keyword-only parameters too. PLR0917 (too many positional) stays on,
     # and keyword-only arguments are named at every call site.
     "PLR0913",

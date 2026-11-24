@@ -315,8 +315,8 @@ on v1, pin the image to a `:v1` tag instead of `:latest`.
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for local setup, the test suite, and the
-project structure. Built test-first; run the checks with `pre-commit run --all-files`
-and `pytest`.
+project structure. Built test-first; run the checks with
+`uv run pre-commit run --all-files` and `uv run pytest`.
 
 ## Security note
 

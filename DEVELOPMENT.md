@@ -158,7 +158,7 @@ tooling in the `dev` group), pinned exactly, and resolved into `uv.lock`. Change
 with `uv add <pkg>==<version>` (`--dev` for tooling), which updates both files.
 
 The suite runs in **parallel** via `pytest-xdist` (`-n auto`, one worker per CPU, so
-it adapts to whatever box you're on); run `pytest -n 0` to go serial (e.g. for `pdb`).
+it adapts to whatever box you're on); run `uv run pytest -n 0` to go serial (e.g. for `pdb`).
 
 The same `pytest` + coverage floor runs as a pre-commit hook (when `src/`, `scripts/`,
 `tests/`, `pyproject.toml` or `uv.lock` change) and in CI, so a failing test blocks the commit and

@@ -14,7 +14,6 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, ClassVar, override
 
-import googleapiclient.discovery
 import psutil
 
 from webcam_aggregator import config
@@ -614,6 +613,10 @@ def _youtube_source(cfg: config.Config) -> YoutubeApiSource | None:
     """Return the YouTube Data API source, or None when its client can't be built."""
 
     def new_client() -> YouTubeResource:
+        # Imported here, inside the try below: a broken googleapiclient install must
+        # disable this one source, not stop the app at import.
+        import googleapiclient.discovery  # noqa: PLC0415
+
         # static_discovery=True uses the bundled discovery document, so rebuilding the
         # client after a wedged connection costs ~5 ms and no network call.
         return googleapiclient.discovery.build(
@@ -644,10 +647,10 @@ def _build_sources(
     yt_source: YoutubeApiSource | None, pacer: HostPacer
 ) -> tuple[list[Source], dict[str, FetchStats]]:
     """Build every active source, each with its own fetcher, and their fetch stats."""
-    # One Fetcher — and one FetchStats — PER SOURCE. A single shared fetcher made it
-    # impossible to say which source's fetches failed, and a process-global counter
-    # would also collect serve-time player traffic between rebuilds, so the line meant
-    # to explain an empty source would name hosts the build never touched.
+    # One Fetcher — and one FetchStats — PER SOURCE. A shared fetcher could not say
+    # which source's fetches failed, and a process-global counter would also collect
+    # serve-time player traffic between rebuilds, so the line meant to explain an
+    # empty source would name hosts the build never touched.
     source_stats: dict[str, FetchStats] = {}
 
     def _source_fetcher(name: str, *, impersonate: bool = False) -> Fetcher:

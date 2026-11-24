@@ -25,7 +25,7 @@ _LINK = re.compile(r'href="https?://beachcam\.meo\.pt/livecams/([^"/#?]+)/"')
 # (video-auth1.iol.pt/auth-beachcam/<slug>/playlist.m3u8). The shared ladder is
 # deliberately not used: every page's footer links the site's
 # youtube.com/@Beachcamportugal channel, which the ladder's channel rule would turn
-# into a bogus extra candidate on all ~190 pages.
+# into a bogus extra candidate on every page.
 _VIDEO = re.compile(r'data-video-url="(https?://[^"]+\.m3u8)"')
 # The bare playlist URL answers 403; the site's JW player appends
 # ?wmsAuthSign=<token> fetched from this IOL endpoint (anonymous userId works).
@@ -34,7 +34,7 @@ _VIDEO = re.compile(r'data-video-url="(https?://[^"]+\.m3u8)"')
 # nimblesessionid+wmsAuthSign query is minted for whoever fetched it, so
 # `video-auth1.iol.pt` must be in serving._PROXY_SEGMENT_HOSTS (a segment stripped
 # of its query 404s).
-_SIGN_API = "https://services.iol.pt/matrix?userId="
+_TOKEN_API = "https://services.iol.pt/matrix?userId="  # noqa: S105 - a URL, no secret
 # a real token is a base64 blob; anything else (an error page) is not a token
 _TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
 _TITLE = re.compile(r'<[^<>]*liveCamsHeader__title">([^<]*)<')
@@ -48,8 +48,8 @@ _Ctx = tuple[str, str | None]
 class BeachcamSource(HtmlScraperSource[_Ctx]):
     """beachcam.meo.pt: MEO Beachcam livecams, blanket-categorised "Beaches".
 
-    There are ~190, almost all beach/surf spots, and the few lake/wake-park/city
-    outliers are a better trade than ~190 Portuguese-titled cams landing in "Other" (the
+    Almost all are beach/surf spots, and the few lake/wake-park/city outliers are a
+    better trade than every Portuguese-titled cam landing in "Other" (the
     English title-keyword fallback can't read them). One stream per page in a
     data-video-url attribute, playable only with a per-build ?wmsAuthSign= auth token.
     """
@@ -61,7 +61,7 @@ class BeachcamSource(HtmlScraperSource[_Ctx]):
     @override
     def _page_urls(self) -> list[str]:
         html = self._fetch.get(_INDEX) or ""
-        tok = (self._fetch.get(_SIGN_API) or "").strip()
+        tok = (self._fetch.get(_TOKEN_API) or "").strip()
         self._token = tok if _TOKEN_SHAPE.match(tok) else None
         slugs = sorted(set(_LINK.findall(html)))
         return [f"https://beachcam.meo.pt/livecams/{s}/" for s in slugs]
