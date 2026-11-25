@@ -3,8 +3,8 @@ services:
     build:
       context: .
       args:
-        BUILD_IMAGE: python:3.14-slim
-        RUNTIME_IMAGE: python:3.14-slim
+        BUILD_IMAGE: python:3.15-slim
+        RUNTIME_IMAGE: python:3.15-slim
     init: true
     ports:
       - "23457:8000"

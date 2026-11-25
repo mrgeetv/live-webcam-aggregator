@@ -77,7 +77,7 @@ This project uses [Docker Hardened Images](https://www.docker.com/blog/docker-ha
 
 ### Local Development
 
-Local development uses standard Python images (no authentication required). The `docker-compose.yml` overrides the Dockerfile defaults to use `python:3.14-slim`:
+Local development uses standard Python images (no authentication required). The `docker-compose.yml` overrides the Dockerfile defaults to use `python:3.15-slim`:
 
 ```bash
 docker compose up -d
@@ -91,8 +91,8 @@ CI builds use DHI images from `dhi.io`, requiring authentication. Repository sec
 
 | Stage   | Image                                    | Purpose                                  |
 |---------|------------------------------------------|------------------------------------------|
-| Build   | `dhi.io/python:3.14-alpine3.24-sfw-dev`  | Has pip for installing dependencies      |
-| Runtime | `dhi.io/python:3.14-alpine3.24`          | Minimal, no pip (reduced attack surface) |
+| Build   | `dhi.io/python:3.15-alpine3.24-sfw-dev`  | Has pip for installing dependencies      |
+| Runtime | `dhi.io/python:3.15-alpine3.24`          | Minimal, no pip (reduced attack surface) |
 
 The runtime stage takes its CA bundle (`/etc/ssl/certs/ca-certificates.crt`) from the build stage, because the runtime variant can lag the `-dev` one on `ca-certificates`.
 
