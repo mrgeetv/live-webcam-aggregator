@@ -104,10 +104,11 @@ rebuilds the **latest release tag** (not main's HEAD) when its published image w
 built on other base digests or from another commit, re-pushing `latest`, `vX`,
 `vX.Y` and `vX.Y.Z`; older releases' tags are never rebuilt. It also keeps one
 issue open, *Newer DHI base image tags available*, while dhi.io carries a newer
-python/alpine tag than the Dockerfile uses; those bumps are manual (see *Python
-Version Synchronization* in `AGENTS.md`), and the issue closes itself once they
-land. Dependabot bumps deno's version weekly, holding back majors, and the uv image
-the build stage uses to export `uv.lock`.
+python/alpine tag than the Dockerfile uses. It opens labelled `dependencies`,
+`docker` and `ready-for-agent`; those bumps are manual (see *Python Version
+Synchronization* in `AGENTS.md`), and the issue closes itself once they land.
+Dependabot bumps deno's version weekly, holding back majors, and the uv image the
+build stage uses to export `uv.lock`.
 
 ## Pre-commit Hooks
 
