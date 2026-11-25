@@ -171,5 +171,7 @@ jobs:
           if [[ -n "$issue" ]]; then
             gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --body "$body"
           else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body "$body"
+            # Labelled on create only, so a hand re-triage survives the daily body refresh.
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body "$body" \
+              --label dependencies --label docker --label ready-for-agent
           fi

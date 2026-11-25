@@ -77,7 +77,7 @@ This project uses [Docker Hardened Images](https://www.docker.com/blog/docker-ha
 
 ### Local Development
 
-Local development uses standard Python images (no authentication required). The `docker-compose.yml` overrides the Dockerfile defaults to use `python:3.14-slim`:
+Local development uses standard Python images (no authentication required). The `docker-compose.yml` overrides the Dockerfile defaults to use `python:3.15-slim`:
 
 ```bash
 docker compose up -d
@@ -91,8 +91,8 @@ CI builds use DHI images from `dhi.io`, requiring authentication. Repository sec
 
 | Stage   | Image                                    | Purpose                                  |
 |---------|------------------------------------------|------------------------------------------|
-| Build   | `dhi.io/python:3.14-alpine3.24-sfw-dev`  | Has pip for installing dependencies      |
-| Runtime | `dhi.io/python:3.14-alpine3.24`          | Minimal, no pip (reduced attack surface) |
+| Build   | `dhi.io/python:3.15-alpine3.24-sfw-dev`  | Has pip for installing dependencies      |
+| Runtime | `dhi.io/python:3.15-alpine3.24`          | Minimal, no pip (reduced attack surface) |
 
 The runtime stage takes its CA bundle (`/etc/ssl/certs/ca-certificates.crt`) from the build stage, because the runtime variant can lag the `-dev` one on `ca-certificates`.
 
@@ -104,10 +104,11 @@ rebuilds the **latest release tag** (not main's HEAD) when its published image w
 built on other base digests or from another commit, re-pushing `latest`, `vX`,
 `vX.Y` and `vX.Y.Z`; older releases' tags are never rebuilt. It also keeps one
 issue open, *Newer DHI base image tags available*, while dhi.io carries a newer
-python/alpine tag than the Dockerfile uses; those bumps are manual (see *Python
-Version Synchronization* in `AGENTS.md`), and the issue closes itself once they
-land. Dependabot bumps deno's version weekly, holding back majors, and the uv image
-the build stage uses to export `uv.lock`.
+python/alpine tag than the Dockerfile uses. It opens labelled `dependencies`,
+`docker` and `ready-for-agent`; those bumps are manual (see *Python Version
+Synchronization* in `AGENTS.md`), and the issue closes itself once they land.
+Dependabot bumps deno's version weekly, holding back majors, and the uv image the
+build stage uses to export `uv.lock`.
 
 ## Pre-commit Hooks
 

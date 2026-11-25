@@ -886,7 +886,7 @@ Pre-commit hooks enforced:
 
 This project enforces Python version consistency:
 
-- `.python-version` - Source of truth (currently 3.14)
+- `.python-version` - Source of truth (currently 3.15)
 - `Dockerfile` - `ARG RUNTIME_IMAGE` default must use `dhi.io/python:{version}-alpine{alpine}`
 - `docker-compose.yml` - `RUNTIME_IMAGE` build arg must use `python:{version}-slim`
 - `pyrightconfig.json` - Must have `pythonVersion` matching .python-version
