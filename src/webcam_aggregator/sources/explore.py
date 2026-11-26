@@ -47,14 +47,12 @@ class ExploreOrgSource:
         streams = data.get("streams", []) if isinstance(data, dict) else data
         if not isinstance(streams, list):
             return
-        seen: set[str] = set()
         for s in streams:
             if not isinstance(s, dict) or s.get("state") != "live":
                 continue
             url = str(s.get("playlistUrl") or "")
-            if ".m3u8" not in url or url in seen:
+            if ".m3u8" not in url:
                 continue
-            seen.add(url)
             yield Candidate(
                 title=str(s.get("name") or "").strip(),
                 angle_key=None,

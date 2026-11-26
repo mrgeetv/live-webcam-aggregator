@@ -28,6 +28,10 @@ class Candidate:
     source_page_url: str
     target_url: str
     predisc_key: str | None
+    # How well this copy names its cam, lower is better, for a source that finds one
+    # cam in several places of differing authority. Compared only between copies that
+    # both carry one; None has no say. See dedup.dedupe.
+    name_rank: int | None = None
 
 
 @dataclass(frozen=True)

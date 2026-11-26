@@ -86,6 +86,11 @@ UNMAPPED = "Unmapped Category"
 _seen_unmapped: set[str] = set()
 
 
+def is_mapped(raw: str | None) -> bool:
+    """Return whether `raw` maps to a real category (not "Other" or "Unmapped")."""
+    return bool(raw) and (raw in _MAP or raw in _NATIVE_YT)
+
+
 def map_category(raw: str | None) -> str:
     """Map a source's raw category to the unified taxonomy.
 

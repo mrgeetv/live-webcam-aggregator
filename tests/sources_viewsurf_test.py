@@ -98,7 +98,9 @@ def test_viewsurf_discover_dedups_titles_and_categories() -> None:
     for c in cands:
         assert c.source == "viewsurf"
         assert c.angle_key is None
-        assert c.predisc_key is None  # joada embeds appear nowhere else
+        assert (
+            c.predisc_key == "viewsurf:" + c.target_url.split("uuid=")[1].split("&")[0]
+        )
 
 
 def test_viewsurf_logs_unmapped_univers_slugs(

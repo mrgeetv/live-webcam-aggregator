@@ -59,13 +59,13 @@ def test_hdontap_discover_dedup_native_hls_and_youtube() -> None:
     assert set(by_title) == {"Carmel-By-The-Sea", "Cook Inlet Alaska Bear Viewing"}
 
     # a native-HLS cam's candidate is the PAGE url (the extractor re-resolves the
-    # per-fetch t/e token at serve time), never mergeable -> predisc_key None
+    # per-fetch t/e token at serve time), merged on the cam id in its path
     carmel = by_title["Carmel-By-The-Sea"]
     assert (
         carmel.target_url
         == "https://hdontap.com/stream/269629/carmel-by-the-sea-live-webcam/"
     )
-    assert carmel.predisc_key is None
+    assert carmel.predisc_key == "hdontap:269629"
 
     # a YouTube-embed cam goes through the standard ladder and dedups on yt:
     yt = by_title["Cook Inlet Alaska Bear Viewing"]

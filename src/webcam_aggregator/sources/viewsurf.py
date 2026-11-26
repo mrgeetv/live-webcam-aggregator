@@ -31,7 +31,7 @@ _CATEGORY: dict[str, str] = {
 
 # Sitemap vue URLs: /univers/<slug>/vue/<id>-<country>-<region>-<city>-<name>. The
 # same cam is listed once per univers it belongs to (plage cams repeat under surf),
-# so enumeration dedups on the numeric cam id.
+# so enumeration fetches each numeric cam id once.
 _VUE = re.compile(
     r"<loc>(https://(?:www\.)?viewsurf\.com/univers/([a-z0-9-]+)/vue/(\d+)-[a-z0-9-]+)"
     r"</loc>"
@@ -68,16 +68,13 @@ class ViewsurfSource(HtmlScraperSource[str]):
     @override
     def _page_urls(self) -> list[str]:
         sm = self._fetch.get(_SITEMAP) or ""
-        by_id: dict[str, tuple[str, str]] = {}
+        by_id: dict[str, str] = {}
         slugs: set[str] = set()
         for url, univers, cam_id in _VUE.findall(sm):
             slugs.add(univers)
-            # One page per cam; prefer a listing whose univers we can map, so a cam
-            # that is in both a mapped and an unmapped univers keeps a real category.
-            if cam_id not in by_id or (
-                by_id[cam_id][1] not in _CATEGORY and univers in _CATEGORY
-            ):
-                by_id[cam_id] = (url, univers)
+            # One fetch per cam: the sitemap lists a cam once per univers, all the same
+            # page. Its first listing's univers is its category.
+            by_id.setdefault(cam_id, url)
         # Crawl-first coverage: the sitemap is the category index, so flag univers
         # slugs we have no mapping for (their cams also land in "Unmapped Category")
         # instead of silently dropping them to "Other".
@@ -89,7 +86,7 @@ class ViewsurfSource(HtmlScraperSource[str]):
                 len(unmapped),
                 ", ".join(unmapped),
             )
-        return [by_id[k][0] for k in sorted(by_id, key=int)]
+        return [by_id[k] for k in sorted(by_id, key=int)]
 
     @override
     def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:

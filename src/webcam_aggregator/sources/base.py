@@ -46,6 +46,10 @@ _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.IGNORECASE)
 # feratel source's copy merge with the ones cxtvlive/camscape pick up.
 _FERATEL_QUERY = re.compile(r"webtv(?:fc)?\.feratel\.com/webtv/\?([^\"'\s]*)")
 _CAM_PARAM = re.compile(r"\bcam=(\d+)")
+# viewsurf's joada player names the cam by uuid, among presentation params that vary
+# by embedder; hdontap's cam pages carry the cam id before a slug that can vary.
+_JOADA_UUID = re.compile(r"[?&]uuid=([0-9a-f-]+)")
+_HDONTAP_PAGE = re.compile(r"^https?://(?:www\.)?hdontap\.com/stream/(\d+)/")
 
 # Iframes that can never carry a stream: the tag-manager/consent frames pages embed
 # alongside their real player (GTM's <noscript> ns.html is the common one), and the
@@ -119,8 +123,9 @@ def predisc_key(target: str) -> str | None:
 
     With no key, `dedup.dedupe` merges a candidate only with an identical target.
 
-    The key is `yt:<id>` for YouTube, `feratel:<cam id>` for feratel, and
-    `hls:<normalised url>` for a direct m3u8.
+    The key is `yt:<id>` for YouTube, the site's own cam id for feratel, viewsurf and
+    hdontap (`feratel:`, `viewsurf:`, `hdontap:`), and `hls:<normalised url>` for a
+    direct m3u8.
     """
     t = (
         unquote(re.sub(r"^https?:.*?url=", "", target))
@@ -134,6 +139,13 @@ def predisc_key(target: str) -> str | None:
         cam = _CAM_PARAM.search(fq.group(1))
         if cam:
             return f"feratel:{cam.group(1)}"
+    if "joada.net/embeded/" in t:
+        uuid = _JOADA_UUID.search(t)
+        if uuid:
+            return f"viewsurf:{uuid.group(1)}"
+    page = _HDONTAP_PAGE.match(t)
+    if page:
+        return f"hdontap:{page.group(1)}"
     if ".m3u8" in t:
         # Strip only unambiguous token params. NOT generic single-letter names like
         # `st`/`e` — those can be legitimate stream selectors, and stripping them
