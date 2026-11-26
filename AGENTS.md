@@ -121,7 +121,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
   `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
   dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
-  `None` = never merged). Text a source reads out of a page (a title, a name, a
+  `None` = never merged). A source never puts a token it fetched into `target_url`:
+  a target outlives the build that found it, so a baked-in token lapses while the
+  catalogue still holds the cam. A CDN that needs one gets an extractor that mints it
+  at resolve time (beachcam's). Text a source reads out of a page (a title, a name, a
   category) goes through `base.decode_entities` as it is read, before any suffix
   strip or geo check compares it (`&#8211;` is not `–`, and `St. John&#39;s` misses
   its own geo and repeats it); the build runs every title through it again, for text
@@ -533,11 +536,13 @@ The app is two phases, decoupled by a catalogue snapshot:
   lake/wake-park/city outliers beat ~190 Portuguese titles the English keyword fallback
   would dump in "Other"): the page's `data-video-url` m3u8 (video-auth1.iol.pt)
   answers **403 bare** — the JW player appends `?wmsAuthSign=<token>` from
-  `services.iol.pt/matrix?userId=` (anonymous, ~24h validity), so the source fetches ONE
-  token per build and bakes it into `target_url` (predisc key stays on the BARE url for
-  cross-build stability). Child/segment URLs carry a per-manifest-fetch Nimble session →
-  `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. Raising `CATALOGUE_INTERVAL_HOURS` past
-  ~24 outlives the token; an empty-guard-preserved stale set carries a lapsing one. The
+  `services.iol.pt/matrix?userId=` (anonymous; a Wowza SecureToken that decodes to
+  `validminutes=1440`, and one token plays every cam). The target and predisc key are
+  the bare m3u8; `BeachcamResolver`, routed on that host, fetches the token at resolve
+  time, holds it in-process for 12h (a failed fetch for a minute, so a build's
+  concurrent resolves don't each wait on a dead endpoint) and appends it, so a cam
+  plays however long the catalogue has held it. Child/segment URLs carry a
+  per-manifest-fetch Nimble session → `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. The
   ladder is bypassed (`_candidates` override) because every page footer links the site's
   YouTube channel, which the channel rule would emit as a bogus extra candidate per page.
 - cxtvlive.com (~770 global cams): the index is `sitemap.php` **unioned with** the
