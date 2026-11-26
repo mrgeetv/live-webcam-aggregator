@@ -32,7 +32,8 @@ The app is two phases, decoupled by a catalogue snapshot:
    one) → per-source
    empty-guard (keeps the last good set if a source collapses ≥50%, needs 2 bad
    cycles to accept) → cross-source `dedupe()` (per-field merge; it keeps the longest
-   title, which is why the decode runs first) → YouTube cams get
+   title, which is why the decode runs first; an `HtmlScraperSource` has already
+   dropped its own repeats of a target, first page wins) → YouTube cams get
    their category from the Data API; scraped titles get location appended
    (`with_location`) → `CatalogueEntry`s with a stable id.
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
@@ -109,9 +110,16 @@ The app is two phases, decoupled by a catalogue snapshot:
   and `discover() -> Iterable[Candidate]`. HTML scrapers subclass `HtmlScraperSource`
   (`sources/base.py`) and implement three hooks — `_page_urls()` (the cam detail-page
   URLs), `_page_meta(html, url)` (per-page `(category, ctx)`), and `_title_for(cand,
-  url, category, ctx)` — the base owns the concurrent fetch + the extraction ladder.
+  url, category, ctx)` — the base owns the concurrent crawl + the extraction ladder.
   Override `_candidates(html, url)` too when a site's embeds aren't in the standard
-  ladder (e.g. Skyline's Clappr token / a `videoId` JS var → a page or watch URL).
+  ladder (e.g. Skyline's Clappr token / a `videoId` JS var → a page or watch URL), or
+  when the stream takes a second hop: a player page (camsecure) or a stream API
+  (whatsupcams) is fetched inside `_candidates`. Each base worker runs one page's
+  whole step (fetch, `_page_meta`, `_candidates`, titles), so a second hop is as
+  concurrent as the first and the stream carries cams, not page bodies; the hooks
+  therefore run on worker threads and must not mutate the source (per-build state is
+  built in `_page_urls`). A target already yielded, by an earlier page or the same one,
+  is skipped, so the first page carrying a stream names it.
   A source with its own `discover()` maps any fetch whose results are page bodies
   through `fetch.thread_imap` (an ordered stream with a bounded buffer), not
   `thread_map`, which holds every result until the last call finishes — a whole
@@ -459,9 +467,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   **A page is a cam iff it embeds that player iframe AND its player page has an HLS `<source>`
   — decided by the check, NOT the URL** (many cam pages have no "webcam" in the name; a URL
   filter silently dropped ~100). `_SKIP` only drops non-cams that *do* embed a demo player
-  (homepage, demo index, product/widget pages). Both hops fetch concurrently (~240 cams). The
-  player **page** serves a decoy without `Referer: camsecure.co.uk`, so `camsecure.co`/`.uk`
-  are in `_REFERER_HOSTS`. A few cams embed third-party HLS — `rtsp.me` is skipped (its stub
+  (homepage, demo index, product/widget pages). The player page is the second hop, fetched in
+  `_candidates`. The player **page** serves a decoy without `Referer: camsecure.co.uk`,
+  so `camsecure.co`/`.uk` are in `_REFERER_HOSTS`. A few cams embed third-party HLS — `rtsp.me` is skipped (its stub
   manifest passes liveness but segments 404). Titles come from the page `<title>` (boilerplate
   stripped, the "… from `<place>`" tail when it leads with boilerplate, the URL filename as a
   last resort). No category → "Other".

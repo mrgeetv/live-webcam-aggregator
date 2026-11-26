@@ -278,11 +278,14 @@ class HtmlScraperSource[Ctx](ABC):
     """Shared crawl loop for HTML scraper sources.
 
     Subclasses supply three hooks: how to find the cam detail-page URLs, the per-page
-    (category, context), and the per-candidate title. The concurrent fetch
-    (`thread_imap`), empty-page skipping, and `extract_candidates` wiring live here, so
-    each source stays a handful of regexes. `Ctx` is whatever per-page state a source
-    precomputes once (e.g. a stream-id -> name map) and reuses across that page's
-    candidates in `_title_for`.
+    (category, context), and the per-candidate title. The base owns the concurrent
+    crawl: each worker runs one page's whole step (fetch, `_page_meta`,
+    `_candidates` with any extra hop it makes, titles), so the stream carries cams
+    rather than page bodies, and a second hop runs as concurrently as the first. The
+    hooks therefore run on worker threads and must not mutate the source; per-build
+    state is built in `_page_urls`, before the workers start. `Ctx` is whatever
+    per-page state a source precomputes once (e.g. a stream-id -> name map) and reuses
+    across that page's candidates in `_title_for`.
     """
 
     name: str
@@ -315,18 +318,31 @@ class HtmlScraperSource[Ctx](ABC):
 
         Defaults to the shared extraction ladder; override for sources whose embeds it
         doesn't recognise (a player config with a site-specific token, a YouTube id in a
-        JS var, ...).
+        JS var, ...) or that need a second hop (a player page, a stream API) to reach
+        the stream.
         """
         return extract_candidates(html, page_url=url, source=self.name)
 
+    def _page_cams(self, url: str) -> list[Candidate]:
+        """Fetch one cam page and return its titled cams (none if the fetch failed)."""
+        html = self._fetch.get(url)
+        if not html:
+            return []
+        category, ctx = self._page_meta(html, url)
+        return [
+            replace(c, title=self._title_for(c, url, category, ctx), category=category)
+            for c in self._candidates(html, url)
+        ]
+
     def discover(self) -> Iterator[Candidate]:
-        """Fetch the cam pages concurrently and yield their candidates."""
-        urls = self._page_urls()
-        for url, html in zip(urls, thread_imap(self._fetch.get, urls), strict=True):
-            if not html:
-                continue
-            category, ctx = self._page_meta(html, url)
-            for c in self._candidates(html, url):
-                yield replace(
-                    c, title=self._title_for(c, url, category, ctx), category=category
-                )
+        """Crawl the cam pages concurrently and yield their cams in page order.
+
+        A target already yielded (by an earlier page, or earlier on the same page) is
+        skipped, so the first page that carries a stream names it.
+        """
+        seen: set[str] = set()
+        for cams in thread_imap(self._page_cams, self._page_urls()):
+            for c in cams:
+                if c.target_url not in seen:
+                    seen.add(c.target_url)
+                    yield c

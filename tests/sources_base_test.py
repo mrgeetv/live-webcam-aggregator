@@ -11,6 +11,8 @@ from webcam_aggregator.sources.base import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from webcam_aggregator.models import Candidate
 
 
@@ -414,3 +416,40 @@ def test_an_m3u8_url_is_taken_whole_from_the_page() -> None:
         "https://cdn.example/live/cam.m3u8?token=abc",
         "https://relay.example/play?u=https://cdn.example/b.m3u8",
     ]
+
+
+class _SecondHopSource(_StubSource):
+    """Each page's cams need a second hop, which waits until two pages are in it."""
+
+    _hop: threading.Barrier
+
+    def __init__(self, fetch: _FakeFetch, urls: list[str]) -> None:
+        super().__init__(fetch, urls)
+        self._hop = threading.Barrier(2, timeout=5)
+
+    @override
+    def _candidates(self, html: str, url: str) -> Iterable[Candidate]:
+        self._hop.wait()
+        return super()._candidates(html, url)
+
+
+def test_html_scraper_base_runs_second_hops_concurrently() -> None:
+    """A page's extra hop runs in the crawl's workers, not one page at a time."""
+    urls = ["https://s/a", "https://s/b"]
+    embed = '<iframe src="https://www.youtube.com/embed/{}"></iframe>'
+    fetch = _FakeFetch({u: embed.format(u[-1] * 11) for u in urls})
+    cands = list(_SecondHopSource(fetch, urls).discover())
+    assert [c.source_page_url for c in cands] == urls
+
+
+def test_html_scraper_base_yields_a_target_once_from_its_first_page() -> None:
+    pages = {
+        "https://s/a": '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>',
+        "https://s/b": (
+            '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>'
+            '<iframe src="https://www.youtube.com/embed/bbbbbbbbbbb"></iframe>'
+        ),
+    }
+    src = _StubSource(_FakeFetch(pages), ["https://s/a", "https://s/b"])
+    got = [(c.source_page_url, c.predisc_key) for c in src.discover()]
+    assert got == [("https://s/a", "yt:aaaaaaaaaaa"), ("https://s/b", "yt:bbbbbbbbbbb")]
