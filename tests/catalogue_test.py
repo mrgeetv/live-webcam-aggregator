@@ -214,7 +214,7 @@ def test_same_key_different_target_probed_independently() -> None:
     # the bare URL probes dead, caches "dead" under the shared key, and the tokened
     # live cam inherits it unprobed and is lost. Keying on target_url must prevent that.
     result = build_catalogue(
-        [_Src("camscape", [bare]), _Src("beachcam", [tokened])],
+        [_Src("camscape", [bare]), _Src("tokened-site", [tokened])],
         drop_reason_for=counting,
         youtube_live=lambda _ids: {},
         history={},

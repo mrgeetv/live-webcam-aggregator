@@ -1,3 +1,4 @@
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -63,25 +64,26 @@ def test_beachcam_one_token_serves_resolves_until_its_ttl_lapses() -> None:
     resolver = BeachcamResolver(_fetch([_TOK, newer], calls), clock=clock)
 
     resolver.resolve(_BARE)
-    clock.now += 11 * 3600  # inside the token's in-process life
+    clock.now += 50 * 60  # inside the token's in-process hold
     resolver.resolve(_BARE.replace("carcavelos2", "alvor"))
     assert len(calls) == 1
 
-    clock.now += 2 * 3600  # past it: a fresh token, well before the real 24h
+    clock.now += 20 * 60  # past it: a fresh token, long before the real 24h
     out = resolver.resolve(_BARE)
     assert len(calls) == 2
     assert out.url.endswith(f"wmsAuthSign={newer}")
 
 
 @pytest.mark.parametrize(
-    "body", ["<html>Forbidden</html>", "", ValueError("resolver fetch failed: x")]
+    "body",
+    ["<html>Forbidden</html>", "", ValueError("resolver fetch failed: http-503")],
 )
 def test_beachcam_without_a_token_fails_with_no_url(body: str | Exception) -> None:
     resolver = BeachcamResolver(_fetch([body], []), clock=_Clock())
     with pytest.raises(ValueError, match="beachcam") as exc:
         resolver.resolve(_BARE)
     # the message feeds the aggregated resolve-failed detail: no URL, no cam
-    assert "http" not in str(exc.value)
+    assert "://" not in str(exc.value)
     assert "carcavelos" not in str(exc.value)
 
 
@@ -100,3 +102,61 @@ def test_beachcam_failed_token_fetch_is_not_retried_for_a_minute() -> None:
     clock.now += 61
     assert resolver.resolve(_BARE).url.endswith(_TOK_QUOTED)
     assert len(calls) == 2
+
+
+def test_beachcam_keeps_its_token_through_a_failed_refresh() -> None:
+    # the hold lapses long before the token does: an endpoint down at that moment
+    # must not take every cam down while the token in hand still plays
+    calls: list[str] = []
+    clock = _Clock()
+    down = ValueError("resolver fetch failed: http-503")
+    newer = "bmV3ZXItdGVzdC1vbmx5LXRva2VuLXZhbHVl"
+    resolver = BeachcamResolver(_fetch([_TOK, down, down, newer], calls), clock=clock)
+
+    resolver.resolve(_BARE)
+    clock.now += 2 * 3600
+    assert resolver.resolve(_BARE).url.endswith(_TOK_QUOTED)
+    assert len(calls) == 2
+    resolver.resolve(_BARE)  # the failed refresh isn't retried at once
+    assert len(calls) == 2
+
+    clock.now += 61
+    assert resolver.resolve(_BARE).url.endswith(_TOK_QUOTED)  # still down
+    clock.now += 61
+    assert resolver.resolve(_BARE).url.endswith(f"wmsAuthSign={newer}")
+
+
+def test_beachcam_fails_once_the_token_in_hand_nears_its_end() -> None:
+    clock = _Clock()
+    resolver = BeachcamResolver(
+        _fetch([_TOK, ValueError("resolver fetch failed: http-503")], []), clock=clock
+    )
+    resolver.resolve(_BARE)
+    clock.now += 23 * 3600 + 1
+    with pytest.raises(ValueError, match="beachcam"):
+        resolver.resolve(_BARE)
+
+
+def test_beachcam_concurrent_resolves_share_one_token_fetch() -> None:
+    # a build resolves the whole source at once: one matrix fetch must serve them all
+    calls: list[str] = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_fetch(url: str) -> str:
+        calls.append(url)
+        entered.set()
+        release.wait(5)
+        return _TOK
+
+    resolver = BeachcamResolver(slow_fetch, clock=_Clock())
+    threads = [
+        threading.Thread(target=resolver.resolve, args=(_BARE,)) for _ in range(4)
+    ]
+    for t in threads:
+        t.start()
+    entered.wait(5)
+    release.set()
+    for t in threads:
+        t.join(5)
+    assert calls == [_MATRIX]

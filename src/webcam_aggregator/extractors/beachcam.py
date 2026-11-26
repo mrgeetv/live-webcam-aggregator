@@ -20,9 +20,13 @@ if TYPE_CHECKING:
 _TOKEN_API = "https://services.iol.pt/matrix?userId="  # noqa: S105 - a URL, no secret
 # a real token is a base64 blob; anything else (an error page) is not a token
 _TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
-# Held for half the token's 24h life, so a token handed out near the end of its hold
-# still outlives the resolve cache's hold on the URL carrying it.
-_TOKEN_HOLD = 12 * 3600
+# A token is re-fetched once it has been held this long. Nothing tells the resolver
+# when the CDN stops accepting a token (a 403 manifest only fails the play), so the
+# hold is what bounds how long a rejected one keeps being handed out.
+_TOKEN_HOLD = 3600
+# When a re-fetch fails, the token in hand keeps serving until it is this old, an hour
+# short of its 24h life, so a URL carrying it still outlives the resolve cache's hold.
+_TOKEN_MAX_AGE = 23 * 3600
 # A failed token fetch answers every resolve for this long without a new fetch: a
 # build resolves the whole source at once, and each resolve would otherwise wait out
 # its own fetch of a dead endpoint, one after another behind the lock.
@@ -43,6 +47,7 @@ class BeachcamResolver:
         self._clock: Callable[[], float] = clock
         self._lock: threading.Lock = threading.Lock()
         self._token: str | None = None
+        self._minted: float = 0.0
         self._failure: str | None = None
         self._expires: float = 0.0
 
@@ -52,9 +57,11 @@ class BeachcamResolver:
             if now >= self._expires:
                 try:
                     self._token, self._failure = self._mint(), None
-                    self._expires = now + _TOKEN_HOLD
+                    self._minted, self._expires = now, now + _TOKEN_HOLD
                 except ValueError as exc:
-                    self._token, self._failure = None, str(exc)
+                    if now - self._minted >= _TOKEN_MAX_AGE:
+                        self._token = None
+                    self._failure = str(exc)
                     self._expires = now + _FAILURE_TTL
             if self._token is None:
                 raise ValueError(self._failure)

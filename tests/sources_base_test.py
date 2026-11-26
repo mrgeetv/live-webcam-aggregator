@@ -242,6 +242,12 @@ def test_feratel_embeds_key_on_the_cam_id() -> None:
     )
 
 
+def test_a_wowza_token_is_not_part_of_the_predisc_key() -> None:
+    bare = "https://video-auth1.iol.pt/auth-beachcam/alvor/playlist.m3u8"
+    tokened = f"{bare}?wmsAuthSign=c2VydmVyX3RpbWU9MQ=="
+    assert predisc_key(tokened) == predisc_key(bare) == f"hls:{bare}"
+
+
 def test_channel_has_no_predisc_key() -> None:
     html = '<a href="https://www.youtube.com/@SomeCam/live">live</a>'
     # NOTE: a bare channel link with no attribution prefix is a stream candidate

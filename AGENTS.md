@@ -539,9 +539,13 @@ The app is two phases, decoupled by a catalogue snapshot:
   `services.iol.pt/matrix?userId=` (anonymous; a Wowza SecureToken that decodes to
   `validminutes=1440`, and one token plays every cam). The target and predisc key are
   the bare m3u8; `BeachcamResolver`, routed on that host, fetches the token at resolve
-  time, holds it in-process for 12h (a failed fetch for a minute, so a build's
-  concurrent resolves don't each wait on a dead endpoint) and appends it, so a cam
-  plays however long the catalogue has held it. Child/segment URLs carry a
+  time, holds it in-process for an hour and appends it, so a cam plays however long the
+  catalogue has held it. The hour is the only bound on a token the CDN stops
+  accepting, since a 403 manifest never reaches the resolver. A failed re-fetch keeps
+  the token in hand until it is 23h old, retrying after a minute (a failure with no
+  usable token is held a minute too, so a build's concurrent resolves don't each wait
+  on a dead endpoint). `predisc_key` strips `wmsAuthSign`, so another source's tokened
+  copy merges with the bare cam. Child/segment URLs carry a
   per-manifest-fetch Nimble session → `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. The
   ladder is bypassed (`_candidates` override) because every page footer links the site's
   YouTube channel, which the channel rule would emit as a bogus extra candidate per page.
