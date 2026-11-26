@@ -91,7 +91,7 @@ def test_camscape_ignores_the_nav_category_link() -> None:
 
 def test_camscape_reads_every_webcam_sitemap_and_only_those() -> None:
     a, b = f"{_BASE}/webcam/a/", f"{_BASE}/webcam/b/"
-    streams = '[{{"name":"Live","url":"https://www.youtube.com/embed/{}"}}]'
+    streams = '[{"name":"Live","url":"https://www.youtube.com/embed/ddddddddddd"}]'
     pages = {
         f"{_BASE}/sitemap_index.xml": (
             f"<loc>{_BASE}/webcam-sitemap.xml</loc>"
@@ -101,8 +101,8 @@ def test_camscape_reads_every_webcam_sitemap_and_only_those() -> None:
         f"{_BASE}/webcam-sitemap.xml": f"<loc>{a}</loc>",
         f"{_BASE}/webcam-sitemap2.xml": f"<loc>{b}</loc>",
         f"{_BASE}/location-sitemap.xml": f"<loc>{_BASE}/webcam/not-fetched/</loc>",
-        a: _cam_page(streams.format("d" * 11)),
-        b: _cam_page(streams.format("e" * 11)),
+        a: _cam_page(streams),
+        b: _cam_page(streams),
     }
     cands = list(CamscapeSource(_FakeFetch(pages)).discover())
     assert {c.source_page_url for c in cands} == {a, b}

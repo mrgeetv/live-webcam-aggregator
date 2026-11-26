@@ -10,6 +10,7 @@ def _c(
     cat: str | None = None,
     title: str = "t",
     angle: str | None = None,
+    target: str = "u",
 ) -> Candidate:
     return Candidate(
         title=title,
@@ -17,7 +18,7 @@ def _c(
         category=cat,
         source=source,
         source_page_url=page,
-        target_url="u",
+        target_url=target,
         predisc_key=key,
     )
 
@@ -34,14 +35,41 @@ def test_cross_source_yt_dup_merges_with_best_fields() -> None:
     assert out[0].title == "Official Title"  # youtube title wins for a yt cam
 
 
-def test_channel_cams_never_merged() -> None:
+def test_unkeyed_cams_merge_only_on_the_identical_target() -> None:
+    """With no merge key, the exact target is the identity: one URL, one stream."""
     out = dedupe(
         [
-            _c("worldcams", None, page="czech/usti"),
-            _c("worldcams", None, page="czech/decin"),
+            _c("airportwebcams", None, page="ajaccio", target="https://yt/@corse/live"),
+            _c("airportwebcams", None, page="bastia", target="https://yt/@bastia/live"),
+            _c(
+                "airportwebcams",
+                None,
+                page="calvi",
+                title="Calvi airport",
+                target="https://yt/@corse/live",
+            ),
         ]
     )
     assert len(out) == 2
+    [corse] = [c for c in out if c.target_url == "https://yt/@corse/live"]
+    assert corse.source_page_url == "ajaccio"  # tie on rank: the first copy is the base
+    assert corse.title == "Calvi airport"  # the longest title, as for keyed cams
+
+
+def test_a_repeat_within_one_source_keeps_its_category() -> None:
+    """A source listing one stream on two pages merges like two sources would.
+
+    The copy that has a category is the base, so its page fixes the stable id.
+    """
+    out = dedupe(
+        [
+            _c("webcamerapl", "hls:x", page="alias", cat=None),
+            _c("webcamerapl", "hls:x", page="listed", cat="Beaches"),
+        ]
+    )
+    assert len(out) == 1
+    assert out[0].category == "Beaches"
+    assert out[0].source_page_url == "listed"
 
 
 def test_multiangle_distinct_keys_kept() -> None:

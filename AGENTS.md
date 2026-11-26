@@ -31,9 +31,10 @@ The app is two phases, decoupled by a catalogue snapshot:
    shapes), so sharing a verdict across it would apply one URL's result to a different
    one) → per-source
    empty-guard (keeps the last good set if a source collapses ≥50%, needs 2 bad
-   cycles to accept) → cross-source `dedupe()` (per-field merge; it keeps the longest
-   title, which is why the decode runs first; an `HtmlScraperSource` has already
-   dropped its own repeats of a target, first page wins) → YouTube cams get
+   cycles to accept) → `dedupe()`, the one place repeats merge, whether a stream is
+   on several pages of one source or found by several sources: one stream is a
+   shared `predisc_key`, or with none the identical `target_url` (per-field merge; it
+   keeps the longest title, which is why the decode runs first) → YouTube cams get
    their category from the Data API; scraped titles get location appended
    (`with_location`) → `CatalogueEntry`s with a stable id.
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
@@ -118,19 +119,20 @@ The app is two phases, decoupled by a catalogue snapshot:
   whole step (fetch, `_page_meta`, `_candidates`, titles), so a second hop is as
   concurrent as the first and the stream carries cams, not page bodies; the hooks
   therefore run on worker threads and must not mutate the source (per-build state is
-  built in `_page_urls`). A target already yielded, by an earlier page or the same one,
-  is skipped, so the first page carrying a stream names it.
-  A source with its own `discover()` maps any fetch whose results are page bodies
-  through `fetch.thread_imap` (an ordered stream with a bounded buffer), not
-  `thread_map`, which holds every result until the last call finishes — a whole
-  sitemap's pages at once, stacked across the sources building together. Maps with
+  built in `_page_urls`). A stream on several pages is yielded once per page, and
+  `dedupe()` merges the copies by the same rule it applies across sources; the base
+  never drops them itself. Any other fetch map whose results are page bodies (a
+  source's own `discover()`, or an index crawl in `_page_urls`) goes through
+  `fetch.thread_imap` (an ordered stream with a bounded buffer), not `thread_map`,
+  which holds every result until the last call finishes — a whole sitemap's pages at
+  once, stacked across the sources building together. Maps with
   small results stay on `thread_map` (the docstrings say why).
   Add the instance to `active_sources` in `app._build_sources`, built with
   `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
   `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
   dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
-  `None` = never merged). Text a source reads out of a page (a title, a name, a
-  category) goes through `base.decode_entities` as it is read, before any suffix
+  `None` = merged only with an identical `target_url`). Text a source reads out of a
+  page (a title, a name, a category) goes through `base.decode_entities` as it is read, before any suffix
   strip or geo check compares it (`&#8211;` is not `–`, and `St. John&#39;s` misses
   its own geo and repeats it); the build runs every title through it again, for text
   a source passed straight through (Data API snippets, JSON feeds). It decodes only

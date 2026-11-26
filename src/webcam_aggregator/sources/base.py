@@ -115,7 +115,9 @@ def _angle_targets(html: str) -> list[tuple[str | None, str]]:
 
 
 def predisc_key(target: str) -> str | None:
-    """Return the dedup key for a target URL, or None to never merge it.
+    """Return the dedup key for a target URL, or None if it has none.
+
+    With no key, `dedup.dedupe` merges a candidate only with an identical target.
 
     The key is `yt:<id>` for YouTube, `feratel:<cam id>` for feratel, and
     `hls:<normalised url>` for a direct m3u8.
@@ -337,12 +339,8 @@ class HtmlScraperSource[Ctx](ABC):
     def discover(self) -> Iterator[Candidate]:
         """Crawl the cam pages concurrently and yield their cams in page order.
 
-        A target already yielded (by an earlier page, or earlier on the same page) is
-        skipped, so the first page that carries a stream names it.
+        A stream on several pages comes out once per page; `dedup.dedupe` merges the
+        copies, as it does for every source.
         """
-        seen: set[str] = set()
         for cams in thread_imap(self._page_cams, self._page_urls()):
-            for c in cams:
-                if c.target_url not in seen:
-                    seen.add(c.target_url)
-                    yield c
+            yield from cams

@@ -442,7 +442,8 @@ def test_html_scraper_base_runs_second_hops_concurrently() -> None:
     assert [c.source_page_url for c in cands] == urls
 
 
-def test_html_scraper_base_yields_a_target_once_from_its_first_page() -> None:
+def test_html_scraper_base_yields_every_pages_copy_of_a_target() -> None:
+    """A stream on several pages comes out once per page; the merge picks its fields."""
     pages = {
         "https://s/a": '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>',
         "https://s/b": (
@@ -452,4 +453,8 @@ def test_html_scraper_base_yields_a_target_once_from_its_first_page() -> None:
     }
     src = _StubSource(_FakeFetch(pages), ["https://s/a", "https://s/b"])
     got = [(c.source_page_url, c.predisc_key) for c in src.discover()]
-    assert got == [("https://s/a", "yt:aaaaaaaaaaa"), ("https://s/b", "yt:bbbbbbbbbbb")]
+    assert got == [
+        ("https://s/a", "yt:aaaaaaaaaaa"),
+        ("https://s/b", "yt:aaaaaaaaaaa"),
+        ("https://s/b", "yt:bbbbbbbbbbb"),
+    ]
