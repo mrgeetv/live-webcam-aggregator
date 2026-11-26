@@ -1,5 +1,11 @@
 import threading
+from functools import partial
 from typing import TYPE_CHECKING, override
+
+import pytest
+
+from webcam_aggregator import fetch as fetch_mod
+from webcam_aggregator.sources import base
 
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
@@ -433,8 +439,13 @@ class _SecondHopSource(_StubSource):
         return super()._candidates(html, url)
 
 
-def test_html_scraper_base_runs_second_hops_concurrently() -> None:
+def test_html_scraper_base_runs_second_hops_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A page's extra hop runs in the crawl's workers, not one page at a time."""
+    # Two workers whatever SCRAPE_WORKERS the environment sets: with one, the two
+    # hops can't meet at the barrier however the base runs them.
+    monkeypatch.setattr(base, "thread_imap", partial(fetch_mod.thread_imap, workers=2))
     urls = ["https://s/a", "https://s/b"]
     embed = '<iframe src="https://www.youtube.com/embed/{}"></iframe>'
     fetch = _FakeFetch({u: embed.format(u[-1] * 11) for u in urls})
