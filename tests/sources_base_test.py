@@ -2,11 +2,8 @@ import threading
 from functools import partial
 from typing import TYPE_CHECKING, override
 
-import pytest
-
 from webcam_aggregator import fetch as fetch_mod
 from webcam_aggregator.sources import base
-
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
@@ -18,6 +15,8 @@ from webcam_aggregator.sources.base import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    import pytest
 
     from webcam_aggregator.models import Candidate
 
