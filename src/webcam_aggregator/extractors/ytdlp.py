@@ -26,7 +26,7 @@ _MUXED_CLIENTS = "youtube:player_client=mweb,web_embedded"
 _TIMEOUT = 60
 
 # yt-dlp names the video or channel in every error (`ERROR: [youtube] <id>: …`) and
-# tacks a bug-report plea onto many. The error is the bucket key of the build's
+# tacks a bug-report plea onto many. The error is the bucket key of a refresh's
 # resolve-failure aggregate, so both go: with the id left in, one failure mode
 # across every cam reads as a handful of single-cam buckets. The serve-path warning
 # names the cam through its target URL.

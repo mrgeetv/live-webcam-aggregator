@@ -28,7 +28,7 @@ _LINK = re.compile(r'href="(https://airportwebcams\.net/[^"]+)"')
 # which this deliberately does not match.
 _CHANNEL = re.compile(r"youtube\.com/(channel/[A-Za-z0-9_-]+|@[A-Za-z0-9_.-]+)")
 # Channels below this heading are spotters who stream now and then, not 24/7 cams —
-# mostly offline, and each one costs the build a yt-dlp resolve. Only fall back to
+# mostly offline, and each one costs every refresh a yt-dlp resolve. Only fall back to
 # them when a page lists no 24/7 channel at all (Zurich's are all in this section).
 _OCCASIONAL = "Live streamers with regular broadcasts"
 # WordPress permalink heading: <h2><a href=… rel="bookmark" …>Zurich Airport Webcam</a>
@@ -50,6 +50,7 @@ class AirportWebcamsSource(HtmlScraperSource[str]):
     """
 
     name: str = "airportwebcams"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

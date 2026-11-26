@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import googleapiclient.discovery
@@ -8,15 +9,15 @@ import pytest
 import webcam_aggregator.app as _app
 from webcam_aggregator.app import (
     NoExtractorError,
-    _source_status_for,  # pyright: ignore[reportPrivateUsage]
     make_liveness_check,
     origin_of,
 )
-from webcam_aggregator.catalogue import Hist
 from webcam_aggregator.config import Config
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.fetch import (
     Fetcher,
+    FetchStats,
+    HostPacer,
     _ImpersonatingSession,  # pyright: ignore[reportPrivateUsage]
 )
 from webcam_aggregator.models import Candidate
@@ -282,36 +283,78 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
     cfg = Config(
         youtube_api_key="dummy",
         public_base_url="http://localhost",
-        catalogue_interval_hours=6,
         search_query="q",
         log_level="INFO",
         exclude_categories=frozenset(),
         proxy_youtube=False,
         max_parallel_sources=4,
     )
-    store, _cache, rebuild, source_status = _app.build_app(cfg)
-    assert store is not None
-    assert callable(rebuild)
-    assert callable(source_status)
-    # Cold start: no rebuild has run, so nothing is unhealthy yet (the top-level
-    # `ready` gates that window) and every expected source is listed at zero — never
-    # an empty {}.
-    st = source_status()
+    app = _app.build_app(cfg)
+    assert "youtube-api" not in app.scheduler.intervals
+    # Cold start: no refresh has run, so nothing is unhealthy yet (`ready` gates that
+    # window) and every expected source is listed — never an empty {}.
+    st = app.source_status()
     assert st["unhealthy"] == []
+    assert st["ready"] is False
     assert st["sources"], "expected the source roster to be listed at cold start"
-    # The /health handler indexes this unguarded — losing it from the real
-    # source_status() would be a 500 on /health with an otherwise green suite.
-    assert st["last_build_seconds"] is None
     assert all(
-        s
-        == {
-            "kept": 0,
-            "discovered": 0,
-            "crashed": False,
-            "status": "unknown",
-        }
+        s["status"] == "unknown" and s["last_refresh_at"] is None
         for s in st["sources"].values()
     )
+
+
+def _cfg(source_interval_hours: dict[str, float] | None = None) -> Config:
+    return Config(
+        # a key, so googleapiclient never goes looking for cloud credentials
+        youtube_api_key="k",
+        public_base_url="http://localhost",
+        search_query="q",
+        log_level="INFO",
+        exclude_categories=frozenset(),
+        proxy_youtube=False,
+        max_parallel_sources=4,
+        source_interval_hours=source_interval_hours or {},
+    )
+
+
+def test_each_source_refreshes_on_its_declared_interval() -> None:
+    intervals = _app.build_app(_cfg()).scheduler.intervals
+    hourly = {"explore", "shareju", "earthcam", "livespotting", "livefromiceland"}
+    daily = {"skyline", "tomarigi"}
+    assert {n for n, h in intervals.items() if h == 1} == hourly
+    assert {n for n, h in intervals.items() if h == 24} == daily
+    rest = set(intervals) - hourly - daily
+    assert rest
+    assert all(intervals[n] == 6 for n in rest)
+
+
+def test_interval_overrides_apply_and_unknown_names_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cfg = _cfg(source_interval_hours={"skyline": 48, "skyfine": 2})
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator"):
+        intervals = _app.build_app(cfg).scheduler.intervals
+    assert intervals["skyline"] == 48
+    assert "skyfine" not in intervals
+    assert "SOURCE_INTERVAL_HOURS" in caplog.text
+    assert "skyfine" in caplog.text
+
+
+def test_last_hour_lines_carry_the_prefix(caplog: pytest.LogCaptureFixture) -> None:
+    """The cross-source liveness and pacing lines say which window they summarise."""
+    resolver, probe = FetchStats(), FetchStats()
+    resolver.record("www.skylinewebcams.com", "http-404")
+    probe.record("cdn.example", "ok")
+    pacer = HostPacer()
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator"):
+        _app._report_last_hour(  # pyright: ignore[reportPrivateUsage]
+            {"resolver": resolver, "probe": probe}, pacer
+        )
+    assert (
+        "last hour: liveness resolver: 1 fetched, 1 failed: "
+        "1x http-404 www.skylinewebcams.com"
+    ) in caplog.text
+    assert "liveness probe" not in caplog.text  # nothing failed: no line
 
 
 def test_only_fingerprint_gated_sources_get_the_impersonating_transport(
@@ -333,36 +376,11 @@ def test_only_fingerprint_gated_sources_get_the_impersonating_transport(
                 return iter(())
 
         _Rec.name = name  # pyright: ignore[reportAttributeAccessIssue]
+        _Rec.interval_hours = 6  # pyright: ignore[reportAttributeAccessIssue]
         return _Rec
 
     monkeypatch.setattr(_app, "WildlifeTrustsSource", recorder("wildlife-trusts"))
     monkeypatch.setattr(_app, "ExploreOrgSource", recorder("explore"))
-    cfg = Config(
-        youtube_api_key="",
-        public_base_url="http://localhost",
-        catalogue_interval_hours=6,
-        search_query="q",
-        log_level="INFO",
-        exclude_categories=frozenset(),
-        proxy_youtube=False,
-        max_parallel_sources=4,
-    )
-    _app.build_app(cfg)
+    _app.build_app(_cfg())
     assert isinstance(seen["wildlife-trusts"]._session, _ImpersonatingSession)
     assert not isinstance(seen["explore"]._session, _ImpersonatingSession)
-
-
-def test_health_sources_stay_lean() -> None:
-    """Per-source payload is kept/discovered/crashed/status only.
-
-    The diagnostic detail lives on the per-cycle log lines.
-    """
-    history = {"skyline": Hist(last_raw_kept=0, last_discovered=11, last_crashed=False)}
-    st = _source_status_for(["skyline"], history)
-    assert st["sources"]["skyline"] == {
-        "kept": 0,
-        "discovered": 11,
-        "crashed": False,
-        "status": "ok",
-    }
-    assert st["unhealthy"] == ["skyline"]

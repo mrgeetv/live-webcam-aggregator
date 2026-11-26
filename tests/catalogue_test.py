@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import contextlib
 import logging
+import threading
 from typing import TYPE_CHECKING
 
 from webcam_aggregator.catalogue import (
     AGREE_TO_ACCEPT,
     Hist,
-    build_catalogue,
+    Scheduler,
 )
-from webcam_aggregator.models import Candidate
+from webcam_aggregator.models import Candidate, CatalogueEntry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
     import pytest
+
+    from webcam_aggregator.sources.base import Source
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,6 +46,7 @@ def _make_candidate(
 
 class _Src:
     name: str
+    interval_hours: float = 6
     _c: list[Candidate]
 
     def __init__(self, name: str, cands: list[Candidate]) -> None:
@@ -64,6 +69,94 @@ def _no_yt_live(_ids: Iterable[str]) -> dict[str, str]:
     return {}
 
 
+_NO_EXCLUDE: frozenset[str] = frozenset()
+
+
+class _Clock:
+    """A fake wall clock, in unix seconds, moved by hand."""
+
+    now: float
+
+    def __init__(self, now: float = 1_000_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, hours: float) -> None:
+        self.now += hours * 3600
+
+
+def _scheduler(
+    sources: list[Source],
+    *,
+    drop_reason_for: Callable[[Candidate], str | None] = _always_alive,
+    youtube_live: Callable[[Iterable[str]], Mapping[str, str]] = _no_yt_live,
+    intervals: Mapping[str, float] | None = None,
+    clock: _Clock | None = None,
+    merges: list[list[CatalogueEntry]] | None = None,
+    exclude_categories: frozenset[str] = _NO_EXCLUDE,
+    max_parallel_sources: int = 4,
+    fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None = None,
+) -> Scheduler:
+    sink = merges if merges is not None else []
+    return Scheduler(
+        sources,
+        intervals or {s.name: 6 for s in sources},
+        drop_reason_for=drop_reason_for,
+        youtube_live=youtube_live,
+        on_merge=sink.append,
+        exclude_categories=exclude_categories,
+        max_parallel_sources=max_parallel_sources,
+        fetch_stats=fetch_stats,
+        clock=clock or _Clock(),
+    )
+
+
+def _finish_all(s: Scheduler, started: list[str]) -> None:
+    for _ in started:
+        assert s.finish_next(timeout=5), "a dispatched refresh never finished"
+
+
+def _build(
+    sources: list[Source],
+    *,
+    drop_reason_for: Callable[[Candidate], str | None],
+    youtube_live: Callable[[Iterable[str]], Mapping[str, str]],
+    history: dict[str, Hist],
+    exclude_categories: frozenset[str] = _NO_EXCLUDE,
+    max_parallel_sources: int = 4,
+    fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None = None,
+) -> list[CatalogueEntry]:
+    """Refresh every source once on a new scheduler and return the last merge.
+
+    `history` carries each source's state between calls, as a restart-free run of
+    refreshes would, so a test can feed a source a different set each time.
+    """
+    merges: list[list[CatalogueEntry]] = []
+    hists = [history.setdefault(src.name, Hist()) for src in sources]
+    # Past every carried-over refresh's 6h interval, so each source is due again.
+    last = max((h.last_refresh_at or 0.0 for h in hists), default=0.0)
+    s = _scheduler(
+        sources,
+        drop_reason_for=drop_reason_for,
+        youtube_live=youtube_live,
+        clock=_Clock(last + 7 * 3600),
+        merges=merges,
+        exclude_categories=exclude_categories,
+        max_parallel_sources=max_parallel_sources,
+        fetch_stats=fetch_stats,
+    )
+    for src, h in zip(sources, hists, strict=True):
+        s.history[src.name] = h
+    refreshed: list[str] = []
+    while started := s.tick():
+        _finish_all(s, started)
+        refreshed += started
+    assert sorted(refreshed) == sorted(src.name for src in sources)
+    return merges[-1]
+
+
 def _all_yt_live(ids: Iterable[str]) -> dict[str, str]:
     return dict.fromkeys(ids, "")
 
@@ -76,7 +169,7 @@ def _all_yt_live(ids: Iterable[str]) -> dict[str, str]:
 def test_cross_source_dedup_collapses_same_predisc_key() -> None:
     """Two sources that each yield yt:AAA must collapse to ONE entry.
 
-    dedup() runs ONCE after all sources are processed, so a cam found by
+    The merge runs over every source's kept set, so a cam found by
     both "youtube-api" and "cxtvlive" with the same predisc_key collapses
     to a single CatalogueEntry.  Category comes from the scraper (cxtvlive
     wins per _CAT_RANK), title comes from youtube-api (canonical YT title).
@@ -101,7 +194,7 @@ def test_cross_source_dedup_collapses_same_predisc_key() -> None:
     src_yt = _Src("youtube-api", [yt_cam])
     src_scraper = _Src("cxtvlive", [scraper_cam])
 
-    result = build_catalogue(
+    result = _build(
         [src_yt, src_scraper],
         drop_reason_for=_always_alive,
         youtube_live=lambda _ids: {"AAA": ""},
@@ -159,7 +252,7 @@ def test_shared_cam_is_probed_once_across_sources() -> None:
     )
 
     history: dict[str, Hist] = {}
-    result = build_catalogue(
+    result = _build(
         [a, b],
         drop_reason_for=counting,
         youtube_live=lambda _ids: {},
@@ -213,7 +306,7 @@ def test_same_key_different_target_probed_independently() -> None:
     # camscape FIRST: under the old predisc_key cache this is the failing order —
     # the bare URL probes dead, caches "dead" under the shared key, and the tokened
     # live cam inherits it unprobed and is lost. Keying on target_url must prevent that.
-    result = build_catalogue(
+    result = _build(
         [_Src("camscape", [bare]), _Src("beachcam", [tokened])],
         drop_reason_for=counting,
         youtube_live=lambda _ids: {},
@@ -257,7 +350,7 @@ def test_multisource_deduped_category_mapped_id_non_empty() -> None:
     src1 = _Src("worldcams", [c1])
     src2 = _Src("cxtvlive", [c2])
 
-    result = build_catalogue(
+    result = _build(
         [src1, src2],
         drop_reason_for=_always_alive,
         youtube_live=_all_yt_live,
@@ -287,7 +380,7 @@ def test_entity_escaped_title_is_decoded() -> None:
     """
     cam = _make_candidate(title="Ryan&#39;s &quot;Ground View&quot; Fish &amp; Chips")
 
-    [entry] = build_catalogue(
+    [entry] = _build(
         [_Src("ozolio", [cam])],
         drop_reason_for=_always_alive,
         youtube_live=_all_yt_live,
@@ -306,7 +399,7 @@ def test_escaped_copy_of_a_cam_does_not_win_the_merge() -> None:
     # Longer than the escaped title once decoded (11), shorter than it raw (16).
     clean = _make_candidate(source="camscape", title="Harry's Bar, HI")
 
-    [entry] = build_catalogue(
+    [entry] = _build(
         [_Src("ozolio", [escaped]), _Src("camscape", [clean])],
         drop_reason_for=_always_alive,
         youtube_live=_all_yt_live,
@@ -338,7 +431,7 @@ def test_non_yt_dead_candidate_excluded() -> None:
         return None if c.predisc_key == "hls:alive" else "dead-manifest"
 
     src = _Src("worldcams", [alive_cand, dead_cand])
-    result = build_catalogue(
+    result = _build(
         [src], drop_reason_for=drop_reason_for, youtube_live=_no_yt_live, history={}
     )
 
@@ -365,7 +458,7 @@ def test_yt_candidate_excluded_when_not_in_live_set() -> None:
     def youtube_live(_ids: Iterable[str]) -> dict[str, str]:
         return {"LIVE001": ""}
 
-    result = build_catalogue(
+    result = _build(
         [src], drop_reason_for=_never_alive, youtube_live=youtube_live, history={}
     )
 
@@ -381,7 +474,7 @@ def test_youtube_category_applied_from_live() -> None:
         page="https://www.youtube.com/watch?v=LIVE001",
         target="https://www.youtube.com/watch?v=LIVE001",
     )
-    result = build_catalogue(
+    result = _build(
         [_Src("youtube-api", [cam])],
         drop_reason_for=_always_alive,
         youtube_live=lambda _ids: {"LIVE001": "Travel & Events"},
@@ -429,7 +522,7 @@ def test_empty_guard_reuses_previous_on_first_shrink() -> None:
     ]
     src = _Src("worldcams", new_cands)
 
-    result = build_catalogue(
+    result = _build(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
 
@@ -462,7 +555,7 @@ def test_empty_guard_accepts_after_agree_to_accept_consecutive_shrinks() -> None
     ]
     src = _Src("worldcams", new_cands)
 
-    result = build_catalogue(
+    result = _build(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
 
@@ -476,7 +569,7 @@ def test_empty_guard_no_history_promotes_unconditionally() -> None:
     cand = _make_candidate(key="hls:only1", title="Only Cam")
     src = _Src("worldcams", [cand])
 
-    result = build_catalogue(
+    result = _build(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history={}
     )
 
@@ -503,7 +596,7 @@ def test_empty_guard_streak_increments_then_resets() -> None:
     src = _Src("worldcams", small_cands)
 
     # First guarded build → streak becomes 1, old 10 returned
-    first = build_catalogue(
+    first = _build(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
     assert len(first) == 10
@@ -511,7 +604,7 @@ def test_empty_guard_streak_increments_then_resets() -> None:
     assert history["worldcams"].last_count == 10  # not updated yet
 
     # Second guarded build → streak reaches AGREE_TO_ACCEPT (2): new baseline accepted
-    second = build_catalogue(
+    second = _build(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
     assert len(second) == 2
@@ -533,6 +626,7 @@ def test_crash_reuses_last_good_set_and_never_wipes() -> None:
 
     class _CrashSrc:
         name: str = "worldcams"
+        interval_hours: float = 6
         calls: int
 
         def __init__(self) -> None:
@@ -547,12 +641,12 @@ def test_crash_reuses_last_good_set_and_never_wipes() -> None:
 
     src = _CrashSrc()
     history: dict[str, Hist] = {}
-    first = build_catalogue(
+    first = _build(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
     assert len(first) == 1
     for _ in range(2):  # the old bug wiped last_kept on the 2nd consecutive crash
-        result = build_catalogue(
+        result = _build(
             [src],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -583,7 +677,7 @@ def test_health_fields_record_raw_outcome_under_guard() -> None:
     ]
 
     # Collapse cycle: guard reuses the old 10, but the raw field shows the true 2.
-    build_catalogue(
+    _build(
         [_Src("worldcams", small)],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
@@ -596,7 +690,7 @@ def test_health_fields_record_raw_outcome_under_guard() -> None:
 
     # Healthy cycle (10 candidates, no collapse): raw reflects the full set.
     ten = _make_old_candidates(10)
-    build_catalogue(
+    _build(
         [_Src("worldcams", ten)],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
@@ -618,6 +712,7 @@ def test_health_fields_flag_crash() -> None:
 
     class _CrashSrc:
         name: str = "worldcams"
+        interval_hours: float = 6
         calls: int = 0
 
         def discover(self) -> list[Candidate]:
@@ -629,12 +724,12 @@ def test_health_fields_flag_crash() -> None:
 
     src = _CrashSrc()
     history: dict[str, Hist] = {}
-    build_catalogue(
+    _build(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
     assert history["worldcams"].last_crashed is False  # first cycle succeeded
 
-    build_catalogue(
+    _build(
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
     h = history["worldcams"]
@@ -664,7 +759,7 @@ def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
     history: dict[str, Hist] = {
         "worldcams": Hist(last_count=1, shrink_streak=0, last_kept=[boom])
     }
-    entries = build_catalogue(
+    entries = _build(
         [_Src("worldcams", [boom]), _Src("cxtvlive", [good])],
         drop_reason_for=_selective_alive,
         youtube_live=_no_yt_live,
@@ -698,7 +793,7 @@ def test_exclude_categories_drops_matching_entries() -> None:
         category="Birds",
         title="Bird Cam",
     )
-    result = build_catalogue(
+    result = _build(
         [_Src("worldcams", [beach, bird])],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
@@ -723,7 +818,7 @@ def test_title_category_recovered_for_uncategorised() -> None:
         target="https://e.com/odd.m3u8",
         title="Channel Cam",
     )
-    result = build_catalogue(
+    result = _build(
         [_Src("worldcams", [bear, odd])],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
@@ -751,7 +846,7 @@ def test_title_fallback_never_overrides_source_category() -> None:
         title="Bear Beach",
         category="Zzz Unknown Probe Cat",
     )
-    result = build_catalogue(
+    result = _build(
         [_Src("worldcams", [real, unmapped])],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
@@ -783,7 +878,7 @@ def test_blocked_source_names_the_host_and_status(
 ) -> None:
     """A blocked scraper's real shape: a handful of fetches, all 403, nothing found."""
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("skyline", [])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -808,7 +903,7 @@ def test_soft_block_returning_200_is_still_flagged(
     approach could not detect.
     """
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("skyline", [])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -821,7 +916,7 @@ def test_soft_block_returning_200_is_still_flagged(
 
 def test_healthy_source_logs_no_warning(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("explore", [_make_candidate(key="hls:x")])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -837,7 +932,7 @@ def test_partial_failures_are_reported_at_info(
 ) -> None:
     """~35% dead cams is skyline's NORMAL state — informative, not a warning."""
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("skyline", [_make_candidate(key="hls:x")])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -859,7 +954,7 @@ def test_source_with_no_fetcher_is_not_misreported(
     problem.
     """
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("youtube-api", [])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -877,7 +972,7 @@ def test_fetch_stats_reach_the_source_line(caplog: pytest.LogCaptureFixture) -> 
     itself.
     """
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("skyline", [])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -904,7 +999,7 @@ def _drops(reason: str) -> Callable[[Candidate], str | None]:
 def test_drop_breakdown_on_the_source_line(caplog: pytest.LogCaptureFixture) -> None:
     cands = [_make_candidate(key=f"hls:{i}") for i in range(3)]
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("skyline", cands)],
             drop_reason_for=_drops("dead-manifest"),
             youtube_live=_no_yt_live,
@@ -922,7 +1017,7 @@ def test_no_extractor_hosts_are_named(caplog: pytest.LogCaptureFixture) -> None:
         _make_candidate(key="hls:c", target="https://ivideon.com/c"),
     ]
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("camscape", cands)],
             drop_reason_for=_drops("no-extractor"),
             youtube_live=_no_yt_live,
@@ -937,7 +1032,7 @@ def test_resolve_failure_detail_is_reported(caplog: pytest.LogCaptureFixture) ->
     """Separates "yt-dlp is broken" from "the cam is off air"."""
     cands = [_make_candidate(key=f"hls:{i}") for i in range(2)]
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("worldcams", cands)],
             drop_reason_for=_drops("resolve-failed:yt-dlp failed: Sign in to confirm"),
             youtube_live=_no_yt_live,
@@ -950,7 +1045,7 @@ def test_resolve_failure_detail_is_reported(caplog: pytest.LogCaptureFixture) ->
 
 def test_clean_source_logs_no_drop_suffix(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("explore", [_make_candidate(key="hls:x")])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -968,7 +1063,7 @@ def test_yt_offline_is_counted_as_a_reason(caplog: pytest.LogCaptureFixture) -> 
         target="https://www.youtube.com/watch?v=DEAD001",
     )
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("youtube-api", [cam])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -988,14 +1083,14 @@ def test_zero_source_warns_every_single_cycle(
 ) -> None:
     history: dict[str, Hist] = {}
     good = _Src("skyline", [_make_candidate(key=f"hls:{i}") for i in range(10)])
-    build_catalogue(
+    _build(
         [good], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
     dead = _Src("skyline", [])
     for cycle in range(AGREE_TO_ACCEPT + 3):
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
-            build_catalogue(
+            _build(
                 [dead],
                 drop_reason_for=_always_alive,
                 youtube_live=_no_yt_live,
@@ -1011,7 +1106,7 @@ def test_status_transition_logged_once(caplog: pytest.LogCaptureFixture) -> None
     history: dict[str, Hist] = {}
     dead = _Src("skyline", [])
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [dead],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -1022,7 +1117,7 @@ def test_status_transition_logged_once(caplog: pytest.LogCaptureFixture) -> None
 
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [dead],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -1034,14 +1129,14 @@ def test_status_transition_logged_once(caplog: pytest.LogCaptureFixture) -> None
 
 def test_recovery_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     history: dict[str, Hist] = {}
-    build_catalogue(
+    _build(
         [_Src("skyline", [])],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
         history=history,
     )
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [_Src("skyline", [_make_candidate(key="hls:back")])],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -1058,7 +1153,7 @@ def test_still_dead_does_not_stack_on_the_fetch_warning(
     history: dict[str, Hist] = {}
     dead = _Src("skyline", [])
     stats = _stats({"skyline": {"www.skylinewebcams.com": {"http-403": 11}}})
-    build_catalogue(
+    _build(
         [dead],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
@@ -1067,7 +1162,7 @@ def test_still_dead_does_not_stack_on_the_fetch_warning(
     )
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
-        build_catalogue(
+        _build(
             [dead],
             drop_reason_for=_always_alive,
             youtube_live=_no_yt_live,
@@ -1080,16 +1175,224 @@ def test_still_dead_does_not_stack_on_the_fetch_warning(
 
 def test_degraded_status_is_tracked() -> None:
     history: dict[str, Hist] = {}
-    build_catalogue(
+    _build(
         [_Src("skyline", [_make_candidate(key=f"hls:{i}") for i in range(10)])],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
         history=history,
     )
-    build_catalogue(
+    _build(
         [_Src("skyline", [_make_candidate(key=f"hls:{i}") for i in range(2)])],
         drop_reason_for=_always_alive,
         youtube_live=_no_yt_live,
         history=history,
     )
     assert history["skyline"].status == "degraded"
+
+
+# ---------------------------------------------------------------------------
+# The scheduler: intervals, slots, order, merges, shared verdicts
+# ---------------------------------------------------------------------------
+
+
+class _SlowSrc:
+    """A source whose refresh moves the fake clock on, as a long scrape would."""
+
+    name: str
+    interval_hours: float = 6
+    _clock: _Clock
+    _hours: float
+
+    def __init__(self, name: str, clock: _Clock, hours: float) -> None:
+        self.name = name
+        self._clock = clock
+        self._hours = hours
+
+    def discover(self) -> list[Candidate]:
+        self._clock.advance(self._hours)
+        return [_make_candidate(source=self.name, key=f"hls:{self.name}")]
+
+
+class _GatedSrc:
+    """A source whose discover() blocks until the test opens its gate."""
+
+    name: str
+    interval_hours: float = 6
+    gate: threading.Event
+    calls: int
+
+    def __init__(self, name: str, gate: threading.Event | None = None) -> None:
+        self.name = name
+        self.gate = gate or threading.Event()
+        self.calls = 0
+
+    def discover(self) -> list[Candidate]:
+        self.calls += 1
+        assert self.gate.wait(timeout=5)
+        return [
+            _make_candidate(
+                source=self.name,
+                key=f"hls:{self.name}",
+                target=f"https://example.com/{self.name}.m3u8",
+            )
+        ]
+
+
+def test_interval_runs_from_when_the_refresh_finished() -> None:
+    clock = _Clock()
+    s = _scheduler(
+        [_SlowSrc("explore", clock, 3)], intervals={"explore": 1}, clock=clock
+    )
+    _finish_all(s, s.tick())
+    h = s.history["explore"]
+    assert h.last_refresh_at == clock.now  # stamped at the end, not the start
+    assert h.last_refresh_seconds == 3 * 3600
+    clock.advance(0.9)
+    assert s.tick() == []  # 3.9h after it started, but only 0.9h after it ended
+    clock.advance(0.1)
+    assert s.tick() == ["explore"]
+
+
+def test_a_source_never_runs_two_refreshes_at_once() -> None:
+    clock = _Clock()
+    src = _GatedSrc("explore")
+    s = _scheduler([src], intervals={"explore": 1}, clock=clock)
+    assert s.tick() == ["explore"]
+    clock.advance(5)  # long overdue while its refresh is still running
+    assert s.tick() == []
+    src.gate.set()
+    _finish_all(s, ["explore"])
+    assert src.calls == 1
+    assert s.tick() == []  # due again an interval after it finished, not at once
+
+
+def test_max_parallel_sources_caps_running_refreshes() -> None:
+    gate = threading.Event()
+    srcs = [_GatedSrc(n, gate) for n in ("a", "b", "c")]
+    s = _scheduler(list(srcs), max_parallel_sources=2)
+    assert s.tick() == ["a", "b"]  # equally overdue: listed order
+    assert s.tick() == []  # both slots busy, c waits
+    gate.set()
+    _finish_all(s, ["a", "b"])
+    assert s.tick() == ["c"]
+    _finish_all(s, ["c"])
+
+
+def test_most_overdue_source_goes_first() -> None:
+    clock = _Clock()
+    srcs = [_Src(n, [_make_candidate(source=n, key=f"hls:{n}")]) for n in "abc"]
+    s = _scheduler(
+        list(srcs),
+        intervals={"a": 6, "b": 2, "c": 4},
+        clock=clock,
+        max_parallel_sources=1,
+    )
+    for _ in srcs:  # first refreshes, all at the same moment
+        _finish_all(s, s.tick())
+    clock.advance(7)  # now a is 1h overdue, b 5h, c 3h
+    order: list[str] = []
+    for _ in srcs:
+        started = s.tick()
+        _finish_all(s, started)
+        order += started
+    assert order == ["b", "c", "a"]
+
+
+def test_catalogue_merges_after_every_refresh(caplog: pytest.LogCaptureFixture) -> None:
+    """The playlist serves from the first refresh and grows as others land."""
+    merges: list[list[CatalogueEntry]] = []
+    srcs = [
+        _Src(n, [_make_candidate(source=n, key=f"hls:{n}", target=f"https://{n}/x")])
+        for n in ("worldcams", "skyline")
+    ]
+    s = _scheduler(list(srcs), merges=merges, max_parallel_sources=1)
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        _finish_all(s, s.tick())
+        assert [e.source for e in merges[-1]] == ["worldcams"]
+        _finish_all(s, s.tick())
+    assert sorted(e.source for e in merges[-1]) == ["skyline", "worldcams"]
+    assert len(merges) == 2
+    assert "catalogue merged: 1 entries" in caplog.text
+    assert "catalogue merged: 2 entries" in caplog.text
+
+
+def test_a_merge_keeps_the_sources_that_did_not_refresh() -> None:
+    clock = _Clock()
+    merges: list[list[CatalogueEntry]] = []
+    srcs = [
+        _Src(n, [_make_candidate(source=n, key=f"hls:{n}", target=f"https://{n}/x")])
+        for n in ("explore", "skyline")
+    ]
+    s = _scheduler(
+        list(srcs),
+        intervals={"explore": 1, "skyline": 24},
+        clock=clock,
+        merges=merges,
+    )
+    _finish_all(s, s.tick())
+    clock.advance(1)
+    assert s.tick() == ["explore"]
+    _finish_all(s, ["explore"])
+    assert sorted(e.source for e in merges[-1]) == ["explore", "skyline"]
+
+
+def test_verdicts_are_shared_across_refreshes_until_they_expire() -> None:
+    """Two sources carrying one URL cost one probe while the verdict is fresh."""
+    clock = _Clock()
+    probed: list[str] = []
+
+    def counting(c: Candidate) -> str | None:
+        probed.append(c.target_url)
+        return None
+
+    shared = {"key": "feratel:5751", "target": "https://webtv.feratel.com/?cam=5751"}
+    srcs = [
+        _Src(n, [_make_candidate(source=n, page=f"https://{n}/1", **shared)])
+        for n in ("feratel", "windy")
+    ]
+    s = _scheduler(
+        list(srcs),
+        drop_reason_for=counting,
+        intervals={"feratel": 1, "windy": 1.25},
+        clock=clock,
+        max_parallel_sources=1,
+    )
+    _finish_all(s, s.tick())  # feratel probes
+    clock.advance(0.25)
+    _finish_all(s, s.tick())  # windy, 15 min later, reuses the verdict
+    assert len(probed) == 1
+    clock.advance(1.5)  # both due again, the verdict 105 min old
+    _finish_all(s, s.tick())
+    assert len(probed) == 2  # expired: probed afresh
+    _finish_all(s, s.tick())
+    assert len(probed) == 2  # ...and that fresh verdict is shared again
+
+
+def test_run_once_starts_and_finishes_a_due_refresh() -> None:
+    merges: list[list[CatalogueEntry]] = []
+    s = _scheduler([_Src("worldcams", [_make_candidate()])], merges=merges)
+    s.run_once()
+    assert len(merges) == 1
+    assert s.history["worldcams"].last_refresh_at is not None
+
+
+def test_a_failure_after_the_refresh_does_not_strand_the_source() -> None:
+    """A source whose finish step raises is still due again an interval later."""
+    clock = _Clock()
+
+    def broken_stats(_name: str) -> dict[str, dict[str, int]]:
+        msg = "stats boom"
+        raise RuntimeError(msg)
+
+    s = _scheduler(
+        [_Src("explore", [_make_candidate()])],
+        intervals={"explore": 1},
+        clock=clock,
+        fetch_stats=broken_stats,
+    )
+    assert s.tick() == ["explore"]
+    with contextlib.suppress(RuntimeError):
+        s.finish_next(timeout=5)
+    assert s.history["explore"].last_refresh_at == clock.now  # it did run
+    clock.advance(1)
+    assert s.tick() == ["explore"]  # not stuck as "running" forever

@@ -33,19 +33,19 @@ _LIST = (
 _STREAM = "https://webcams.windy.com/webcams/stream/{id}"
 _IFRAME = re.compile(r'<iframe[^<>]+src="([^"]+)"', re.IGNORECASE)
 
-# The corpus is ~65k cams worldwide and only ~5-10% have live video, so one build
+# The corpus is ~65k cams worldwide and only ~5-10% have live video, so one refresh
 # can neither enumerate nor probe everything politely. Instead the instance keeps
-# state across rebuilds (sources live for the process lifetime) and spends a fixed
-# request budget per build: known-live cams are re-probed first (they are the
+# state across refreshes (sources live for the process lifetime) and spends a fixed
+# request budget per refresh: known-live cams are re-probed first (they are the
 # catalogue's current content), the rest of the corpus is probed in rotating
-# slices. Coverage therefore RAMPS over the first ~2 days of builds — and resets
+# slices. Coverage therefore RAMPS over the first ~2 days of refreshes — and resets
 # to ramp again after a restart. That is expected, not an outage: the per-source
 # counts grow, they don't collapse.
 _BUDGET = 9000
 # Hard ceiling on ONE enumeration pass's requests, so a dense corpus can never turn
 # the grid scan into a five-figure burst at node.windy.com. The grid alone is ~3800
 # points; this leaves headroom for pagination without unbounding it. A pass that hits
-# the ceiling is treated as incomplete and resumes next build.
+# the ceiling is treated as incomplete and resumes next refresh.
 _ENUM_MAX_REQUESTS = 7000
 # a dense-region circle holds ~4.6k cams; past this cap the overlapping neighbour
 # circles cover the remainder, so deeper paging is waste
@@ -56,7 +56,7 @@ _PAGE = 25
 _STEP = 3.15
 _LAT_MIN, _LAT_MAX = -60.0, 72.0
 _LON_MIN, _LON_MAX = -180.0, 180.0
-# re-run the grid enumeration every N builds to pick up newly added cams
+# re-run the grid enumeration every N refreshes to pick up newly added cams
 _ENUM_EVERY = 40
 # a stream page smaller than this is the "not available" stub, not an embed
 _MIN_STREAM_PAGE = 300
@@ -100,16 +100,19 @@ class WindySource:
     """
 
     name: str = "windy"
+    # Its request budget and grid re-scan are counted in refreshes, so a shorter
+    # interval multiplies its load on windy.
+    interval_hours: float = 6
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
-        """Take the `fetch`; the corpus and the live set persist across rebuilds."""
+        """Take the `fetch`; the corpus and the live set persist across refreshes."""
         self._fetch = fetch
-        # id -> (title, city, country); persists across rebuilds
+        # id -> (title, city, country); persists across refreshes
         self._corpus: dict[int, tuple[str, str, str]] = {}
         self._live: set[int] = set()
         self._cursor: int = 0
-        self._builds_until_enum: int = 0
+        self._refreshes_until_enum: int = 0
 
     def _remember(self, cams: list[dict[str, object]]) -> None:
         for c in cams:
@@ -128,8 +131,8 @@ class WindySource:
         """Grid-scan the list API into the corpus, under a hard request ceiling.
 
         The ceiling keeps a dense-corpus pass from running away at the third-party API.
-        If it truncates the scan we do NOT mark enumeration done, so the next build
-        resumes it rather than latching a partial corpus for _ENUM_EVERY builds.
+        If it truncates the scan we do NOT mark enumeration done, so the next refresh
+        resumes it rather than latching a partial corpus for _ENUM_EVERY refreshes.
         """
         points = _grid()
         first = [_LIST.format(lat=lat, lon=lon, off=0) for lat, lon in points]
@@ -150,20 +153,20 @@ class WindySource:
         for raw in thread_imap(self._fetch.get, extras):
             _, cams = _cams_of(raw)
             self._remember(cams)
-        # only latch a COMPLETE scan; a truncated one re-runs next build
-        self._builds_until_enum = 0 if truncated else _ENUM_EVERY
+        # only latch a COMPLETE scan; a truncated one re-runs next refresh
+        self._refreshes_until_enum = 0 if truncated else _ENUM_EVERY
 
     def discover(self) -> Iterator[Candidate]:
         """Yield the live cams: known-live probed first, the rest in rotating slices."""
-        if not self._corpus or self._builds_until_enum <= 0:
+        if not self._corpus or self._refreshes_until_enum <= 0:
             self._enumerate()
-        self._builds_until_enum -= 1
+        self._refreshes_until_enum -= 1
         if not self._corpus:
             return
         # The known-live set is the current catalogue content and is ALWAYS re-probed,
-        # whatever enumeration cost — it must never go stale. The per-build budget then
-        # bounds only the rotating re-check of the rest of the corpus (capped at the
-        # number that actually exist, so a small corpus can't double-probe).
+        # whatever enumeration cost — it must never go stale. The per-refresh budget
+        # then bounds only the rotating re-check of the rest of the corpus (capped at
+        # the number that actually exist, so a small corpus can't double-probe).
         rest = [i for i in sorted(self._corpus) if i not in self._live]
         slice_n = min(len(rest), max(0, _BUDGET - len(self._live)))
         start = self._cursor % len(rest) if rest else 0
@@ -174,8 +177,8 @@ class WindySource:
         for cid, page in zip(ids, thread_imap(self._fetch.get, urls), strict=True):
             if page is None:
                 # a fetch FAILURE (timeout/429/backoff), not a verdict: keep the cam in
-                # _live so it is retried first next build rather than exiled to the
-                # slow rotation pool. It just yields no candidate this cycle.
+                # _live so it is retried first next refresh rather than exiled to the
+                # slow rotation pool. It just yields no candidate this refresh.
                 continue
             if len(page) < _MIN_STREAM_PAGE or not _IFRAME.search(page):
                 self._live.discard(cid)  # the "not available" stub: genuinely not live

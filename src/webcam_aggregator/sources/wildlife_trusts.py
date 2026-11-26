@@ -149,6 +149,7 @@ class WildlifeTrustsSource:
     """
 
     name: str = "wildlife-trusts"
+    interval_hours: float = 6
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:

@@ -18,14 +18,47 @@ def test_defaults_and_strip_trailing_slash() -> None:
         {"YOUTUBE_API_KEY": "k", "PUBLIC_BASE_URL": "https://cams.example/"}
     )
     assert c.public_base_url == "https://cams.example"
-    assert c.catalogue_interval_hours == 6
+    assert c.source_interval_hours == {}
 
 
-def test_interval_floor_and_bad_value() -> None:
-    floored = config.load({"YOUTUBE_API_KEY": "k", "CATALOGUE_INTERVAL_HOURS": "0"})
-    assert floored.catalogue_interval_hours == 1
-    bad = config.load({"YOUTUBE_API_KEY": "k", "CATALOGUE_INTERVAL_HOURS": "x"})
-    assert bad.catalogue_interval_hours == 6
+def test_source_interval_overrides_parsed() -> None:
+    c = config.load(
+        {"YOUTUBE_API_KEY": "k", "SOURCE_INTERVAL_HOURS": " skyline=48, windy = 0.5 "}
+    )
+    assert c.source_interval_hours == {"skyline": 48.0, "windy": 0.5}
+
+
+def test_bad_source_interval_entries_warn_and_are_skipped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # each bad entry is dropped on its own (that source keeps its default); the good
+    # entries beside it still apply
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
+        c = config.load(
+            {
+                "YOUTUBE_API_KEY": "k",
+                "SOURCE_INTERVAL_HOURS": "skyline=48,windy=fast,explore,feratel=0,"
+                "hdontap=-2,=3,viewsurf=nan,shareju=inf",
+            }
+        )
+    assert c.source_interval_hours == {"skyline": 48.0}
+    for bad in (
+        "windy=fast",
+        "'explore'",
+        "feratel=0",
+        "hdontap=-2",
+        "'=3'",
+        "viewsurf=nan",
+        "shareju=inf",
+    ):
+        assert bad in caplog.text
+
+
+def test_removed_catalogue_interval_warns(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
+        config.load({"YOUTUBE_API_KEY": "k", "CATALOGUE_INTERVAL_HOURS": "12"})
+    assert "CATALOGUE_INTERVAL_HOURS" in caplog.text
+    assert "SOURCE_INTERVAL_HOURS" in caplog.text  # points at its replacement
 
 
 def test_new_field_defaults() -> None:
@@ -83,16 +116,6 @@ def test_bad_max_parallel_sources_warns(caplog: pytest.LogCaptureFixture) -> Non
     assert c.max_parallel_sources == 4  # bad value falls back to the default
 
 
-def test_long_interval_warns_about_token_lapse(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # a valid but long interval outlives a per-build auth token (beachcam) — warn
-    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
-        c = config.load({"YOUTUBE_API_KEY": "k", "CATALOGUE_INTERVAL_HOURS": "48"})
-    assert "CATALOGUE_INTERVAL_HOURS" in caplog.text
-    assert c.catalogue_interval_hours == 48  # honoured, just flagged
-
-
 def test_max_parallel_sources_clamped_to_minimum() -> None:
     c = config.load({"YOUTUBE_API_KEY": "k", "MAX_PARALLEL_SOURCES": "0"})
     assert c.max_parallel_sources == 1  # _int_env clamps to the minimum
@@ -112,13 +135,6 @@ def test_non_localhost_public_base_url_no_warn(
             {"YOUTUBE_API_KEY": "k", "PUBLIC_BASE_URL": "https://cams.example.com"}
         )
     assert "PUBLIC_BASE_URL" not in caplog.text
-
-
-def test_bad_catalogue_interval_warns(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
-        bad = config.load({"YOUTUBE_API_KEY": "k", "CATALOGUE_INTERVAL_HOURS": "x"})
-    assert bad.catalogue_interval_hours == 6
-    assert "CATALOGUE_INTERVAL_HOURS" in caplog.text
 
 
 def test_unknown_exclude_category_warns(caplog: pytest.LogCaptureFixture) -> None:
@@ -154,18 +170,20 @@ def test_blank_env_vars_mean_unset_not_invalid(
             {
                 "YOUTUBE_API_KEY": "k",
                 "CATALOGUE_INTERVAL_HOURS": "",
+                "SOURCE_INTERVAL_HOURS": "",
                 "MAX_PARALLEL_SOURCES": "",
                 "PROXY_YOUTUBE": "",
                 "SEARCH_QUERY": "",
                 "EXCLUDE_CATEGORIES": "",
             }
         )
-    assert c.catalogue_interval_hours == 6
+    assert c.source_interval_hours == {}
     assert c.max_parallel_sources == 4
     assert c.proxy_youtube is False
     assert c.search_query  # falls back to the built-in default
     assert c.exclude_categories == frozenset()
     assert "invalid" not in caplog.text
+    assert "CATALOGUE_INTERVAL_HOURS" not in caplog.text  # blank: not "set"
 
 
 def test_whitespace_only_env_var_also_means_unset() -> None:

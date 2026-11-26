@@ -44,12 +44,13 @@ class YoutubeApiSource:
     fails. httplib2 evicts a connection from its pool only on `socket.timeout` — a
     `BrokenPipeError` leaves the dead socket in place, so every later call reuses it and
     fails instantly (no round trip) for as long as the client lives, which across a
-    long-lived process means cycle after cycle. `num_retries` does not help:
+    long-lived process means refresh after refresh. `num_retries` does not help:
     googleapiclient retries through that same pooled connection. Replacing the client
     replaces the Http object, and with it the pool.
     """
 
     name: str = "youtube-api"
+    interval_hours: float = 6
     _new_client: Callable[[], YouTubeResource]
     _c: YouTubeResource | None
     _query: str
@@ -108,7 +109,7 @@ class YoutubeApiSource:
                 with self._lock:
                     resp = self._client.search().list(**params).execute()
             # Any failure (an HttpError, a wedged socket's BrokenPipeError) ends this
-            # search with what it has; it must never abort the build.
+            # search with what it has; it must never abort the refresh.
             except Exception as exc:  # noqa: BLE001
                 # Report what ACTUALLY went wrong. Blaming API quota for every failure
                 # misdiagnoses the common ones — a wedged socket raises BrokenPipeError
@@ -130,7 +131,7 @@ class YoutubeApiSource:
                     hint,
                 )
                 # The connection may be wedged (see the class docstring) — bin the
-                # client so the next cycle starts from a clean pool.
+                # client so the next refresh starts from a clean pool.
                 self._drop_client()
                 return
             items = resp.get("items", [])

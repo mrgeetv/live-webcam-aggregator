@@ -98,6 +98,7 @@ class CamSecureSource:
     """
 
     name: str = "camsecure"
+    interval_hours: float = 6
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:

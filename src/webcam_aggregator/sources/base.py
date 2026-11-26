@@ -73,6 +73,10 @@ class Source(Protocol):
     """A cam source: a `name` and a `discover()` that yields its candidates."""
 
     name: str
+    # Hours between this source's refreshes, unless SOURCE_INTERVAL_HOURS overrides
+    # it. Set it from what the site costs and how fast its cams change: a single-call
+    # feed can run hourly, a crawl of thousands of pages daily.
+    interval_hours: float
 
     def discover(self) -> Iterable[Candidate]:
         """Yield this source's candidate cams."""
@@ -144,7 +148,7 @@ def predisc_key(target: str) -> str | None:
 # Every title, and any other text read out of a page, goes through decode_entities:
 # a source calls it as it reads the text, before stripping a site-name suffix or
 # checking the title against its geo (both compare text, and `&#8211;` is not `–`),
-# and the build calls it again on every title as candidates leave their source, for
+# and each refresh calls it again on every title as candidates leave their source, for
 # text a source passed straight through (Data API snippets, JSON feeds). So it must
 # be safe on text that is already decoded: only a numeric reference or an exact
 # `name;` entity is decoded, because html.unescape alone reads the legacy names HTML
@@ -286,6 +290,7 @@ class HtmlScraperSource[Ctx](ABC):
     """
 
     name: str
+    interval_hours: float
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:

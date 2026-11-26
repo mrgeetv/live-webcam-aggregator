@@ -107,6 +107,7 @@ class WebcameraPlSource(HtmlScraperSource[str]):
     """
 
     name: str = "webcamerapl"
+    interval_hours: float = 6
 
     # populated by _page_urls, which discover() always runs first
     _names: dict[str, str]

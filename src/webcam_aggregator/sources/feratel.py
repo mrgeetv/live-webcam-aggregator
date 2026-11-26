@@ -43,6 +43,7 @@ class FeratelSource(HtmlScraperSource[str]):
     """
 
     name: str = "feratel"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

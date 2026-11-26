@@ -49,13 +49,13 @@ Configure these in your `.env` file or pass directly to docker-compose.
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `CATALOGUE_INTERVAL_HOURS` | `6` | Hours between catalogue refresh cycles |
 | `EXCLUDE_CATEGORIES` | (none) | Comma-separated categories to drop across all sources (case-insensitive) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `MAX_PARALLEL_SOURCES` | `4` | How many sources discover + liveness-check at once (min 1); total build concurrency ≈ this × `SCRAPE_WORKERS` |
+| `MAX_PARALLEL_SOURCES` | `4` | How many source refreshes (discover + liveness) run at once (min 1); total concurrency ≈ this × `SCRAPE_WORKERS` |
 | `PROXY_YOUTUBE` | `false` | `true` proxies YouTube through the server (survives the ~6h token expiry, trims DVR to the live edge); `false` (default) redirects players direct to YouTube (lower latency, stops at token expiry; a player retrying a stream that failed gets a freshly resolved one) |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Base URL used in playlist and manifest links |
-| `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness; sources also run in parallel, so build-peak concurrency ≈ this × the number running at once. A host answering 429/503 is backed off adaptively (see *Per-host pacing*), so the effective rate to that host can drop below what this implies |
+| `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness; refreshes also run in parallel, so peak concurrency ≈ this × the number running at once. A host answering 429/503 is backed off adaptively (see *Per-host pacing*), so the effective rate to that host can drop below what this implies |
+| `SOURCE_INTERVAL_HOURS` | per source | `name=hours,…` overrides of each source's refresh interval (its `interval_hours`); an unknown name or bad value warns and that source keeps its default |
 | `SEARCH_QUERY` | built-in webcam query | YouTube search terms (`\|`=OR, space=AND, `-`=exclude) |
 | `YOUTUBE_API_KEY` | (required) | YouTube Data API v3 key |
 
@@ -172,14 +172,14 @@ live-webcam-aggregator/
 ├── src/
 │   └── webcam_aggregator/      # v2 application package
 │       ├── __main__.py         # Entry point (python -m webcam_aggregator)
-│       ├── app.py              # App wiring and main loop
+│       ├── app.py              # App wiring, /health and the HTTP handler
 │       ├── config.py           # Environment variable config
 │       ├── models.py           # Data contracts and stream models
 │       ├── fetch.py            # HTTP fetch: SSRF guard, per-host pacing, stats, browser-fingerprint transport
 │       ├── registry.py         # Extractor registry
 │       ├── dedup.py            # Deduplication and field merge
 │       ├── categories.py       # Category taxonomy mapping
-│       ├── catalogue.py        # Catalogue builder and liveness validation
+│       ├── catalogue.py        # Refresh scheduler, liveness verdicts, empty-guard, merge
 │       ├── cache.py            # Resolve cache (TTL, LRU, negative caching)
 │       ├── serving.py          # Playlist render, manifest gate + manifest/segment proxy
 │       ├── signing.py          # HMAC signing of proxied manifest/segment URLs
@@ -257,8 +257,8 @@ Available levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`
 ### Catalogue & resolve logging
 
 **`INFO` is enough to diagnose a failing source** — `DEBUG` is for writing extractors,
-not for incidents. Each rebuild logs one line per source carrying the fetch outcome and
-the drop breakdown:
+not for incidents. Each source logs one line when its refresh ends, carrying the fetch
+outcome and the drop breakdown:
 
 ```text
 skyline: 1668 kept / 2566 discovered — dropped 898 (612x dead-manifest, 210x resolve-failed)
@@ -286,7 +286,7 @@ request — the host's backoff breaker is open, or the wait would exceed ~30s; s
 
 Each source also carries a coarse `status` (`ok` / `degraded` / `dead`). A **change**
 logs one line, so `grep WARNING` reads as an incident timeline rather than the same
-line every 6h — and a source at zero warns **every** cycle it stays there:
+line every refresh — and a source at zero warns on **every** refresh it stays there:
 
 ```text
 skyline: ok -> dead (0 kept, was 1668)
@@ -308,10 +308,15 @@ per-cam detail behind those counts: the specific target URLs with no extractor, 
 failed resolve, and each dead manifest. `DEBUG` also stops CDN session tokens being
 trimmed out of the serving warnings (see *Secrets in logs* below).
 
-Live process memory (`rss_mb`), the per-source **raw** outcome of the last rebuild
-(`kept`/`discovered`/`crashed`/`status`), a `healthy` rollup (`ready` **and** no
-source crashed or returned 0 this cycle), `unhealthy_sources` and
-`last_build_seconds` are exposed on the `/health` endpoint. The payload is
+After every refresh the catalogue is re-merged from each source's latest kept cams,
+logging `catalogue merged: <N> entries` at `INFO`.
+
+Live process memory (`rss_mb`), each source's **raw** last-refresh outcome
+(`kept`/`discovered`/`crashed`/`status`) and refresh times
+(`last_refresh_at`/`last_refresh_seconds`/`interval_hours`), a `healthy` rollup
+(`ready` — every source has refreshed once — **and** no source crashed, returned 0
+or is `overdue`, i.e. last refreshed over twice its interval ago) and
+`unhealthy_sources` are exposed on the `/health` endpoint. The payload is
 deliberately WHAT-only — the per-host/per-reason detail above lives on the log
 lines. The per-source counts stay raw even when the empty-guard is still serving a
 failed source's last good set, so a failure surfaces immediately. See the
@@ -399,26 +404,27 @@ so a rate-limited fetch usually **succeeds on its retry** instead of firing stra
 back into the burst and losing the cam. Sustained shedding escalates: once a wait
 would exceed ~30s, requests fail fast with the `host-backoff` outcome rather than
 queueing, and at the breaker threshold everything fails fast except one probe per
-decay period — so a hard-blocked site costs the build minutes, not hours, at the
-price of that source mostly sitting the cycle out (the empty-guard then serves its
+decay period — so a hard-blocked site costs a refresh minutes, not hours, at the
+price of that source mostly sitting the refresh out (the empty-guard then serves its
 last good set). A scrape-phase `host-backoff` appears on that source's own log
 line; a resolver/probe one on the cross-source `liveness` line. Serve-time
 fetchers (player manifest/segment traffic and on-play resolves) are deliberately
 unpaced — a build-inflicted cooldown must never stall playback.
 
-Per cycle, each backoff episode logs at `DEBUG`; a breaker trip, or an oversized
-`Retry-After` being honoured, logs a `WARNING`; and the rebuild logs one aggregate
-line per liveness fetcher with failures plus one for pacing:
+Each backoff episode logs at `DEBUG`; a breaker trip, or an oversized `Retry-After`
+being honoured, logs a `WARNING`. The liveness fetchers and the pacer serve every
+source's refreshes, so they summarise on an hourly timer instead: one aggregate line
+per liveness fetcher with failures plus one for pacing, each covering the last hour:
 
 ```text
-liveness resolver: 2518 fetched, 1 failed: 1x http-404 www.skylinewebcams.com
-pacing: 39x www.skylinewebcams.com (310s backoff)
+last hour: liveness resolver: 2518 fetched, 1 failed: 1x http-404 www.skylinewebcams.com
+last hour: pacing: 39x www.skylinewebcams.com (310s backoff)
 ```
 
 Because a recovered retry still counts as `ok` in the fetch outcomes (and a 503
 whose retry was then refused records `host-backoff`, not `http-503`), the `pacing`
 counters — not the `http-503` counts — are the honest measure of how much a host is
-shedding: a rate-limited build shows near-zero failed fetches but non-zero
+shedding: a rate-limited hour shows near-zero failed fetches but non-zero
 `penalties`, exactly as above.
 
 ### Secrets in logs
@@ -451,16 +457,17 @@ the title makes it `Travel & Events`; only titles with no signal at all stay `Ot
 never touches a cam that already has a real or `Unmapped` category.
 
 Suspect config logs a `WARNING` at startup rather than failing silently: a non-numeric
-`CATALOGUE_INTERVAL_HOURS`/`SCRAPE_WORKERS`/`MAX_PARALLEL_SOURCES`, a
-non-`true`/`false` `PROXY_YOUTUBE`, an
+`SCRAPE_WORKERS`/`MAX_PARALLEL_SOURCES`, a bad entry or unknown source name in
+`SOURCE_INTERVAL_HOURS`, a non-`true`/`false` `PROXY_YOUTUBE`, an
 unknown `LOG_LEVEL`, a `localhost` `PUBLIC_BASE_URL` (unreachable by remote players),
-or an unknown name in `EXCLUDE_CATEGORIES`.
+an unknown name in `EXCLUDE_CATEGORIES`, or a `CATALOGUE_INTERVAL_HOURS` that is still
+set (it no longer does anything).
 
-Memory peaks **during** the catalogue build: sources run concurrently (up to
-`MAX_PARALLEL_SOURCES` at once, each fetching + liveness-checking its site with
-`SCRAPE_WORKERS` threads), then it settles back once the playlist is built. The build
-is the high-water mark, not a leak — peak concurrency is ~`MAX_PARALLEL_SOURCES` ×
-`SCRAPE_WORKERS`. Lower `SCRAPE_WORKERS` to reduce that peak.
+Memory peaks **while big sources refresh together**: up to `MAX_PARALLEL_SOURCES`
+refreshes run at once, each fetching + liveness-checking its site with
+`SCRAPE_WORKERS` threads, and it settles back as they finish. That is the high-water
+mark, not a leak — peak concurrency is ~`MAX_PARALLEL_SOURCES` × `SCRAPE_WORKERS`.
+Lower `SCRAPE_WORKERS` to reduce that peak.
 
 ### Viewing Debug Logs
 

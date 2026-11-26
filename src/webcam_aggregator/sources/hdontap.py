@@ -56,6 +56,7 @@ class HdOnTapSource(HtmlScraperSource[str]):
     """
 
     name: str = "hdontap"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

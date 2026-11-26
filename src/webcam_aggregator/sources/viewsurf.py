@@ -64,6 +64,7 @@ class ViewsurfSource(HtmlScraperSource[str]):
     """
 
     name: str = "viewsurf"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

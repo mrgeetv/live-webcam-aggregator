@@ -29,7 +29,7 @@ _LINK = re.compile(r'href="https?://beachcam\.meo\.pt/livecams/([^"/#?]+)/"')
 _VIDEO = re.compile(r'data-video-url="(https?://[^"]+\.m3u8)"')
 # The bare playlist URL answers 403; the site's JW player appends
 # ?wmsAuthSign=<token> fetched from this IOL endpoint (anonymous userId works).
-# The token is valid ~24h — comfortably past the default 6h rebuild, which mints a
+# The token is valid ~24h — comfortably past its 6h interval, each refresh minting a
 # fresh one. The manifest then returns Nimble child/segment URLs whose
 # nimblesessionid+wmsAuthSign query is minted for whoever fetched it, so
 # `video-auth1.iol.pt` must be in serving._PROXY_SEGMENT_HOSTS (a segment stripped
@@ -51,11 +51,12 @@ class BeachcamSource(HtmlScraperSource[_Ctx]):
     Almost all are beach/surf spots, and the few lake/wake-park/city outliers are a
     better trade than every Portuguese-titled cam landing in "Other" (the
     English title-keyword fallback can't read them). One stream per page in a
-    data-video-url attribute, playable only with a per-build ?wmsAuthSign= auth token.
+    data-video-url attribute, playable only with a per-refresh ?wmsAuthSign= auth token.
     """
 
     name: str = "beachcam"
-    # per-build auth token, fetched alongside the index in _page_urls
+    interval_hours: float = 6
+    # per-refresh auth token, fetched alongside the index in _page_urls
     _token: str | None = None
 
     @override
@@ -98,8 +99,8 @@ class BeachcamSource(HtmlScraperSource[_Ctx]):
                 source=self.name,
                 source_page_url=url,
                 target_url=target,
-                # keyed on the BARE url: the auth token is per-build noise that
-                # would break cross-build stability of the merge key
+                # keyed on the BARE url: the auth token is per-refresh noise that
+                # would break the merge key's stability across refreshes
                 predisc_key=predisc_key(bare),
             )
 

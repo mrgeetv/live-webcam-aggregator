@@ -125,6 +125,7 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
     """camscape.com cams, listed by its sitemaps; each page's JSON holds the embeds."""
 
     name: str = "camscape"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

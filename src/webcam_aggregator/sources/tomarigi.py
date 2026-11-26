@@ -87,6 +87,7 @@ class TomarigiSource:
     """
 
     name: str = "tomarigi"
+    interval_hours: float = 24
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:

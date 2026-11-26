@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from webcam_aggregator.categories import unknown_categories
@@ -16,14 +17,11 @@ _DEFAULT_SEARCH_QUERY = (
 )
 
 log = logging.getLogger("webcam-aggregator.config")
-# The shortest lifetime of an auth token a source bakes into its URLs at discovery
-# (beachcam's wmsAuthSign).
-_BAKED_TOKEN_HOURS = 24
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 # v1 env vars that v2 ignores — warn so migrators aren't caught out by silent no-ops.
 _LEGACY_VARS: dict[str, str | None] = {
-    "UPDATE_INTERVAL_HOURS": "CATALOGUE_INTERVAL_HOURS",
+    "UPDATE_INTERVAL_HOURS": None,
     "EXCLUDED_CATEGORIES": "EXCLUDE_CATEGORIES",
     "MAX_VIDEOS_PER_CYCLE": None,
     "CONCURRENT_EXTRACTIONS": None,
@@ -36,12 +34,14 @@ class Config:
 
     youtube_api_key: str
     public_base_url: str
-    catalogue_interval_hours: int
     search_query: str
     log_level: str
     exclude_categories: frozenset[str]
     proxy_youtube: bool
     max_parallel_sources: int
+    # Per-source interval overrides in hours, by source name. Names are checked
+    # against the real sources where they are known (app wiring), not here.
+    source_interval_hours: dict[str, float] = field(default_factory=dict[str, float])
 
 
 def _int_env(env: dict[str, str], key: str, default: int, minimum: int) -> int:
@@ -60,6 +60,29 @@ def _int_env(env: dict[str, str], key: str, default: int, minimum: int) -> int:
 def _csv_set(raw: str) -> frozenset[str]:
     # Comma-separated, stored casefolded so category matching is case-insensitive.
     return frozenset(p.strip().casefold() for p in raw.split(",") if p.strip())
+
+
+def _intervals_env(env: dict[str, str], key: str) -> dict[str, float]:
+    """Parse `name=hours,…`; a bad entry warns and is skipped, the rest still apply."""
+    out: dict[str, float] = {}
+    for entry in env.get(key, "").split(","):
+        if not entry.strip():
+            continue
+        name, sep, raw = (p.strip() for p in entry.partition("="))
+        try:
+            hours = float(raw)
+        except ValueError:
+            hours = math.nan
+        if not (sep and name and math.isfinite(hours) and hours > 0):
+            log.warning(
+                "%s: ignoring %r — expected name=hours with hours > 0; that source "
+                "keeps its default",
+                key,
+                entry.strip(),
+            )
+            continue
+        out[name] = hours
+    return out
 
 
 def _bool_env(env: dict[str, str], key: str, *, default: bool) -> bool:
@@ -96,18 +119,14 @@ def _warn_on_suspect_config(cfg: Config) -> None:
             "EXCLUDE_CATEGORIES: ignoring unknown categories %s (see the README list)",
             ", ".join(sorted(unknown)),
         )
-    # A few sources bake a discovery-time auth token into the served URL (beachcam's
-    # ~24h wmsAuthSign); an interval longer than that lets the token lapse mid-cycle,
-    # silently 403-ing those cams. Valid, but worth flagging.
-    if cfg.catalogue_interval_hours > _BAKED_TOKEN_HOURS:
-        log.warning(
-            "CATALOGUE_INTERVAL_HOURS=%d is over 24 — sources that carry a per-build "
-            "auth token (e.g. beachcam) will lapse before the next rebuild",
-            cfg.catalogue_interval_hours,
-        )
 
 
 def _warn_legacy_env(env: dict[str, str]) -> None:
+    if env.get("CATALOGUE_INTERVAL_HOURS", "").strip():
+        log.warning(
+            "CATALOGUE_INTERVAL_HOURS is no longer used: each source refreshes on its "
+            "own interval — set SOURCE_INTERVAL_HOURS=name=hours,… to change one"
+        )
     for old, new in _LEGACY_VARS.items():
         if not env.get(old):
             continue
@@ -132,12 +151,12 @@ def load(env: dict[str, str] | None = None) -> Config:
     cfg = Config(
         youtube_api_key=key,
         public_base_url=e.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"),
-        catalogue_interval_hours=_int_env(e, "CATALOGUE_INTERVAL_HOURS", 6, 1),
         search_query=e.get("SEARCH_QUERY", "").strip() or _DEFAULT_SEARCH_QUERY,
         log_level=e.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         exclude_categories=_csv_set(e.get("EXCLUDE_CATEGORIES", "")),
         proxy_youtube=_bool_env(e, "PROXY_YOUTUBE", default=False),
         max_parallel_sources=_int_env(e, "MAX_PARALLEL_SOURCES", 4, 1),
+        source_interval_hours=_intervals_env(e, "SOURCE_INTERVAL_HOURS"),
     )
     _warn_on_suspect_config(cfg)
     _warn_legacy_env(e)

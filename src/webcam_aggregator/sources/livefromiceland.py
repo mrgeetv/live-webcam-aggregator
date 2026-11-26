@@ -41,6 +41,7 @@ class LiveFromIcelandSource(HtmlScraperSource[str]):
     """
 
     name: str = "livefromiceland"
+    interval_hours: float = 1
 
     @override
     def _page_urls(self) -> list[str]:

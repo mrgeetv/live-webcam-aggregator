@@ -50,6 +50,7 @@ class WhatsupcamsSource:
     """
 
     name: str = "whatsupcams"
+    interval_hours: float = 6
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:
