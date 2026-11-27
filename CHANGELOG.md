@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.17](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.16...v2.14.17) (2026-11-27)
+
+### Bug Fixes
+
+* **scraper:** mint the beachcam token at resolve time, never in the target ([#222](https://github.com/mrgeetv/live-webcam-aggregator/issues/222)) ([f298316](https://github.com/mrgeetv/live-webcam-aggregator/commit/f29831691422e329d9fb28eb344b74e5caa48ca4)), closes [#215](https://github.com/mrgeetv/live-webcam-aggregator/issues/215) [217-#220](https://github.com/mrgeetv/217-/issues/220)
+
+## [2.14.16](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.15...v2.14.16) (2026-11-27)
+
+### Bug Fixes
+
+* **docker:** move to python 3.15 ([#200](https://github.com/mrgeetv/live-webcam-aggregator/issues/200)) ([084a5c9](https://github.com/mrgeetv/live-webcam-aggregator/commit/084a5c9907f1a5402a72bc7fd9a08800ac299f02)), closes [#199](https://github.com/mrgeetv/live-webcam-aggregator/issues/199) [#199](https://github.com/mrgeetv/live-webcam-aggregator/issues/199) [#90](https://github.com/mrgeetv/live-webcam-aggregator/issues/90)
+
 ## [2.14.15](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.14...v2.14.15) (2026-11-24)
 
 ### Bug Fixes
