@@ -45,7 +45,7 @@ def trim_url(url: str, *, keep_ids: bool = True) -> str:
     (`_ID_PARAMS`).
 
     Upstream URLs carry live session credentials in the query string (skyline's
-    `?a=<token>`, a beachcam target's `wmsAuthSign`), googlevideo carries its
+    `?a=<token>`, a beachcam playlist's `wmsAuthSign`), googlevideo carries its
     playback token in the PATH (`_googlevideo_path`), and any URL can carry
     userinfo, so all of that goes.
     """

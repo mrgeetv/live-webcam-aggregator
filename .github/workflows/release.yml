@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - next # betas
   workflow_dispatch: # Manual trigger
 
 permissions:
@@ -18,8 +19,7 @@ jobs:
     outputs:
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
       new_release_version: ${{ steps.semantic.outputs.new_release_version }}
-      new_release_major_version: ${{ steps.semantic.outputs.new_release_major_version }}
-      new_release_minor_version: ${{ steps.semantic.outputs.new_release_minor_version }}
+      image_tags: ${{ steps.image-tags.outputs.tags }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,6 +49,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Betas get only their own tag and :beta, never :latest or :vN.
+      - name: Image tags
+        id: image-tags
+        if: steps.semantic.outputs.new_release_published == 'true'
+        shell: bash
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          VERSION: ${{ steps.semantic.outputs.new_release_version }}
+          MAJOR: ${{ steps.semantic.outputs.new_release_major_version }}
+          MINOR: ${{ steps.semantic.outputs.new_release_minor_version }}
+        run: |
+          {
+            echo "tags<<EOF"
+            echo "$IMAGE:v$VERSION"
+            if [[ "$VERSION" == *-* ]]; then
+              pre=${VERSION#*-}
+              echo "$IMAGE:${pre%%.*}"
+            else
+              echo "$IMAGE:latest"
+              echo "$IMAGE:v$MAJOR"
+              echo "$IMAGE:v$MAJOR.$MINOR"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Release Deployment
         if: steps.semantic.outputs.new_release_published == 'true'
         run: |
@@ -73,14 +98,15 @@ jobs:
     name: Build & Deploy Docker Image
     needs: semantic-release
     if: needs.semantic-release.outputs.new_release_published == 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/docker-build.yml
     with:
       # The tag, not the pushed commit: the image's revision label must name the
       # release's commit, which base-images.yml checks it against.
       ref: v${{ needs.semantic-release.outputs.new_release_version }}
-      tags: |
-        ghcr.io/${{ github.repository }}:latest
-        ghcr.io/${{ github.repository }}:v${{ needs.semantic-release.outputs.new_release_version }}
-        ghcr.io/${{ github.repository }}:v${{ needs.semantic-release.outputs.new_release_major_version }}
-        ghcr.io/${{ github.repository }}:v${{ needs.semantic-release.outputs.new_release_major_version }}.${{ needs.semantic-release.outputs.new_release_minor_version }}
+      tags: ${{ needs.semantic-release.outputs.image_tags }}
     secrets: inherit

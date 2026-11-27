@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
-from webcam_aggregator.fetch import FetcherProtocol, thread_imap
 from webcam_aggregator.models import Candidate
-from webcam_aggregator.sources.base import decode_entities
+from webcam_aggregator.sources.base import HtmlScraperSource, decode_entities
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -24,39 +23,46 @@ _EXPLORE = re.compile(r"https?://www\.ozolio\.com/explore/[A-Z0-9]+$")
 _TITLE = re.compile(r"<title>([^<]+?)-\s*Webcam\s*-\s*Ozolio\s*</title>", re.IGNORECASE)
 
 
-class OzolioSource:
+class OzolioSource(HtmlScraperSource[str]):
     """Ozolio: cameras sitemap -> per-cam /explore/<CID> pages.
 
     The candidate target is the explore page itself: the stream URL only exists inside a
     per-session relay exchange, so OzolioResolver mints it fresh from the CID at resolve
-    time and there is no stable stream URL to merge on (predisc_key None). No category
-    -> "Other".
+    time and there is no stable stream URL to merge on (predisc_key None). A page with
+    no Ozolio `<title>` (an error or consent page) drops. No category -> "Other".
     """
 
     name: str = "ozolio"
     interval_hours: float = 6
-    _fetch: FetcherProtocol
 
-    def __init__(self, fetch: FetcherProtocol) -> None:
-        """Take the `fetch` used for every request."""
-        self._fetch = fetch
-
-    def discover(self) -> Iterator[Candidate]:
-        """Yield a candidate for each explore page that renders a title."""
+    @override
+    def _page_urls(self) -> list[str]:
         sm = self._fetch.get(_SITEMAP) or ""
-        pages = sorted(
+        return sorted(
             {loc.strip() for loc in _LOC.findall(sm) if _EXPLORE.match(loc.strip())}
         )
-        for page, html in zip(pages, thread_imap(self._fetch.get, pages), strict=True):
-            m = _TITLE.search(html or "")
-            if not m:
-                continue  # fetch failed, or the page isn't a rendered cam page
+
+    @override
+    def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
+        m = _TITLE.search(html)
+        # nothing on the page maps to a category
+        return None, decode_entities(m.group(1)).strip() if m else ""
+
+    @override
+    def _candidates(self, html: str, url: str) -> Iterator[Candidate]:
+        if _TITLE.search(html):
             yield Candidate(
-                title=decode_entities(m.group(1)).strip(),
+                title="",
                 angle_key=None,
-                category=None,  # nothing on the page maps to a category
+                category=None,
                 source=self.name,
-                source_page_url=page,
-                target_url=page,
+                source_page_url=url,
+                target_url=url,
                 predisc_key=None,
             )
+
+    @override
+    def _title_for(
+        self, cand: Candidate, url: str, category: str | None, ctx: str
+    ) -> str:
+        return ctx

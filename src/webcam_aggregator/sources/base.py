@@ -46,6 +46,11 @@ _IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)$", re.IGNORECASE)
 # feratel source's copy merge with the ones cxtvlive/camscape pick up.
 _FERATEL_QUERY = re.compile(r"webtv(?:fc)?\.feratel\.com/webtv/\?([^\"'\s]*)")
 _CAM_PARAM = re.compile(r"\bcam=(\d+)")
+# viewsurf's joada player names the cam by uuid, among presentation params that vary
+# by embedder; hdontap's cam pages carry the cam id before a slug that can vary.
+# The whole id or none: a capture cut short would key two cams as one.
+_JOADA_UUID = re.compile(r"[?&]uuid=([0-9a-f-]++)(?=[&#]|$)")
+_HDONTAP_PAGE = re.compile(r"^https?://(?:www\.)?hdontap\.com/stream/(\d++)(?=[/?#]|$)")
 
 # Iframes that can never carry a stream: the tag-manager/consent frames pages embed
 # alongside their real player (GTM's <noscript> ns.html is the common one), and the
@@ -119,10 +124,13 @@ def _angle_targets(html: str) -> list[tuple[str | None, str]]:
 
 
 def predisc_key(target: str) -> str | None:
-    """Return the dedup key for a target URL, or None to never merge it.
+    """Return the dedup key for a target URL, or None if it has none.
 
-    The key is `yt:<id>` for YouTube, `feratel:<cam id>` for feratel, and
-    `hls:<normalised url>` for a direct m3u8.
+    With no key, `dedup.dedupe` merges a candidate only with an identical target.
+
+    The key is `yt:<id>` for YouTube, the site's own cam id for feratel, viewsurf and
+    hdontap (`feratel:`, `viewsurf:`, `hdontap:`), and `hls:<normalised url>` for a
+    direct m3u8.
     """
     t = (
         unquote(re.sub(r"^https?:.*?url=", "", target))
@@ -136,11 +144,18 @@ def predisc_key(target: str) -> str | None:
         cam = _CAM_PARAM.search(fq.group(1))
         if cam:
             return f"feratel:{cam.group(1)}"
+    if "joada.net/embeded/" in t:
+        uuid = _JOADA_UUID.search(t)
+        if uuid:
+            return f"viewsurf:{uuid.group(1)}"
+    page = _HDONTAP_PAGE.match(t)
+    if page:
+        return f"hdontap:{page.group(1)}"
     if ".m3u8" in t:
         # Strip only unambiguous token params. NOT generic single-letter names like
         # `st`/`e` — those can be legitimate stream selectors, and stripping them
         # would collapse two distinct streams to one key (dedup would drop one).
-        norm = re.sub(r"[?&](token|expire|hdnts)=[^&]*", "", t).rstrip("?&")
+        norm = re.sub(r"[?&](token|expire|hdnts|wmsAuthSign)=[^&]*", "", t).rstrip("?&")
         return f"hls:{norm}"
     return None
 
@@ -282,11 +297,14 @@ class HtmlScraperSource[Ctx](ABC):
     """Shared crawl loop for HTML scraper sources.
 
     Subclasses supply three hooks: how to find the cam detail-page URLs, the per-page
-    (category, context), and the per-candidate title. The concurrent fetch
-    (`thread_imap`), empty-page skipping, and `extract_candidates` wiring live here, so
-    each source stays a handful of regexes. `Ctx` is whatever per-page state a source
-    precomputes once (e.g. a stream-id -> name map) and reuses across that page's
-    candidates in `_title_for`.
+    (category, context), and the per-candidate title. The base owns the concurrent
+    crawl: each worker runs one page's whole step (fetch, `_page_meta`,
+    `_candidates` with any extra hop it makes, titles), so the stream carries cams
+    rather than page bodies, and a second hop runs as concurrently as the first. The
+    hooks therefore run on worker threads and must not mutate the source; per-refresh
+    state is built in `_page_urls`, before the workers start. `Ctx` is whatever
+    per-page state a source precomputes once (e.g. a stream-id -> name map) and reuses
+    across that page's candidates in `_title_for`.
     """
 
     name: str
@@ -320,18 +338,27 @@ class HtmlScraperSource[Ctx](ABC):
 
         Defaults to the shared extraction ladder; override for sources whose embeds it
         doesn't recognise (a player config with a site-specific token, a YouTube id in a
-        JS var, ...).
+        JS var, ...) or that need a second hop (a player page, a stream API) to reach
+        the stream.
         """
         return extract_candidates(html, page_url=url, source=self.name)
 
+    def _page_cams(self, url: str) -> list[Candidate]:
+        """Fetch one cam page and return its titled cams (none if the fetch failed)."""
+        html = self._fetch.get(url)
+        if not html:
+            return []
+        category, ctx = self._page_meta(html, url)
+        return [
+            replace(c, title=self._title_for(c, url, category, ctx), category=category)
+            for c in self._candidates(html, url)
+        ]
+
     def discover(self) -> Iterator[Candidate]:
-        """Fetch the cam pages concurrently and yield their candidates."""
-        urls = self._page_urls()
-        for url, html in zip(urls, thread_imap(self._fetch.get, urls), strict=True):
-            if not html:
-                continue
-            category, ctx = self._page_meta(html, url)
-            for c in self._candidates(html, url):
-                yield replace(
-                    c, title=self._title_for(c, url, category, ctx), category=category
-                )
+        """Crawl the cam pages concurrently and yield their cams in page order.
+
+        A stream on several pages comes out once per page; `dedup.dedupe` merges the
+        copies, as it does for every source.
+        """
+        for cams in thread_imap(self._page_cams, self._page_urls()):
+            yield from cams

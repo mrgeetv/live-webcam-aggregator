@@ -114,7 +114,6 @@ class SharejuSource:
         html = self._fetch.get(_INDEX)
         if not html:
             return
-        seen: set[str] = set()
         for block in _LD_JSON.findall(html):
             try:
                 # strict=False: the blob carries raw control characters inside strings
@@ -142,9 +141,6 @@ class SharejuSource:
                     if key and key.startswith("yt:")
                     else embed
                 )
-                if target in seen:
-                    continue
-                seen.add(target)
                 yield Candidate(
                     title=_title(item),
                     angle_key=None,

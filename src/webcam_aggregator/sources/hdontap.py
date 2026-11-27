@@ -11,6 +11,7 @@ from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
     extract_candidates,
+    predisc_key,
 )
 
 if TYPE_CHECKING:
@@ -48,11 +49,11 @@ class HdOnTapSource(HtmlScraperSource[str]):
 
     A page with a `player-data` blob is a native-HLS cam: its candidate is the PAGE URL,
     resolved fresh at serve time by `HdontapResolver`, because the blob's HLS URL
-    carries a per-page-fetch t/e token (which also means an `hls:` predisc_key could
-    never merge, hence None). Pages without the blob fall back to the standard ladder
-    (roughly a quarter are plain YouTube embeds; an offline page carries neither and
-    yields nothing). The site has no category taxonomy -> None, so the title-keyword
-    fallback picks up the beaches/wildlife cams.
+    carries a per-page-fetch t/e token, so its merge key is the page's cam id
+    (`hdontap:<id>`), never the HLS URL. Pages without the blob fall back to the
+    standard ladder (roughly a quarter are plain YouTube embeds; an offline page
+    carries neither and yields nothing). The site has no category taxonomy -> None,
+    so the title-keyword fallback picks up the beaches/wildlife cams.
     """
 
     name: str = "hdontap"
@@ -89,7 +90,8 @@ class HdOnTapSource(HtmlScraperSource[str]):
                 source=self.name,
                 source_page_url=url,
                 target_url=url,
-                predisc_key=None,  # token URL is per-fetch; nothing stable to merge on
+                # the page's cam id: the token URL is per-fetch, nothing to merge on
+                predisc_key=predisc_key(url),
             )
         else:
             yield from extract_candidates(html, page_url=url, source=self.name)

@@ -25,6 +25,7 @@ from webcam_aggregator.catalogue import (
     top_counts,
 )
 from webcam_aggregator.extractors.baltic import BalticResolver
+from webcam_aggregator.extractors.beachcam import BeachcamResolver
 from webcam_aggregator.extractors.direct_hls import DirectHls
 from webcam_aggregator.extractors.earthcam import EarthcamResolver
 from webcam_aggregator.extractors.hdontap import HdontapResolver
@@ -206,6 +207,8 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
             ),
             "viewsurf",
         ),
+        # beachcam's bare playlists 403 without the token the resolver appends
+        (lambda u: _host_ends(u, "video-auth1.iol.pt"), "beachcam"),
         (lambda u: "twitch.tv/" in u, "ytdlp"),
         (_is_ytdlp, "ytdlp"),
         (lambda u: ".m3u8" in u or "worldcams.tv/player?url=" in u, "direct"),
@@ -609,6 +612,7 @@ def _build_resolvers(
             "hdontap": HdontapResolver(rget),
             "ozolio": OzolioResolver(rget),
             "viewsurf": ViewsurfResolver(rget),
+            "beachcam": BeachcamResolver(rget),
         }
 
     serve_extractors = _extractor_set(serve_fetcher)

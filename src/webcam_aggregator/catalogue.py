@@ -271,9 +271,10 @@ class VerdictTable:
         # verdict is a property of that exact URL. predisc_key is a lossy MERGE
         # identity (it strips auth tokens, and feratel:<id> collapses every URL shape
         # for a cam), so sharing a verdict across it would apply one URL's result to a
-        # materially different one (a tokened vs bare beachcam URL, or a feratel page
-        # that routes to a different extractor). Identical target_urls across sources
-        # are the same fetch, so this still collapses the genuinely duplicated probes.
+        # materially different one (a tokened vs bare copy of one m3u8, or a feratel
+        # page that routes to a different extractor). Identical target_urls across
+        # sources are the same fetch, so this still collapses the genuinely duplicated
+        # probes.
         with self._lock:
             hit = self._verdicts.get(c.target_url)
             if hit is not None and hit[1] > self._clock():

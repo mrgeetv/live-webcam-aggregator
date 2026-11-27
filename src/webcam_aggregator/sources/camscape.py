@@ -182,7 +182,7 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
         derived from the embed URL — `cityair1.html` serves `cityair.m3u8`, and
         `portland_harbour_webcam.html` serves `weymouthsailing.m3u8`. The URL is a
         static open-CDN path (no token), which is why the camsecure source stores
-        it the same way. Only a handful of embeds per build, so a serial hop is
+        it the same way. The hops cost a fetch or two per camsecure embed, far
         cheaper than the duplicate channels we would otherwise ship.
         """
         page = self._fetch.get(embed) or ""

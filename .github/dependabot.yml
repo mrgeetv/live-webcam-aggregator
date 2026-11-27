@@ -51,7 +51,7 @@ updates:
       timezone: "Etc/UTC"
     # chore, not fix: semantic-release treats fix as a patch release, so an
     # actions bump would mint a version and rebuild the image despite shipping
-    # nothing. chore is release:false in .releaserc. Runtime Python packages and
+    # nothing. chore is release:false in release.config.cjs. Runtime Python packages and
     # docker stay on fix — those do change what ends up in the image.
     commit-message:
       prefix: "chore(deps)"

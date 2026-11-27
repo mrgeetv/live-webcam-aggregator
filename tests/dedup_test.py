@@ -10,6 +10,8 @@ def _c(
     cat: str | None = None,
     title: str = "t",
     angle: str | None = None,
+    target: str = "u",
+    name_rank: int | None = None,
 ) -> Candidate:
     return Candidate(
         title=title,
@@ -17,8 +19,9 @@ def _c(
         category=cat,
         source=source,
         source_page_url=page,
-        target_url="u",
+        target_url=target,
         predisc_key=key,
+        name_rank=name_rank,
     )
 
 
@@ -34,14 +37,41 @@ def test_cross_source_yt_dup_merges_with_best_fields() -> None:
     assert out[0].title == "Official Title"  # youtube title wins for a yt cam
 
 
-def test_channel_cams_never_merged() -> None:
+def test_unkeyed_cams_merge_only_on_the_identical_target() -> None:
+    """With no merge key, the exact target is the identity: one URL, one stream."""
     out = dedupe(
         [
-            _c("worldcams", None, page="czech/usti"),
-            _c("worldcams", None, page="czech/decin"),
+            _c("airportwebcams", None, page="ajaccio", target="https://yt/@corse/live"),
+            _c("airportwebcams", None, page="bastia", target="https://yt/@bastia/live"),
+            _c(
+                "airportwebcams",
+                None,
+                page="calvi",
+                title="Calvi airport",
+                target="https://yt/@corse/live",
+            ),
         ]
     )
     assert len(out) == 2
+    [corse] = [c for c in out if c.target_url == "https://yt/@corse/live"]
+    assert corse.source_page_url == "ajaccio"  # tie on rank: the first copy is the base
+    assert corse.title == "Calvi airport"  # the longest title, as for keyed cams
+
+
+def test_a_repeat_within_one_source_keeps_its_category() -> None:
+    """A source listing one stream on two pages merges like two sources would.
+
+    The copy that has a category is the base, so its page fixes the stable id.
+    """
+    out = dedupe(
+        [
+            _c("webcamerapl", "hls:x", page="alias", cat=None),
+            _c("webcamerapl", "hls:x", page="listed", cat="Beaches"),
+        ]
+    )
+    assert len(out) == 1
+    assert out[0].category == "Beaches"
+    assert out[0].source_page_url == "listed"
 
 
 def test_multiangle_distinct_keys_kept() -> None:
@@ -70,3 +100,63 @@ def test_non_yt_title_uses_longest() -> None:
         ]
     )
     assert out[0].title == "a much longer title"
+
+
+def test_a_category_we_can_map_beats_one_we_cannot() -> None:
+    """An unrecognised slug only lands a cam in "Unmapped Category": take a real one."""
+    within = dedupe(
+        [
+            _c("viewsurf", "hls:x", page="surf", cat="surf-unknown-slug"),
+            _c("viewsurf", "hls:x", page="plage", cat="Beaches"),
+        ]
+    )
+    # within one source the mapped copy is also the base, so its page fixes the id
+    assert (within[0].category, within[0].source_page_url) == ("Beaches", "plage")
+    across = dedupe(
+        [
+            _c("cxtvlive", "hls:x", cat="surf-unknown-slug"),
+            _c("worldcams", "hls:x", cat="Cities"),
+        ]
+    )
+    assert across[0].category == "Cities"  # even over a higher-ranked source
+
+
+def test_name_rank_picks_the_title_and_the_base_copy() -> None:
+    """A source that ranks where it found each copy names the cam from the best one."""
+    out = dedupe(
+        [
+            _c(
+                "wt", "yt:A", page="blog", title="a much longer blog title", name_rank=2
+            ),
+            _c("wt", "yt:A", page="cam-page", title="Barn owls", name_rank=0),
+            _c("wt", "yt:A", page="index", title="Owl card", name_rank=1),
+        ]
+    )
+    assert (out[0].title, out[0].source_page_url) == ("Barn owls", "cam-page")
+
+
+def test_name_rank_counts_only_between_ranked_copies() -> None:
+    """A copy with no rank has no say on it: the usual field rules decide."""
+    out = dedupe(
+        [
+            _c("wt", "yt:A", page="cam-page", title="Barn owls", name_rank=0),
+            _c("other", "yt:A", page="elsewhere", title="a much longer title"),
+        ]
+    )
+    assert out[0].title == "a much longer title"
+
+
+def test_ranked_copies_settle_before_meeting_other_sources() -> None:
+    """Another source's copy arriving first can't hand the title to a worse-ranked copy.
+
+    The ranked copies reduce to their best one, which then meets the other source's
+    copy under the usual rules, whatever order they arrive in.
+    """
+    wt = [
+        _c("wt", "yt:A", page="blog", title="a much longer blog title", name_rank=2),
+        _c("wt", "yt:A", page="cam-page", title="Barn owls", name_rank=0),
+        _c("wt", "yt:A", page="index", title="Owl card", name_rank=1),
+    ]
+    camscape = _c("camscape", "yt:A", page="cs", cat="Animals", title="Owl cam")
+    for copies in ([camscape, *wt], [camscape, *reversed(wt)], [*wt, camscape]):
+        assert dedupe(copies)[0].title == "Barn owls"

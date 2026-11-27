@@ -39,10 +39,17 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
    one) → per-source
    empty-guard, run when the refresh ends (keeps the last good set if a source
    collapses ≥50%, needs 2 bad refreshes to accept) → **merge after every refresh**,
-   over every source's latest kept set: cross-source `dedupe()` (per-field merge; it
-   keeps the longest title, which is why the decode runs first), category exclusion →
-   YouTube cams get their category from the Data API; scraped titles get location
-   appended (`with_location`) → `CatalogueEntry`s with a stable id, swapped into the
+   over every source's latest kept set: `dedupe()`, the one place repeats merge,
+   whether a stream is on several pages of one source or found by several sources:
+   one stream is a shared `predisc_key`, or with none the identical `target_url`. No
+   source drops a repeated stream itself (fetching one page once under several index
+   URLs, or counting a page's repeated embed once when numbering its angles, is index
+   parsing, not a merge). The merge is per field: a category we can map beats one we
+   can't, a higher-ranked source's beats a lower one's; the longest title wins (which
+   is why the decode runs first) unless both copies carry a `name_rank`, when the
+   better-ranked copy gives the title and the base → category exclusion → YouTube cams
+   get their category from the Data API; scraped titles get location appended
+   (`with_location`) → `CatalogueEntry`s with a stable id, swapped into the
    `LiveCatalogue`. The guard, the source's log line and the merge all run on the
    scheduler thread, one finished refresh at a time, so they need no lock. On a cold
    start the playlist serves from the first finished refresh and grows as the others
@@ -123,20 +130,35 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   `discover() -> Iterable[Candidate]`. HTML scrapers subclass `HtmlScraperSource`
   (`sources/base.py`) and implement three hooks — `_page_urls()` (the cam detail-page
   URLs), `_page_meta(html, url)` (per-page `(category, ctx)`), and `_title_for(cand,
-  url, category, ctx)` — the base owns the concurrent fetch + the extraction ladder.
+  url, category, ctx)` — the base owns the concurrent crawl + the extraction ladder.
   Override `_candidates(html, url)` too when a site's embeds aren't in the standard
-  ladder (e.g. Skyline's Clappr token / a `videoId` JS var → a page or watch URL).
-  A source with its own `discover()` maps any fetch whose results are page bodies
-  through `fetch.thread_imap` (an ordered stream with a bounded buffer), not
-  `thread_map`, which holds every result until the last call finishes — a whole
-  sitemap's pages at once, stacked across the sources building together. Maps with
+  ladder (e.g. Skyline's Clappr token / a `videoId` JS var → a page or watch URL), or
+  when the stream takes a second hop: a player page (camsecure) or a stream API
+  (whatsupcams) is fetched inside `_candidates`. Each base worker runs one page's
+  whole step (fetch, `_page_meta`, `_candidates`, titles), so a second hop is as
+  concurrent as the first and the stream carries cams, not page bodies; the hooks
+  therefore run on worker threads and must not mutate the source (per-refresh state is
+  built in `_page_urls`). A stream on several pages is yielded once per page, and
+  `dedupe()` merges the copies by the same rule it applies across sources; the base
+  never drops them itself. Any other fetch map whose results are page bodies (a
+  source's own `discover()`, or an index crawl in `_page_urls`) goes through
+  `fetch.thread_imap` (an ordered stream with a bounded buffer), not `thread_map`,
+  which holds every result until the last call finishes — a whole sitemap's pages at
+  once, stacked across the sources building together. Maps with
   small results stay on `thread_map` (the docstrings say why).
   Add the instance to `active_sources` in `app._build_sources`, built with
   `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
   `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
-  dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
-  `None` = never merged). Text a source reads out of a page (a title, a name, a
-  category) goes through `base.decode_entities` as it is read, before any suffix
+  dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8, the
+  site's own cam id where its URLs vary — `feratel:`, `viewsurf:`, `hdontap:`, in
+  `base.predisc_key` — and `None` = merged only with an identical `target_url`). A
+  source that finds one cam in several places of differing authority sets
+  `Candidate.name_rank` on each copy rather than merging them itself. A source never
+  puts a token it fetched into `target_url`: a target outlives the refresh that found
+  it, so a baked-in token lapses while the catalogue still holds the cam. A CDN that
+  needs one gets an extractor that mints it at resolve time (beachcam's). Text a source
+  reads out of a page (a title, a name, a category) goes through `base.decode_entities`
+  as it is read, before any suffix
   strip or geo check compares it (`&#8211;` is not `–`, and `St. John&#39;s` misses
   its own geo and repeats it); each refresh runs every title through it again, for text
   a source passed straight through (Data API snippets, JSON feeds). It decodes only
@@ -477,9 +499,9 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   **A page is a cam iff it embeds that player iframe AND its player page has an HLS `<source>`
   — decided by the check, NOT the URL** (many cam pages have no "webcam" in the name; a URL
   filter silently dropped ~100). `_SKIP` only drops non-cams that *do* embed a demo player
-  (homepage, demo index, product/widget pages). Both hops fetch concurrently (~240 cams). The
-  player **page** serves a decoy without `Referer: camsecure.co.uk`, so `camsecure.co`/`.uk`
-  are in `_REFERER_HOSTS`. A few cams embed third-party HLS — `rtsp.me` is skipped (its stub
+  (homepage, demo index, product/widget pages). The player page is the second hop, fetched in
+  `_candidates`. The player **page** serves a decoy without `Referer: camsecure.co.uk`,
+  so `camsecure.co`/`.uk` are in `_REFERER_HOSTS`. A few cams embed third-party HLS — `rtsp.me` is skipped (its stub
   manifest passes liveness but segments 404). Titles come from the page `<title>` (boilerplate
   stripped, the "… from `<place>`" tail when it leads with boilerplate, the URL filename as a
   last resort). No category → "Other".
@@ -524,9 +546,10 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   (`data-src-cmplz`), and each embed's `title`. Every trust page's chrome links the
   trust's YouTube channel, so a *linked* channel `/live` is the cam only on an index
   card's page with nothing else — elsewhere it is chrome, and when that channel is live
-  it duplicates a cam already listed by video id. A cam reached from several places is
-  one candidate (keyed by `predisc_key`, else target), named by the page that embeds it
-  over a card over a page that links it; untitled YouTube embeds on a multi-cam page
+  it duplicates a cam already listed by video id. A cam reached from several places
+  comes out once per place, its `name_rank` saying how well each names it (the page
+  that embeds it, then a card, then a page that links it), and `dedupe()` takes the
+  best; untitled YouTube embeds on a multi-cam page
   take the video's title from YouTube's oEmbed (the Derby blog embeds Rutland's and
   Holkham's cams). `angle_key` is the cam's key, never its position, so a stable id
   stays with its cam when a page's embeds change. **streamdays** (Essex badgers,
@@ -551,12 +574,18 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   lake/wake-park/city outliers beat ~190 Portuguese titles the English keyword fallback
   would dump in "Other"): the page's `data-video-url` m3u8 (video-auth1.iol.pt)
   answers **403 bare** — the JW player appends `?wmsAuthSign=<token>` from
-  `services.iol.pt/matrix?userId=` (anonymous, ~24h validity), so the source fetches ONE
-  token per refresh and bakes it into `target_url` (predisc key stays on the BARE url for
-  stability across refreshes). Child/segment URLs carry a per-manifest-fetch Nimble
-  session → `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. A beachcam interval
-  (`SOURCE_INTERVAL_HOURS`) past ~24 outlives the token; an empty-guard-preserved stale
-  set carries a lapsing one. The ladder is bypassed (`_candidates` override) because every page footer links the site's
+  `services.iol.pt/matrix?userId=` (anonymous; a Wowza SecureToken that decodes to
+  `validminutes=1440`, and one token plays every cam). The target and predisc key are
+  the bare m3u8; `BeachcamResolver`, routed on that host, fetches the token at resolve
+  time, holds it in-process for an hour and appends it, so a cam plays however long the
+  catalogue has held it. The hour is the only bound on a token the CDN stops
+  accepting, since a 403 manifest never reaches the resolver. A failed re-fetch keeps
+  the token in hand until it is 23h old, retrying after a minute (a failure with no
+  usable token is held a minute too, so a refresh's concurrent resolves don't each wait
+  on a dead endpoint). `predisc_key` strips `wmsAuthSign`, so another source's tokened
+  copy merges with the bare cam. Child/segment URLs carry a
+  per-manifest-fetch Nimble session → `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. The
+  ladder is bypassed (`_candidates` override) because every page footer links the site's
   YouTube channel, which the channel rule would emit as a bogus extra candidate per page.
 - cxtvlive.com (~770 global cams): the index is `sitemap.php` **unioned with** the
   `data/cxl_mapa.php` JSON feed (the old `sitemap.xml` is gone — a `dns-error`/404 there
@@ -583,9 +612,10 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
 - resortcams.com (~100 US-Southeast cams): WP sitemap → pages with an **open** Wowza HLS
   (`stream.resortcams.com`) in static HTML; fully tokenless chain, plain `DirectHls`, no
   host-list entries. Pages with no static player yield nothing and drop.
-- hdontap.com (~200 cams): sitemap → `/stream/<id>/<slug>/` pages (id is the dedupe key —
-  one cam can carry two slugs). A `<script id="player-data">` JSON blob marks a native-HLS
-  cam: the candidate is the **page URL** (predisc None) and `HdontapResolver` re-reads the
+- hdontap.com (~200 cams): sitemap → `/stream/<id>/<slug>/` pages, each id fetched once
+  (one cam can carry two slugs), and `hdontap:<id>` is the merge key. A
+  `<script id="player-data">` JSON blob marks a native-HLS cam: the candidate is the
+  **page URL** and `HdontapResolver` re-reads the
   blob at serve time because the `streamSrc` HLS carries a per-page-fetch `t`/`e` token pair
   (~13h; BOTH params required — a URL clipped at the JSON-escaped `&` 403s, hence
   `json.loads`, never a regex over raw HTML). No blob → standard ladder (~25% are YouTube
@@ -629,8 +659,10 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   The cdn-0NN host varies per cam, so the API call is the only id→URL mapping. The
   tempting `/cdn-api/streams/` list endpoint returns a random sample — unusable.
 - viewsurf.com (~1000 French cams): the sitemap is the index AND the category seam
-  (`/univers/<slug>/vue/<id>-…`; a cam repeats once per univers → dedup on id,
-  preferring a mapped univers; unknown slugs log once and pass through raw). Target =
+  (`/univers/<slug>/vue/<id>-…`; a cam repeats once per univers → fetched once per id,
+  its first listing's univers its category; unknown slugs log once and pass through
+  raw). The merge key is `viewsurf:<uuid>`, so another site's joada embed of the same
+  cam, presentation params and all, merges with it. Target =
   the canonical joada embed (`platforms5.joada.net/embeded/embeded.html?uuid=…&type=…`,
   presentation params stripped); `ViewsurfResolver` GETs
   `platforms8/9.joada.net/api/videos/manifest/<uuid>` (the player rotates platforms6-12
@@ -780,8 +812,24 @@ For any new work (fixes, features, chores, etc.):
 2. Create new branch from main
 3. Make changes and commit
 
+A breaking change held for the next major branches from **`next`** instead, and its PR
+targets `next`. CI runs there too, and every merge publishes a prerelease
+(`vX.0.0-beta.N`, image tags `:vX.0.0-beta.N` and `:beta` only, never `:latest` or
+`:vN`; `release.config.cjs` and `release.yml`). Keep `next` current by merging `main`
+into it with a **merge commit**, never a squash or rebase: `next` must carry `main`'s
+own commits, or every later sync conflicts on them. The `!` goes on the first breaking PR into
+`next`, so its betas count towards the new major. The major ships when `next` is
+**squash-merged** to `main` (which requires linear history) under a `feat(<scope>)!:`
+title, with a body naming the breaking changes: that one commit is what semantic-release
+and the changelog read, and the betas' GitHub notes keep the per-PR detail. Then
+**delete `next`** and branch it afresh from `main` when the following major's work
+starts. Never merge `main` back into it: the squash leaves `next`'s own commits outside
+the release's history, so semantic-release counts their `!` again and publishes a bogus
+`v(N+1).0.0-beta.1`.
+
 A Claude Code `PreToolUse` hook in `.claude/settings.json` enforces this
-by blocking `git commit` when the current branch is `main` or `master`.
+by blocking `git commit` when the branch checked out where the commit runs (a worktree
+included) is `main`, `master` or `next`.
 The hook script lives at `.claude/hooks/block-commit-to-main.sh`.
 
 `.claude/settings.json` also carries two **non-blocking** editing reminders: editing
@@ -900,6 +948,25 @@ Pre-commit hooks enforced:
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
 - **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `scripts/`, `tests/`, `pyproject.toml` or `uv.lock` change. Also runs in CI.
 - **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what ruff/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name. Configured in `pyproject.toml`'s `[tool.vulture]`.
+
+GitHub's security features, all free on a public repo, run beside those hooks:
+
+- **CodeQL** (`codeql.yml`): Python and the workflow files themselves (the `actions`
+  language), on pushes and PRs to `main` and `next` and weekly. It is a workflow file
+  rather than GitHub's default setup so its actions are pinned and bumped like the rest.
+  Alerts land in the Security tab, where Copilot Autofix proposes fixes for the
+  languages it covers.
+- **Dependency review** (`dependency-review.yml`): fails the check on a PR that adds a
+  dependency with a known vulnerability (a red check, not a merge block: `main`
+  requires no status checks).
+- **Repo settings, not files:** Dependabot alerts and security updates (`dependabot.yml`
+  only drives the scheduled version bumps), secret scanning with push protection, and
+  private vulnerability reporting, which `SECURITY.md` points reporters to. They live
+  only in the repo's settings, so `gh api` is how to check or restore them.
+- **Image provenance:** `docker-build.yml` signs SLSA build provenance for every image it
+  pushes (`actions/attest`). That needs `id-token` and `attestations` write, which every
+  workflow calling `docker-build.yml` must grant its calling job: a reusable workflow can't hold more than its caller gives it, and the
+  call fails at startup if it asks for more.
 
 ## Python Version Synchronization
 

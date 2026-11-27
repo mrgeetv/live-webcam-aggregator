@@ -1,3 +1,4 @@
+from webcam_aggregator.dedup import dedupe
 from webcam_aggregator.sources.explore import ExploreOrgSource
 
 _STREAMS_JSON = """{"streams":[
@@ -19,13 +20,14 @@ class _FakeFetch:
 
 
 def test_explore_keeps_live_m3u8_and_dedups() -> None:
-    cands = list(ExploreOrgSource(_FakeFetch()).discover())
+    cands = dedupe(list(ExploreOrgSource(_FakeFetch()).discover()))
     by_title = {c.title: c for c in cands}
 
-    # live + .m3u8 only: on_demand and empty-playlistUrl drop; the dup feed collapses
-    assert set(by_title) == {"Brown Bear Cam", "Tropical Reef"}
+    # live + .m3u8 only: on_demand and empty-playlistUrl drop; the dup feed merges
+    # into one cam, named by the merge's longest-title rule
+    assert set(by_title) == {"Brown Bear (dup feed)", "Tropical Reef"}
     assert (
-        by_title["Brown Bear Cam"].target_url
+        by_title["Brown Bear (dup feed)"].target_url
         == "https://mediamtx-0.usc1.gcp.prod.explore.org:8888/1_muxed/index.m3u8"
     )
     for c in cands:

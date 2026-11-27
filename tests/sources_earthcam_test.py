@@ -1,3 +1,4 @@
+from webcam_aggregator.dedup import dedupe
 from webcam_aggregator.sources.earthcam import (
     EarthCamSource,
     _routable,  # pyright: ignore[reportPrivateUsage]
@@ -33,7 +34,7 @@ class _FakeFetch:
 
 
 def test_earthcam_keeps_routable_drops_unservable_and_dedups() -> None:
-    cands = list(EarthCamSource(_FakeFetch()).discover())
+    cands = dedupe(list(EarthCamSource(_FakeFetch()).discover()))
     by_target = {c.target_url: c for c in cands}
 
     # EarthCam-own geographic cam pages kept (/world/ + /usa/)
@@ -41,7 +42,7 @@ def test_earthcam_keeps_routable_drops_unservable_and_dedups() -> None:
     assert abbey in by_target
     assert any("/usa/newyork/timessquare/" in t for t in by_target)
 
-    # partner YouTube normalised to a watch URL + de-duped across BOTH feeds (one,
+    # partner YouTube normalised to a watch URL + merged across BOTH feeds (one,
     # not two)
     yt = [c for c in cands if c.predisc_key == "yt:aaaaaaaaaaa"]
     assert len(yt) == 1

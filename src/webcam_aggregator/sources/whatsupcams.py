@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 from urllib.parse import urlsplit
 
-from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.fetch import thread_imap
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
     decode_entities,
     predisc_key,
     with_location_parts,
@@ -41,24 +42,20 @@ def _on_site(url: str) -> bool:
     return host == "whatsupcams.com" or host.endswith(".whatsupcams.com")
 
 
-class WhatsupcamsSource:
+class WhatsupcamsSource(HtmlScraperSource[str]):
     """whatsupcams.com: a Croatian-run, Adriatic-heavy network of cams.
 
-    Yoast sitemap -> per-cam pages (cam id + title) -> per-id CDN API (direct open HLS).
-    A page without a wgt embed id isn't a cam page and drops; an id whose API fetch
-    fails drops. No per-cam category in the page -> "Other" (title fallback).
+    Yoast sitemap -> per-cam pages (cam id + title) -> per-id CDN API (direct open HLS),
+    the API call being the page's second hop. A page without a wgt embed id isn't a cam
+    page and drops; an id whose API fetch fails drops. No per-cam category in the page
+    -> "Other" (title fallback).
     """
 
     name: str = "whatsupcams"
     interval_hours: float = 6
-    _fetch: FetcherProtocol
 
-    def __init__(self, fetch: FetcherProtocol) -> None:
-        """Take the `fetch` used for every request."""
-        self._fetch = fetch
-
-    def discover(self) -> Iterator[Candidate]:
-        """Yield a candidate for each cam page whose CDN API call returns an HLS URL."""
+    @override
+    def _page_urls(self) -> list[str]:
         idx = self._fetch.get(_SITEMAP_INDEX) or ""
         maps = [
             u
@@ -75,43 +72,45 @@ class WhatsupcamsSource:
                 depth = len(urlsplit(loc).path.strip("/").split("/"))
                 if _on_site(loc) and depth >= _CAM_PAGE_DEPTH:
                     pages.add(loc)
-        page_list = sorted(pages)
-        # hop 1: cam pages -> (page, title, cam id)
-        found: list[tuple[str, str, str]] = []
-        for page, html in zip(
-            page_list, thread_imap(self._fetch.get, page_list), strict=True
-        ):
-            m = _WGT_ID.search(html or "")
-            if not m:
-                continue
-            tm = _OG_TITLE.search(html or "")
-            title = decode_entities(tm.group(1)).strip() if tm else ""
-            found.append((page, title, m.group(1)))
-        # hop 2: per-id CDN API -> the cam's HLS URL (concurrent)
-        seen: set[str] = set()
-        raws = thread_imap(self._fetch.get, [_API + f[2] for f in found])
-        for (page, title, _cam_id), raw in zip(found, raws, strict=True):
-            try:
-                data = json.loads(raw or "")
-            except ValueError:
-                continue
-            hls = data.get("hls") if isinstance(data, dict) else None
-            url = str(hls.get("url") or "") if isinstance(hls, dict) else ""
-            if ".m3u8" not in url or url in seen:
-                continue
-            seen.add(url)
-            # country/region/town from the page path, appended when the title
-            # doesn't already name them
-            parts = [
-                s.replace("-", " ").title()
-                for s in urlsplit(page).path.strip("/").split("/")[2:5]
-            ]
-            yield Candidate(
-                title=with_location_parts(title, parts),
-                angle_key=None,
-                category=None,  # no category in the page -> "Other" (title fallback)
-                source=self.name,
-                source_page_url=page,
-                target_url=url,
-                predisc_key=predisc_key(url),
-            )
+        return sorted(pages)
+
+    @override
+    def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
+        tm = _OG_TITLE.search(html)
+        # no category in the page -> "Other" (title fallback)
+        return None, decode_entities(tm.group(1)).strip() if tm else ""
+
+    @override
+    def _candidates(self, html: str, url: str) -> Iterator[Candidate]:
+        m = _WGT_ID.search(html)
+        if not m:
+            return
+        try:
+            data = json.loads(self._fetch.get(_API + m.group(1)) or "")
+        except ValueError:
+            return
+        hls = data.get("hls") if isinstance(data, dict) else None
+        stream = str(hls.get("url") or "") if isinstance(hls, dict) else ""
+        if ".m3u8" not in stream:
+            return
+        yield Candidate(
+            title="",
+            angle_key=None,
+            category=None,
+            source=self.name,
+            source_page_url=url,
+            target_url=stream,
+            predisc_key=predisc_key(stream),
+        )
+
+    @override
+    def _title_for(
+        self, cand: Candidate, url: str, category: str | None, ctx: str
+    ) -> str:
+        # country/region/town from the page path, appended when the title doesn't
+        # already name them
+        parts = [
+            s.replace("-", " ").title()
+            for s in urlsplit(url).path.strip("/").split("/")[2:5]
+        ]
+        return with_location_parts(ctx, parts)

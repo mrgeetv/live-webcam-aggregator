@@ -102,8 +102,8 @@ DHI republishes patched images under the same tag, which on its own never rebuil
 ours. `.github/workflows/base-images.yml` runs daily at 06:00 UTC (or by hand) and
 rebuilds the **latest release tag** (not main's HEAD) when its published image was
 built on other base digests or from another commit, re-pushing `latest`, `vX`,
-`vX.Y` and `vX.Y.Z`; older releases' tags are never rebuilt. It also keeps one
-issue open, *Newer DHI base image tags available*, while dhi.io carries a newer
+`vX.Y` and `vX.Y.Z`; older releases' tags and prereleases (`:beta`) are never
+rebuilt. It also keeps one issue open, *Newer DHI base image tags available*, while dhi.io carries a newer
 python/alpine tag than the Dockerfile uses. It opens labelled `dependencies`,
 `docker` and `ready-for-agent`; those bumps are manual (see *Python Version
 Synchronization* in `AGENTS.md`), and the issue closes itself once they land.
@@ -188,6 +188,7 @@ live-webcam-aggregator/
 │       │   ├── direct_hls.py   # Direct HLS link extractor
 │       │   ├── metatag.py      # HTML meta-tag extractor
 │       │   ├── baltic.py       # Baltic Live cam extractor
+│       │   ├── beachcam.py     # MEO Beachcam extractor (bare m3u8 + minted iol.pt token)
 │       │   ├── ipcamlive.py    # IPCamLive extractor
 │       │   ├── earthcam.py     # EarthCam extractor (page -> HLS)
 │       │   ├── hdontap.py      # HDOnTap extractor (cam page player-data -> tokened HLS)
@@ -200,7 +201,7 @@ live-webcam-aggregator/
 │           ├── worldcams.py    # worldcams.tv scraper source
 │           ├── cxtvlive.py     # CXTV Live scraper source
 │           ├── airportwebcams.py  # airportwebcams.net -> YouTube channel-live cams
-│           ├── beachcam.py     # MEO Beachcam scraper source (tokened direct HLS)
+│           ├── beachcam.py     # MEO Beachcam scraper source (bare iol.pt HLS)
 │           ├── camscape.py     # Camscape aggregator scraper source
 │           ├── camsecure.py    # CamSecure scraper source (sitemap -> direct HLS)
 │           ├── earthcam.py     # EarthCam mapsearch API source
@@ -483,7 +484,8 @@ docker compose logs -f
 
 1. Fork the repository on GitHub
 2. Clone your fork locally
-3. Create a feature branch from `main`
+3. Create a feature branch from `main` (from `next` for a breaking change held for
+   the next major, with the pull request targeting `next`)
 4. Make your changes
 5. Ensure pre-commit hooks pass
 6. Test locally with Docker Compose

@@ -23,6 +23,7 @@ _EXTRACTORS: dict[str, Extractor] = {
         "hdontap",
         "ozolio",
         "viewsurf",
+        "beachcam",
     )
 }
 
@@ -118,3 +119,11 @@ def test_wetmet_direct_m3u8_still_routes_to_direct() -> None:
         _route("https://wmso-us-ea1.wetmet.net/live/289-06-01/playlist.m3u8?x=1")
         == "direct"
     )
+
+
+def test_beachcam_playlist_routes_to_its_token_resolver() -> None:
+    """A bare iol.pt m3u8 answers 403; only the resolver's token makes it play."""
+    bare = "https://video-auth1.iol.pt/auth-beachcam/alvor/playlist.m3u8"
+    assert _route(bare) == "beachcam"
+    # a host merely named in the path or query is not the CDN
+    assert _route(f"https://cdn.example/x.m3u8?u={bare}") == "direct"

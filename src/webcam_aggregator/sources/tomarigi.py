@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
-from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.fetch import thread_imap
 from webcam_aggregator.models import Candidate
-from webcam_aggregator.sources.base import decode_entities, predisc_key
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    predisc_key,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -77,7 +81,7 @@ def _video_object(html: str) -> dict[str, object] | None:
     return None
 
 
-class TomarigiSource:
+class TomarigiSource(HtmlScraperSource[str]):
     """tomarigi.me (とまり木): a curated directory of YouTube live cams.
 
     Japanese-branded but mostly international. Sitemap -> region listing pages ->
@@ -88,14 +92,9 @@ class TomarigiSource:
 
     name: str = "tomarigi"
     interval_hours: float = 24
-    _fetch: FetcherProtocol
 
-    def __init__(self, fetch: FetcherProtocol) -> None:
-        """Take the `fetch` used for every request."""
-        self._fetch = fetch
-
-    def discover(self) -> Iterator[Candidate]:
-        """Yield a candidate for each cam page, read from its VideoObject JSON-LD."""
+    @override
+    def _page_urls(self) -> list[str]:
         xml = self._fetch.get(_SITEMAP) or ""
         listings: set[str] = set(_LISTING_LOC.findall(xml))
         read: set[str] = set()
@@ -105,22 +104,34 @@ class TomarigiSource:
             for html in thread_imap(self._fetch.get, [_SITE + p for p in todo]):
                 spots.update(_SPOT_HREF.findall(html or ""))
                 listings.update(_LISTING_HREF.findall(html or ""))
-        pages = sorted(_SITE + path for path in spots)
-        seen: set[str] = set()
-        for page, html in zip(pages, thread_imap(self._fetch.get, pages), strict=True):
-            item = _video_object(html or "")
-            if item is None:
-                continue
-            key = predisc_key(str(item.get("embedUrl") or ""))
-            if not key or not key.startswith("yt:") or key in seen:
-                continue
-            seen.add(key)
-            yield Candidate(
-                title=decode_entities(str(item.get("name") or "")).strip(),
-                angle_key=None,
-                category=_category(str(item.get("description") or "")),
-                source=self.name,
-                source_page_url=page,
-                target_url=f"https://www.youtube.com/watch?v={key[3:]}",
-                predisc_key=key,
-            )
+        return sorted(_SITE + path for path in spots)
+
+    @override
+    def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
+        item = _video_object(html) or {}
+        name = decode_entities(str(item.get("name") or "")).strip()
+        return _category(str(item.get("description") or "")), name
+
+    @override
+    def _candidates(self, html: str, url: str) -> Iterator[Candidate]:
+        item = _video_object(html)
+        if item is None:
+            return
+        key = predisc_key(str(item.get("embedUrl") or ""))
+        if not key or not key.startswith("yt:"):
+            return
+        yield Candidate(
+            title="",
+            angle_key=None,
+            category=None,
+            source=self.name,
+            source_page_url=url,
+            target_url=f"https://www.youtube.com/watch?v={key[3:]}",
+            predisc_key=key,
+        )
+
+    @override
+    def _title_for(
+        self, cand: Candidate, url: str, category: str | None, ctx: str
+    ) -> str:
+        return ctx
