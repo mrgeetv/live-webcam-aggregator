@@ -1,6 +1,7 @@
 #!/bin/bash
-# PreToolUse hook: blocks `git commit` when the current branch is main, master or
-# next (the shared branch for the coming major).
+# PreToolUse hook: blocks `git commit` when the branch checked out where the
+# commit runs is main, master or next (the shared branch for the coming major),
+# and any commit whose location it can't establish.
 #
 # Registered in .claude/settings.json against `matcher: "Bash"` (every Bash call).
 # The security decision is made HERE, not via a settings `if` predicate: that
@@ -8,7 +9,7 @@
 # command substitution), firing the hook on unrelated commands. Instead we read
 # the literal command from stdin and only act on a genuine `git commit`.
 #
-# Emits a deny decision as JSON on those branches; silent pass-through otherwise.
+# Emits a deny decision as JSON; silent pass-through otherwise.
 
 set -euo pipefail
 
@@ -29,70 +30,79 @@ if ! printf '%s' "$cmd" | grep -Eq '\bgit\b[^;&|]*[[:space:]]commit\b'; then
   exit 0
 fi
 
-# The branch that matters is the one checked out where the commit runs, which
-# in a worktree is not the project's. In a plain `cd <dir> && ... git commit`
-# that is the last cd's directory (else the hook input's .cwd), moved by the
-# commit's own `git -C <dir>`. Anything this can't read for certain (a subshell
-# or `$(...)`, `||`, a conditional or loop, pushd/popd, `cd -`, GIT_DIR and
-# friends, two -C, a target that isn't a directory) fails CLOSED: the commit is
-# denied if ANY directory involved (cwd, project, every cd and -C target) is on
-# a protected branch. A guess that picked the wrong one would fail open.
+deny() {
+  jq -n --arg r "$1" '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: ("Blocked: " + $r)
+    }
+  }'
+  exit 0
+}
 protected() { [[ $1 == main || $1 == master || $1 == next ]]; }
 branch_of() { git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null || true; }
 unquote() { local p=${1#[\"\']}; p=${p%[\"\']}; [[ $p == "~"* ]] && p=$HOME${p#\~}; printf '%s' "$p"; }
 resolve() { if [[ $2 == /* ]]; then printf '%s' "$2"; else printf '%s/%s' "$1" "$2"; fi; }
+deny_branch() {
+  deny "direct commit to protected branch \"$1\". Per project CLAUDE.md, create a feature branch first: git checkout -b fix/your-change"
+}
 
+# Something other than the directory picks the repository: the hook can't
+# follow it, so it refuses rather than guess.
+if printf '%s' "$cmd" | grep -Eq 'GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|--git-dir|--work-tree|core\.worktree'; then
+  deny "this commit names its repository through GIT_DIR, --git-dir, --work-tree or core.worktree, which this hook can't check. Commit from the worktree's own directory instead."
+fi
+
+# The branch that matters is the one checked out where the commit runs, which
+# in a worktree is not the project's. The hook is CERTAIN of that directory only
+# when everything before the commit is an allowlisted shape: `cd <literal dir>`,
+# or a command from SAFE, which can't move the shell (so no eval, exec, sh -c,
+# pushd, subshells, `$(...)`, `||`, braces or variable assignments), joined by
+# && or ;. Then the last cd's directory (else the hook input's .cwd), moved by
+# the commit's own `git -C`, decides. Otherwise it is UNSURE and checks every
+# directory involved (cwd, project, each cd and -C target): any on a protected
+# branch, or any target that doesn't resolve to a directory, denies.
+SAFE=" git uv echo printf true ls cat gh python3 jq grep sed head tail wc cut sort mkdir cp mv touch test "
 project=${CLAUDE_PROJECT_DIR:-.}
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
 [[ -n $cwd ]] || cwd=$project
-before=$(printf '%s' "$cmd" | sed -E 's/\bgit\b[^;&|]*[[:space:]]commit\b.*//')
+# -z: the whole command is one record, so a heredoc's lines after the commit
+# (its message) are cut away with it instead of read as commands before it.
+before=$(printf '%s' "$cmd" | sed -zE 's/\bgit\b[^;&|]*[[:space:]]commit\b.*//' | tr -d '\0')
 commit=$(printf '%s' "$cmd" | grep -oE '\bgit\b[^;&|]*[[:space:]]commit\b' | head -n1 || true)
-mapfile -t cds < <(printf '%s' "$before" | grep -oE '(^|[;&|(][[:space:]]*)cd[[:space:]]+[^[:space:];&|)]+' | sed -E 's/.*cd[[:space:]]+//' || true)
-mapfile -t cs < <(printf '%s' "$commit" | grep -oE '[[:space:]]-C[[:space:]]+[^[:space:]]+' | sed -E 's/.*-C[[:space:]]+//' || true)
+mapfile -t cds < <(printf '%s' "$before" | grep -oE '(^|[^[:alnum:]_-])cd[[:space:]]+[^[:space:];&|)]+' | sed -E 's/.*cd[[:space:]]+//' || true)
+mapfile -t cs < <(printf '%s' "$commit" | grep -oE '[[:space:]]-C[[:space:]]*[^[:space:]]+' | sed -E 's/.*-C[[:space:]]*//' || true)
 
 certain=true
-if printf '%s' "$before$commit" | grep -Eq '[()`]|\|\||\b(if|then|else|for|while|until|case|pushd|popd)\b|GIT_DIR|GIT_WORK_TREE|--git-dir|--work-tree|\bcd[[:space:]]+-' \
-  || ((${#cs[@]} > 1)); then
+if [[ $before$commit == *'||'* || $before$commit == *'$('* || $before$commit == *'`'* ]] || ((${#cs[@]} > 1)); then
   certain=false
 fi
+mapfile -t segs < <(printf '%s' "$before" | sed -E 's/&&|;|\|/\n/g')
+for seg in "${segs[@]}"; do
+  seg=$(printf '%s' "$seg" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+  [[ -z $seg ]] && continue
+  [[ $seg =~ ^cd[[:space:]]+(\"[^\"\$\`]*\"|\'[^\']*\'|[^[:space:]\"\'\$\`\(\)\{\}\;\&\|]+)$ ]] && continue
+  [[ $seg == *[\(\)\{\}\$\`]* || $SAFE != *" ${seg%%[[:space:]]*} "* ]] && certain=false
+done
 
 dir=$cwd
 seen=("$cwd" "$project")
-for t in "${cds[@]}"; do
+for t in "${cds[@]}" "${cs[@]}"; do
   dir=$(resolve "$dir" "$(unquote "$t")")
   seen+=("$dir")
 done
-for t in "${cs[@]}"; do
-  dir=$(resolve "$dir" "$(unquote "$t")")
-  seen+=("$dir")
-done
-[[ -d $dir ]] || certain=false
 
-if $certain; then
+if $certain && [[ -d $dir ]]; then
   branch=$(branch_of "$dir")
-else
-  branch=""
-  for d in "${seen[@]}"; do
-    b=$(branch_of "$d")
-    if protected "$b"; then branch=$b; break; fi
-  done
+  # Not a repo: git commit fails there anyway, so the project's branch decides.
+  [[ -n $branch ]] || branch=$(branch_of "$project")
+  if protected "$branch"; then deny_branch "$branch"; fi
+  exit 0
 fi
-# No branch (not a repo, or nothing protected found while unsure): the project's
-# branch decides, as an empty branch would fail open.
-[[ -n $branch ]] || branch=$(branch_of "$project")
 
-case "$branch" in
-  main|master|next)
-    jq -n --arg b "$branch" '{
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: (
-          "Blocked: direct commit to protected branch \"" + $b + "\". " +
-          "Per project CLAUDE.md, create a feature branch first: " +
-          "git checkout -b fix/your-change"
-        )
-      }
-    }'
-    ;;
-esac
+for d in "${seen[@]}"; do
+  [[ -d $d ]] || deny "can't tell where this commit runs ($d is not a directory here). Commit with a literal path: cd <dir> && git commit ..."
+  b=$(branch_of "$d")
+  if protected "$b"; then deny_branch "$b"; fi
+done
