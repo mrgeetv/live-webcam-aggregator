@@ -808,6 +808,16 @@ starts. Never merge `main` back into it: the squash leaves `next`'s own commits 
 the release's history, so semantic-release counts their `!` again and publishes a bogus
 `v(N+1).0.0-beta.1`.
 
+**Merging a PR.** Squash with the title given explicitly: `gh pr merge <N> --squash
+--subject "<PR title> (#<N>)"`, plus a `BREAKING CHANGE:` footer in `--body` for a
+major. The repo's squash title setting takes a PR's lone commit title over the PR
+title, so a `!` added only to the PR title is dropped and the release mis-versions. To
+sync `main` into `next`, first wait for `main`'s release run to tag its latest commit
+(an untagged fix or feat reaching `next` publishes a stray beta). Then open the PR from
+a branch holding `main` plus one empty commit: `main`'s head is a `[skip ci]` release
+commit, so a PR straight from `main` runs no checks and `next`'s required check never
+reports.
+
 A Claude Code `PreToolUse` hook in `.claude/settings.json` enforces this
 by blocking `git commit` when the branch checked out where the commit runs (a worktree
 included) is `main`, `master` or `next`.
