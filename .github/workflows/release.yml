@@ -50,7 +50,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # A prerelease (a version with a `-beta.N` suffix, from next) gets its own tag and
-      # the channel's floating one only. :latest and the :vN / :vN.N tags would move
+      # one named after its prerelease id (`:beta`) only. :latest and the :vN / :vN.N tags would move
       # everyone tracking them onto the coming major's breaking changes.
       - name: Image tags
         id: image-tags

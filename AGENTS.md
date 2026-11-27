@@ -765,12 +765,16 @@ A breaking change held for the next major branches from **`next`** instead, and 
 targets `next`. CI runs there too, and every merge publishes a prerelease
 (`vX.0.0-beta.N`, image tags `:vX.0.0-beta.N` and `:beta` only, never `:latest` or
 `:vN`; `release.config.cjs` and `release.yml`). Keep `next` current by merging `main`
-into it, never rebasing: the branch is shared. The `!` goes on the first breaking PR into
+into it with a **merge commit**, never a squash or rebase: `next` must carry `main`'s
+own commits, or every later sync conflicts on them. The `!` goes on the first breaking PR into
 `next`, so its betas count towards the new major. The major ships when `next` is
 **squash-merged** to `main` (which requires linear history) under a `feat(<scope>)!:`
 title, with a body naming the breaking changes: that one commit is what semantic-release
-and the changelog read, and the betas' GitHub notes keep the per-PR detail. Then merge
-`main` into `next` again so it carries the release.
+and the changelog read, and the betas' GitHub notes keep the per-PR detail. Then
+**delete `next`** and branch it afresh from `main` when the following major's work
+starts. Never merge `main` back into it: the squash leaves `next`'s own commits outside
+the release's history, so semantic-release counts their `!` again and publishes a bogus
+`v(N+1).0.0-beta.1`.
 
 A Claude Code `PreToolUse` hook in `.claude/settings.json` enforces this
 by blocking `git commit` when the branch checked out where the commit runs (a worktree
