@@ -1,0 +1,24 @@
+name: Dependency Review
+
+# Fails a pull request that adds a dependency with a known vulnerability, read
+# from the dependency graph's diff between the PR and its base.
+on:
+  pull_request:
+    branches: [main, next]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1

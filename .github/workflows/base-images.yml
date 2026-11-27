@@ -107,6 +107,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     uses: ./.github/workflows/docker-build.yml
     with:
       ref: ${{ needs.check.outputs.ref }}
