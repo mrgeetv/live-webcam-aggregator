@@ -87,7 +87,11 @@ _seen_unmapped: set[str] = set()
 
 
 def is_mapped(raw: str | None) -> bool:
-    """Return whether `raw` maps to a real category (not "Other" or "Unmapped")."""
+    """Return whether `raw` is a category the mapping knows, "Other" included.
+
+    `_MAP` or a native YouTube one; an unrecognised value (which `map_category` sends
+    to "Unmapped Category") or none at all is not.
+    """
     return bool(raw) and (raw in _MAP or raw in _NATIVE_YT)
 
 

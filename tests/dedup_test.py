@@ -144,3 +144,19 @@ def test_name_rank_counts_only_between_ranked_copies() -> None:
         ]
     )
     assert out[0].title == "a much longer title"
+
+
+def test_ranked_copies_settle_before_meeting_other_sources() -> None:
+    """Another source's copy arriving first can't hand the title to a worse-ranked copy.
+
+    The ranked copies reduce to their best one, which then meets the other source's
+    copy under the usual rules, whatever order they arrive in.
+    """
+    wt = [
+        _c("wt", "yt:A", page="blog", title="a much longer blog title", name_rank=2),
+        _c("wt", "yt:A", page="cam-page", title="Barn owls", name_rank=0),
+        _c("wt", "yt:A", page="index", title="Owl card", name_rank=1),
+    ]
+    camscape = _c("camscape", "yt:A", page="cs", cat="Animals", title="Owl cam")
+    for copies in ([camscape, *wt], [camscape, *reversed(wt)], [*wt, camscape]):
+        assert dedupe(copies)[0].title == "Barn owls"

@@ -34,8 +34,9 @@ The app is two phases, decoupled by a catalogue snapshot:
    cycles to accept) → `dedupe()`, the one place repeats merge, whether a stream is
    on several pages of one source or found by several sources: one stream is a
    shared `predisc_key`, or with none the identical `target_url`. No source drops a
-   repeated stream itself (fetching one page once, under several index URLs, is index
-   parsing, not a merge). The merge is per field: a category we can map beats one we
+   repeated stream itself (fetching one page once under several index URLs, or counting
+   a page's repeated embed once when numbering its angles, is index parsing, not a
+   merge). The merge is per field: a category we can map beats one we
    can't, a higher-ranked source's beats a lower one's; the longest title wins (which
    is why the decode runs first) unless both copies carry a `name_rank`, when the
    better-ranked copy gives the title and the base → YouTube cams get

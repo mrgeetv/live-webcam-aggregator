@@ -48,8 +48,9 @@ _FERATEL_QUERY = re.compile(r"webtv(?:fc)?\.feratel\.com/webtv/\?([^\"'\s]*)")
 _CAM_PARAM = re.compile(r"\bcam=(\d+)")
 # viewsurf's joada player names the cam by uuid, among presentation params that vary
 # by embedder; hdontap's cam pages carry the cam id before a slug that can vary.
-_JOADA_UUID = re.compile(r"[?&]uuid=([0-9a-f-]+)")
-_HDONTAP_PAGE = re.compile(r"^https?://(?:www\.)?hdontap\.com/stream/(\d+)/")
+# The whole id or none: a capture cut short would key two cams as one.
+_JOADA_UUID = re.compile(r"[?&]uuid=([0-9a-f-]++)(?=[&#]|$)")
+_HDONTAP_PAGE = re.compile(r"^https?://(?:www\.)?hdontap\.com/stream/(\d++)(?=[/?#]|$)")
 
 # Iframes that can never carry a stream: the tag-manager/consent frames pages embed
 # alongside their real player (GTM's <noscript> ns.html is the common one), and the

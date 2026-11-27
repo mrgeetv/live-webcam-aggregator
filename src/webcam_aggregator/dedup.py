@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import reduce
 from typing import TYPE_CHECKING
 
 from webcam_aggregator.categories import is_mapped
@@ -56,9 +57,22 @@ def dedupe(candidates: list[Candidate]) -> list[Candidate]:
     share a `predisc_key`, or, lacking one, carry the identical `target_url`: an
     extractor resolves from the target alone, so one URL is one stream.
     """
-    by_key: dict[str, Candidate] = {}
+    groups: dict[str, list[Candidate]] = {}
     for c in candidates:
-        key = c.predisc_key or f"target:{c.target_url}"
-        existing = by_key.get(key)
-        by_key[key] = _merge(existing, c) if existing else c
-    return list(by_key.values())
+        groups.setdefault(c.predisc_key or f"target:{c.target_url}", []).append(c)
+    return [_fold(copies) for copies in groups.values()]
+
+
+def _fold(copies: list[Candidate]) -> Candidate:
+    # The copies a source ranked settle among themselves first, at the first one's
+    # place: merged pairwise against another source's copy, each would fall back to
+    # the longest title, and the worst-ranked could win.
+    ranked = [i for i, c in enumerate(copies) if c.name_rank is not None]
+    if len(ranked) > 1:
+        best = reduce(_merge, (copies[i] for i in ranked))
+        copies = [
+            best if i == ranked[0] else c
+            for i, c in enumerate(copies)
+            if c.name_rank is None or i == ranked[0]
+        ]
+    return reduce(_merge, copies)
