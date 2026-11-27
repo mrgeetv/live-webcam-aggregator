@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from webcam_aggregator.models import Candidate
-from webcam_aggregator.sources.base import predisc_key, with_location_parts
+from webcam_aggregator.sources.base import on_host, predisc_key, with_location_parts
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -47,7 +47,7 @@ def _routable(url: str) -> tuple[str, str | None] | None:
     if host in ("www.earthcam.com", "earthcam.com"):
         seg = urlsplit(url).path.lstrip("/").split("/", 1)[0]
         return (url, None) if seg in ("usa", "world") else None
-    if host == "balticlivecam.com" or host.endswith(".balticlivecam.com"):
+    if on_host(url, "balticlivecam.com"):
         return url, None
     if ".m3u8" in url:  # direct HLS, incl ipcamlive stream.m3u8
         return url, predisc_key(url)

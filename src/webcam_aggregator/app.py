@@ -62,6 +62,7 @@ from webcam_aggregator.serving import (
     serve_stream,
 )
 from webcam_aggregator.sources.airportwebcams import AirportWebcamsSource
+from webcam_aggregator.sources.base import on_host
 from webcam_aggregator.sources.beachcam import BeachcamSource
 from webcam_aggregator.sources.camscape import CamscapeSource
 from webcam_aggregator.sources.camsecure import CamSecureSource
@@ -158,14 +159,9 @@ def _baltic_post(fetcher: FetcherPostProtocol) -> Callable[[str, dict[str, str]]
 
 def _is_ytdlp(u: str) -> bool:
     return any(
-        h in u
-        for h in ("youtube.com", "youtu.be", "twitch.tv", "dailymotion.com", "earthcam")
+        on_host(u, d)
+        for d in ("youtube.com", "youtu.be", "twitch.tv", "dailymotion.com")
     )
-
-
-def _host_ends(u: str, domain: str) -> bool:
-    host = (urllib.parse.urlsplit(u).hostname or "").lower()
-    return host == domain or host.endswith("." + domain)
 
 
 def _path(u: str) -> str:
@@ -174,44 +170,61 @@ def _path(u: str) -> str:
 
 def build_registry(extractors: dict[str, Extractor]) -> Registry:
     """Build the `Registry` that routes a target URL to one of `extractors` by name."""
-    # The provider extractors match on the target's HOST (+ a path marker), not a bare
-    # substring: a scraped iframe src of `https://evil/?x=hdontap.com/stream/` must NOT
-    # route an attacker page into a resolver that then fetches it and reflects its
-    # content (the resolved URL is emitted verbatim in a 302 Location header).
+    # Every rule matches the target's own host (+ a path marker), never a substring:
+    # `https://evil/?x=hdontap.com/stream/` must not reach a resolver that fetches it.
     rules: list[tuple[Callable[[str], bool], str]] = [
-        (lambda u: "balticlivecam.com" in u, "baltic"),
+        (lambda u: on_host(u, "balticlivecam.com"), "baltic"),
         (
-            lambda u: "ipcamlive.com/player/player.php" in u or is_alias_page(u),
+            lambda u: (
+                (on_host(u, "ipcamlive.com") and _path(u) == "/player/player.php")
+                or is_alias_page(u)
+            ),
             "ipcamlive",
         ),
         # any feratel host (webtv. and the webtvfc. variant embeds carry) on a /webtv
         # path — both serve the og:video meta the metatag extractor reads
-        (lambda u: _host_ends(u, "feratel.com") and "/webtv" in _path(u), "metatag"),
-        (lambda u: "api.wetmet.net/widgets/stream/frame.php" in u, "wetmet"),
-        (lambda u: "skylinewebcams.com/en/webcam/" in u, "skyline"),
-        (lambda u: "earthcam." in u, "earthcam"),
+        (lambda u: on_host(u, "feratel.com") and "/webtv" in _path(u), "metatag"),
+        (
+            lambda u: (
+                on_host(u, "api.wetmet.net") and _path(u) == "/widgets/stream/frame.php"
+            ),
+            "wetmet",
+        ),
+        (
+            lambda u: (
+                on_host(u, "skylinewebcams.com") and _path(u).startswith("/en/webcam/")
+            ),
+            "skyline",
+        ),
+        (
+            lambda u: on_host(u, "earthcam.com") or on_host(u, "myearthcam.com"),
+            "earthcam",
+        ),
         # the resolved live.hdontap.com/hls/… URL has no "/stream/" path, so it falls
         # through to DirectHls if it ever appears as a target
         (
-            lambda u: _host_ends(u, "hdontap.com") and _path(u).startswith("/stream/"),
+            lambda u: on_host(u, "hdontap.com") and _path(u).startswith("/stream/"),
             "hdontap",
         ),
         (
-            lambda u: _host_ends(u, "ozolio.com") and "/explore/" in _path(u),
+            lambda u: on_host(u, "ozolio.com") and "/explore/" in _path(u),
             "ozolio",
         ),
         (
             lambda u: (
-                _host_ends(u, "joada.net")
-                and _path(u).startswith("/embeded/embeded.html")
+                on_host(u, "joada.net") and _path(u).startswith("/embeded/embeded.html")
             ),
             "viewsurf",
         ),
         # beachcam's bare playlists 403 without the token the resolver appends
-        (lambda u: _host_ends(u, "video-auth1.iol.pt"), "beachcam"),
-        (lambda u: "twitch.tv/" in u, "ytdlp"),
+        (lambda u: on_host(u, "video-auth1.iol.pt"), "beachcam"),
         (_is_ytdlp, "ytdlp"),
-        (lambda u: ".m3u8" in u or "worldcams.tv/player?url=" in u, "direct"),
+        (
+            lambda u: (
+                ".m3u8" in u or (on_host(u, "worldcams.tv") and _path(u) == "/player")
+            ),
+            "direct",
+        ),
     ]
     for _predicate, name in rules:
         if name not in extractors:

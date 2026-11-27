@@ -106,3 +106,23 @@ def test_camsecure_discover_sitemap_titles_dedup_and_filtering() -> None:
         assert c.source == "camsecure"
         assert c.category is None  # no category -> "Other"
         assert (c.predisc_key or "").startswith("hls:")
+
+
+class _RecordingFetch:
+    sitemap: str
+    fetched: list[str]
+
+    def __init__(self, sitemap: str) -> None:
+        self.sitemap = sitemap
+        self.fetched = []
+
+    def get(self, url: str, _timeout: float = 20.0) -> str | None:
+        self.fetched.append(url)
+        return self.sitemap if url == _SITEMAP else None
+
+
+def test_a_sitemap_entry_off_camsecures_host_is_never_fetched() -> None:
+    off_host = "https://other.example/camsecure.co.uk/x_webcam.html"
+    fetch = _RecordingFetch(f"<urlset><url><loc>{off_host}</loc></url></urlset>")
+    list(CamSecureSource(fetch).discover())
+    assert off_host not in fetch.fetched

@@ -88,6 +88,12 @@ def _strip_attribution(html: str) -> str:
     return _ATTRIBUTION_BLOCK.sub("", html)
 
 
+def on_host(url: str, domain: str) -> bool:
+    """Return whether `url`'s host is `domain` or a subdomain of it."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host == domain or host.endswith("." + domain)
+
+
 def _not_a_stream(target: str) -> bool:
     """Return True for an embed target that can never be a stream.
 
@@ -99,11 +105,10 @@ def _not_a_stream(target: str) -> bool:
     counts that say which extractor to write next.
     """
     parts = urlsplit(target)
-    host = (parts.hostname or "").lower()
     return (
         parts.scheme not in ("http", "https")
         or bool(_IMAGE_EXT.search(parts.path))
-        or any(host == h or host.endswith("." + h) for h in _NEVER_A_STREAM_HOSTS)
+        or any(on_host(target, h) for h in _NEVER_A_STREAM_HOSTS)
     )
 
 
