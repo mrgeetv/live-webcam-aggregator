@@ -138,6 +138,10 @@ def test_beachcam_playlist_routes_to_its_token_resolver() -> None:
         ("www.skylinewebcams.com/en/webcam/italia/x/cam.html", "skyline"),
         ("www.earthcam.com/usa/x/?cam=y", "earthcam"),
         ("www.twitch.tv/somechannel", "ytdlp"),
+        ("www.youtube.com/watch?v=aaaaaaaaaaa", "ytdlp"),
+        ("youtu.be/aaaaaaaaaaa", "ytdlp"),
+        ("www.dailymotion.com/video/x1", "ytdlp"),
+        ("worldcams.tv/player?url=https://x/p", "direct"),
     ],
 )
 def test_a_provider_named_only_in_the_query_does_not_route(

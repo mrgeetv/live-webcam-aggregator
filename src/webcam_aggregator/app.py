@@ -43,6 +43,7 @@ from webcam_aggregator.fetch import (
     FetchStats,
     HostPacer,
 )
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.logging_redaction import RedactingFilter, scrub, trim_urls
 from webcam_aggregator.models import (
     DEAD_MANIFEST,
@@ -62,7 +63,6 @@ from webcam_aggregator.serving import (
     serve_stream,
 )
 from webcam_aggregator.sources.airportwebcams import AirportWebcamsSource
-from webcam_aggregator.sources.base import on_host
 from webcam_aggregator.sources.beachcam import BeachcamSource
 from webcam_aggregator.sources.camscape import CamscapeSource
 from webcam_aggregator.sources.camsecure import CamSecureSource
@@ -158,10 +158,7 @@ def _baltic_post(fetcher: FetcherPostProtocol) -> Callable[[str, dict[str, str]]
 
 
 def _is_ytdlp(u: str) -> bool:
-    return any(
-        on_host(u, d)
-        for d in ("youtube.com", "youtu.be", "twitch.tv", "dailymotion.com")
-    )
+    return on_host(u, "youtube.com", "youtu.be", "twitch.tv", "dailymotion.com")
 
 
 def _path(u: str) -> str:
@@ -170,7 +167,8 @@ def _path(u: str) -> str:
 
 def build_registry(extractors: dict[str, Extractor]) -> Registry:
     """Build the `Registry` that routes a target URL to one of `extractors` by name."""
-    # Every rule matches the target's own host (+ a path marker), never a substring:
+    # Every provider rule matches the target's own host (+ a path marker), never a
+    # substring:
     # `https://evil/?x=hdontap.com/stream/` must not reach a resolver that fetches it.
     rules: list[tuple[Callable[[str], bool], str]] = [
         (lambda u: on_host(u, "balticlivecam.com"), "baltic"),
@@ -197,7 +195,7 @@ def build_registry(extractors: dict[str, Extractor]) -> Registry:
             "skyline",
         ),
         (
-            lambda u: on_host(u, "earthcam.com") or on_host(u, "myearthcam.com"),
+            lambda u: on_host(u, "earthcam.com", "myearthcam.com"),
             "earthcam",
         ),
         # the resolved live.hdontap.com/hls/… URL has no "/stream/" path, so it falls

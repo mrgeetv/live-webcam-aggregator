@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote, urljoin, urlsplit
 
 from webcam_aggregator.fetch import FetcherProtocol, thread_imap, thread_map
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     decode_entities,
     extract_candidates,
-    on_host,
     predisc_key,
 )
 from webcam_aggregator.sources.camsecure import hls_from_player, is_camsecure
@@ -313,8 +313,7 @@ class WildlifeTrustsSource:
         key = predisc_key(embed) or ""
         if key.startswith("yt:"):
             return [f"https://www.youtube.com/watch?v={key[3:]}"]
-        host = urlsplit(embed).hostname or ""
-        if "youtube" in host:
+        if on_host(embed, "youtube.com", "youtube-nocookie.com"):
             return []  # a playlist: recordings, never a live cam
         if on_host(embed, "camstreamer.com"):
             return [self._camstreamer_target(embed)]

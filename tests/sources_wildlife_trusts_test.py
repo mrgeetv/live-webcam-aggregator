@@ -333,3 +333,20 @@ def test_a_card_naming_youtube_only_in_its_query_is_not_a_video() -> None:
 
     cams = list(WildlifeTrustsSource(_Fetch()).discover())
     assert href not in {c.target_url for c in cams}
+
+
+def test_a_lookalike_camsecure_embed_is_never_fetched() -> None:
+    """Only camsecure's own hosts are read for an HLS; a lookalike stays unresolved."""
+    page = "https://www.essexwt.org/cam"
+    lookalike = "https://camsecure.evil.example/httpswebcam/x.html"
+    fetched: list[str] = []
+
+    class _Fetch:
+        def get(self, url: str, _timeout: float = 20.0) -> str | None:
+            fetched.append(url)
+            if url == _INDEX:
+                return _card(page, "Cam")
+            return f'<iframe src="{lookalike}"></iframe>' if url == page else None
+
+    list(WildlifeTrustsSource(_Fetch()).discover())
+    assert lookalike not in fetched

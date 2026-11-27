@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING, override
 from urllib.parse import urlsplit
 
 from webcam_aggregator.fetch import thread_imap
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
-    on_host,
     predisc_key,
     with_location_parts,
 )

@@ -7,8 +7,9 @@ import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
-from webcam_aggregator.sources.base import on_host, predisc_key, with_location_parts
+from webcam_aggregator.sources.base import predisc_key, with_location_parts
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

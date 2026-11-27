@@ -6,11 +6,11 @@ import re
 from typing import TYPE_CHECKING, override
 from urllib.parse import unquote, urljoin, urlsplit
 
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
-    on_host,
     predisc_key,
 )
 
@@ -70,9 +70,7 @@ def player_iframe(html: str) -> str | None:
 
 def is_camsecure(url: str) -> bool:
     """Return whether `url` is on camsecure's site or one of its player hosts."""
-    return any(
-        on_host(url, d) for d in ("camsecure.co.uk", "camsecure.co", "camsecure.uk")
-    )
+    return on_host(url, "camsecure.co.uk", "camsecure.co", "camsecure.uk")
 
 
 def hls_from_player(html: str, player_url: str) -> str | None:
