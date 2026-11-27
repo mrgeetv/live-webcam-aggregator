@@ -1,4 +1,4 @@
-"""Cross-source deduplication: merge candidates sharing a predisc key."""
+"""Deduplication: merge every copy of one stream, within a source or across sources."""
 
 from __future__ import annotations
 
@@ -27,13 +27,17 @@ def _merge(a: Candidate, b: Candidate) -> Candidate:
 
 
 def dedupe(candidates: list[Candidate]) -> list[Candidate]:
-    """Merge candidates sharing a `predisc_key`; those without one never merge."""
+    """Merge the candidates that are one stream, keeping the best of each field.
+
+    This is the only place repeats are merged, for a stream listed on several pages
+    of one source as much as for one found by several sources, so every source gets
+    the same fields for the same situation. Two candidates are one stream when they
+    share a `predisc_key`, or, lacking one, carry the identical `target_url`: an
+    extractor resolves from the target alone, so one URL is one stream.
+    """
     by_key: dict[str, Candidate] = {}
-    no_key: list[Candidate] = []
     for c in candidates:
-        if c.predisc_key:
-            existing = by_key.get(c.predisc_key)
-            by_key[c.predisc_key] = _merge(existing, c) if existing else c
-        else:
-            no_key.append(c)  # channel/playlist/iframe — never collapsed
-    return list(by_key.values()) + no_key
+        key = c.predisc_key or f"target:{c.target_url}"
+        existing = by_key.get(key)
+        by_key[key] = _merge(existing, c) if existing else c
+    return list(by_key.values())

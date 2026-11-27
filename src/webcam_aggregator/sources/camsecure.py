@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 from urllib.parse import unquote, urljoin, urlsplit
 
-from webcam_aggregator.fetch import FetcherProtocol, thread_imap
 from webcam_aggregator.models import Candidate
-from webcam_aggregator.sources.base import decode_entities, predisc_key
+from webcam_aggregator.sources.base import (
+    HtmlScraperSource,
+    decode_entities,
+    predisc_key,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -90,24 +93,19 @@ def _title_of(html: str, url: str) -> str:
     return t or _name_from_url(url)
 
 
-class CamSecureSource:
+class CamSecureSource(HtmlScraperSource[str]):
     """CamSecure: sitemap -> per-cam pages -> the player iframe's direct HLS.
 
     A page is a cam iff it embeds a camsecure player iframe whose player page has an HLS
-    `<source>`; both hops are fetched concurrently.
+    `<source>`; the player page is the second hop, fetched in the page's own step.
     """
 
     name: str = "camsecure"
-    _fetch: FetcherProtocol
 
-    def __init__(self, fetch: FetcherProtocol) -> None:
-        """Take the `fetch` used for every request."""
-        self._fetch = fetch
-
-    def discover(self) -> Iterator[Candidate]:
-        """Yield a candidate for each page whose camsecure player has an HLS source."""
+    @override
+    def _page_urls(self) -> list[str]:
         sm = self._fetch.get(_SITEMAP) or ""
-        pages = sorted(
+        return sorted(
             {
                 loc.replace(" ", "%20")
                 for loc in _LOC.findall(sm)
@@ -116,28 +114,32 @@ class CamSecureSource:
                 and not any(s in loc.lower() for s in _SKIP)
             }
         )
-        # hop 1: cam pages -> (page, title, player url) for those embedding a player
-        found: list[tuple[str, str, str]] = []
-        for page, html in zip(pages, thread_imap(self._fetch.get, pages), strict=True):
-            player = player_iframe(html or "")
-            if player:
-                found.append((page, _title_of(html or "", page), player))
-        # hop 2: player pages -> direct HLS (concurrent)
-        seen: set[str] = set()
-        players = thread_imap(self._fetch.get, [f[2] for f in found])
-        for (page, title, player), pg in zip(found, players, strict=True):
-            m3u8 = hls_from_player(pg or "", player)
-            if not m3u8:
-                continue
-            if "rtsp.me" in m3u8 or m3u8 in seen:
-                continue  # rtsp.me stub passes liveness but 404s; or a dupe stream
-            seen.add(m3u8)
-            yield Candidate(
-                title=title,
-                angle_key=None,
-                category=None,  # no category in the feed -> "Other"
-                source=self.name,
-                source_page_url=page,
-                target_url=m3u8,
-                predisc_key=predisc_key(m3u8),
-            )
+
+    @override
+    def _page_meta(self, html: str, url: str) -> tuple[str | None, str]:
+        return None, _title_of(html, url)  # no category on the site -> "Other"
+
+    @override
+    def _candidates(self, html: str, url: str) -> Iterator[Candidate]:
+        player = player_iframe(html)
+        if not player:
+            return
+        m3u8 = hls_from_player(self._fetch.get(player) or "", player)
+        # rtsp.me's stub manifest passes liveness but its segments 404
+        if not m3u8 or "rtsp.me" in m3u8:
+            return
+        yield Candidate(
+            title="",
+            angle_key=None,
+            category=None,
+            source=self.name,
+            source_page_url=url,
+            target_url=m3u8,
+            predisc_key=predisc_key(m3u8),
+        )
+
+    @override
+    def _title_for(
+        self, cand: Candidate, url: str, category: str | None, ctx: str
+    ) -> str:
+        return ctx

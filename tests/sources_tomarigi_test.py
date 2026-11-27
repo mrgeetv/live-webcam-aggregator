@@ -4,6 +4,7 @@ import json
 from typing import TYPE_CHECKING, override
 
 from webcam_aggregator.categories import _MAP  # pyright: ignore[reportPrivateUsage]
+from webcam_aggregator.dedup import dedupe
 from webcam_aggregator.sources.tomarigi import (
     _CATEGORY_MAP,  # pyright: ignore[reportPrivateUsage]
     _UNCATEGORISED,  # pyright: ignore[reportPrivateUsage]
@@ -177,7 +178,7 @@ def test_unknown_slug_passes_through_raw_to_surface_as_unmapped() -> None:
     assert c.category == "宇宙"
 
 
-def test_duplicate_video_ids_yield_one_candidate() -> None:
+def test_duplicate_video_ids_merge_into_one_cam() -> None:
     src = _source(
         {
             _SITEMAP_URL: _sitemap(_ASIA),
@@ -186,7 +187,8 @@ def test_duplicate_video_ids_yield_one_candidate() -> None:
             _SPOT2: _page("same cam, second spot", "Cbp3Wg44fPo"),
         }
     )
-    assert len(list(src.discover())) == 1
+    (cam,) = dedupe(list(src.discover()))
+    assert cam.title == "same cam, second spot"  # the merge keeps the longest
 
 
 def test_pages_without_a_video_object_are_dropped() -> None:
