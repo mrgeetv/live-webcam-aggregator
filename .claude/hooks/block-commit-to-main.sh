@@ -1,15 +1,8 @@
 #!/bin/bash
-# PreToolUse hook: blocks `git commit` when the branch checked out where the
-# commit runs is main, master or next (the shared branch for the coming major),
-# and any commit whose location it can't establish.
-#
-# Registered in .claude/settings.json against `matcher: "Bash"` (every Bash call).
-# The security decision is made HERE, not via a settings `if` predicate: that
-# predicate's command parser fails open on complex compound commands (for-loops,
-# command substitution), firing the hook on unrelated commands. Instead we read
-# the literal command from stdin and only act on a genuine `git commit`.
-#
-# Emits a deny decision as JSON; silent pass-through otherwise.
+# PreToolUse hook: blocks `git commit` on main, master or next, judged where the
+# commit runs (worktrees included). Registered on every Bash call in
+# .claude/settings.json; it decides here because a settings `if` fails open on
+# compound commands.
 
 set -euo pipefail
 
@@ -44,8 +37,7 @@ protected() { [[ $1 == main || $1 == master || $1 == next ]]; }
 branch_of() { git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null || true; }
 unquote() { local p=${1#[\"\']}; p=${p%[\"\']}; [[ $p == "~"* ]] && p=$HOME${p#\~}; printf '%s' "$p"; }
 resolve() { if [[ $2 == /* ]]; then printf '%s' "$2"; else printf '%s/%s' "$1" "$2"; fi; }
-# Read a `git checkout|switch ...` into NEW (a branch it creates) and POS (its
-# other non-option words; a lone one names the branch it switches to).
+# Parse `git checkout|switch`: NEW = branch it creates, POS = other words.
 parse_switch() {
   local -a w
   read -ra w <<<"$1"
@@ -65,49 +57,28 @@ deny_branch() {
   deny "direct commit to protected branch \"$1\". Per project CLAUDE.md, create a feature branch first: git checkout -b fix/your-change"
 }
 
-# The branch that matters is the one checked out where the commit runs, which
-# in a worktree is not the project's. ONE parser both decides whether the hook
-# is CERTAIN of that directory and computes it, so the two can't disagree.
-# Everything before the commit must be segments joined by && or ;, each either
-# exactly `cd <literal dir>`, which moves the directory, or a command from SAFE,
-# which can't move the shell. No pipes or lone & (they run a cd in a subshell),
-# no `$(...)`, backticks, brackets, braces, redirects, comments or escapes, and
-# quotes only around a cd's dir. The commit's own git options may only be
-# unquoted `-C <dir>` (applied in order) and the harmless ones in GIT_OPTS.
-# Then the directory starts at the hook input's .cwd and the cds and -Cs move
-# it. Anything else leaves the hook UNSURE, and it checks every directory it
-# can find (cwd, project, every cd and -C target): any on a protected branch,
-# or any that doesn't resolve, denies. A `git checkout`/`switch` before the
-# commit counts too: onto a protected branch (or `-`) it denies. Onto a branch
-# that exists or that it creates, that branch decides only when the checkout
-# ran in the commit's directory and everything is joined by && (so a failed
-# checkout stops the commit); otherwise the directory's own branch does.
+# Where the commit runs: trusted only for plain `cd <dir>` / SAFE-command chains;
+# otherwise every directory involved is checked, and any protected one denies.
 SAFE=" git uv echo printf true ls cat gh python3 jq grep sed head tail wc cut sort mkdir cp mv touch test "
 GIT_OPTS=" --no-pager -P --paginate --no-optional-locks "
 LIT='("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'$`\\]+)'
 project=${CLAUDE_PROJECT_DIR:-.}
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
 [[ -n $cwd ]] || cwd=$project
-# `git` must start a command word (not `/git/` in a path), and the span to
-# `commit` stops at a newline as well as at ; & |. sed -z makes the whole
-# command one record, so a heredoc's lines after the commit (its message) are
-# cut away with it instead of read as commands before it.
-# (The trailing x keeps $(...) from stripping a newline that separates the
-# commit from what came before it.)
+# Everything before the commit (its heredoc message excluded); the x keeps a
+# trailing newline.
 before=$(printf '%s' "$cmd" | sed -zE 's/(^|[[:space:];&|(])git[[:space:]]([^;&|\n]*[[:space:]])?commit\b.*/\1/' | tr -d '\0'; printf x)
 before=${before%x}
 commit=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?commit\b' | head -n1 || true)
 commits=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?commit\b' | wc -l)
 
-# Something other than the directory picks the repository: the hook can't
-# follow it, so it refuses rather than guess. One commit: only what runs up to
-# it is read, not its message. More than one: the whole command is.
+# GIT_DIR and friends can't be followed: deny.
 scan=$before$commit
 ((commits <= 1)) || scan=$cmd
 if printf '%s' "$scan" | grep -Eq 'GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|--git-dir|--work-tree|core\.worktree'; then
   deny "this commit names its repository through GIT_DIR, --git-dir, --work-tree or core.worktree, which this hook can't check. Commit from the worktree's own directory instead."
 fi
-# A checkout onto a protected branch before the commit commits there.
+# Checkout onto a protected branch: deny.
 while read -r sw; do
   sw=${sw#"${sw%%git*}"}
   parse_switch "$sw"
@@ -122,7 +93,7 @@ while read -r sw; do
 done < <(printf '%s' "$before" | grep -oE '(^|[[:space:];&|(])git[[:space:]]+(checkout|switch)([[:space:]][^;&|]*)?' || true)
 
 certain=true
-# A second commit in the same command isn't parsed: be unsure.
+# More than one commit: unsure.
 ((commits <= 1)) || certain=false
 dir=$cwd
 override=""
@@ -131,8 +102,7 @@ joined=${before//&&/;}
 if [[ $joined == *[\|\&\(\)\{\}\$\`\<\>\#\\]* ]]; then
   certain=false
 else
-  # A quote may only sit in an exact `cd "<dir>"` segment: a quoted `;` would
-  # otherwise split one argument into segments that look like commands.
+  # Quotes only around a cd's dir.
   quotes=$(printf '%s' "$joined" | tr -cd "\"'" | wc -c)
   mapfile -t segs < <(printf '%s' "$joined" | tr ';\n' '\n\n')
   for seg in "${segs[@]}"; do
@@ -157,7 +127,7 @@ else
     fi
   done
   ((quotes == 0)) || certain=false
-  # A ; or newline lets the commit run after a failed checkout.
+  # A failed checkout stops the commit only under &&.
   [[ $before == *";"* || $before == *$'\n'* ]] && override=""
 fi
 # The commit's git options, token by token up to `commit`.
@@ -179,14 +149,14 @@ else
   done
 fi
 if ! $certain; then
-  # Over-collect: every cd and -C target anywhere in the command is checked.
+  # Unsure: check every cd and -C target too.
   mapfile -t more < <(printf '%s' "$cmd" | grep -oE '(cd|-C)[[:space:]]+[^[:space:];&|)]+' | sed -E 's/^(cd|-C)[[:space:]]+//' || true)
   for t in "${more[@]}"; do seen+=("$(resolve "$cwd" "$(unquote "$t")")"); done
 fi
 
 if $certain && [[ -d $dir ]]; then
   branch=${override:-$(branch_of "$dir")}
-  # Not a repo: git commit fails there anyway, so the project's branch decides.
+  # Not a repo: fall back to the project's branch.
   [[ -n $branch ]] || branch=$(branch_of "$project")
   if protected "$branch"; then deny_branch "$branch"; fi
   exit 0

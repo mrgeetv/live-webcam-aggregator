@@ -1,10 +1,7 @@
-// Releases come from main. `next` carries the coming major until it merges to main,
-// publishing each merge there as a prerelease (vX.0.0-beta.N).
+// main releases; next publishes betas of the coming major (vX.0.0-beta.N).
 const prerelease = process.env.GITHUB_REF_NAME === "next";
 
-// A beta commits no CHANGELOG.md: main is merged into next to keep it current, so the
-// file would conflict on every main release. Its notes go on its GitHub prerelease,
-// and the major's changelog entry is written when next merges to main.
+// Betas skip the CHANGELOG commit.
 const WRITES_TO_BRANCH = new Set(["@semantic-release/changelog", "@semantic-release/git"]);
 
 const plugins = [

@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - next # prereleases of the coming major (release.config.cjs)
+      - next # betas
   workflow_dispatch: # Manual trigger
 
 permissions:
@@ -49,9 +49,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # A prerelease (a version with a `-beta.N` suffix, from next) gets its own tag and
-      # one named after its prerelease id (`:beta`) only. :latest and the :vN / :vN.N tags would move
-      # everyone tracking them onto the coming major's breaking changes.
+      # Betas get only their own tag and :beta, never :latest or :vN.
       - name: Image tags
         id: image-tags
         if: steps.semantic.outputs.new_release_published == 'true'
