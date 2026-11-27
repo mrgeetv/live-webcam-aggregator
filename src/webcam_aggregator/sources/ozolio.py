@@ -33,6 +33,7 @@ class OzolioSource(HtmlScraperSource[str]):
     """
 
     name: str = "ozolio"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

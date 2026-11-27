@@ -46,6 +46,7 @@ class BeachcamSource(HtmlScraperSource[_Ctx]):
     """
 
     name: str = "beachcam"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

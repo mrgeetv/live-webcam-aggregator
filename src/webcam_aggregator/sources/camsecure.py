@@ -101,6 +101,7 @@ class CamSecureSource(HtmlScraperSource[str]):
     """
 
     name: str = "camsecure"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

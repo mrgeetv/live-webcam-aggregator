@@ -52,6 +52,7 @@ class WhatsupcamsSource(HtmlScraperSource[str]):
     """
 
     name: str = "whatsupcams"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

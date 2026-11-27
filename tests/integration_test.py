@@ -7,9 +7,9 @@ import time
 from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
-from webcam_aggregator.app import CatalogueStore, make_handler
+from webcam_aggregator.app import LiveCatalogue, make_handler
 from webcam_aggregator.cache import ResolveCache
-from webcam_aggregator.catalogue import build_catalogue
+from webcam_aggregator.catalogue import Scheduler
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
 
@@ -36,6 +36,7 @@ _CANDIDATE = Candidate(
 
 class FakeSource:
     name: str = "fake"
+    interval_hours: float = 6
 
     def discover(self) -> Iterator[Candidate]:
         yield _CANDIDATE
@@ -79,17 +80,19 @@ def _youtube_live(ids: Iterable[str]) -> dict[str, str]:
 
 def test_end_to_end_server() -> None:
     # Build catalogue
-    store = CatalogueStore()
+    store = LiveCatalogue()
     cache = _make_cache()
 
-    entries = build_catalogue(
+    scheduler = Scheduler(
         [FakeSource()],
+        {"fake": 6},
         drop_reason_for=lambda _c: None,
         youtube_live=_youtube_live,
-        history={},
+        on_merge=store.swap,
     )
-    store.swap(entries)
+    scheduler.run_once()
 
+    entries = store.snapshot()
     assert len(entries) == 1, f"expected 1 entry, got {len(entries)}"
     entry_id = next(iter(store.snapshot().keys()))
 
@@ -102,7 +105,7 @@ def test_end_to_end_server() -> None:
         source_status=lambda: {
             "sources": {"youtube-api": {"kept": 1, "discovered": 1, "crashed": False}},
             "unhealthy": [],
-            "last_build_seconds": None,
+            "ready": True,
         },
         segment_fetch=lambda _u, _r: ((200, "video/mp2t", None, b"seg"), "ok"),
     )

@@ -97,6 +97,7 @@ class SkylineSource(HtmlScraperSource[_Ctx]):
     """skylinewebcams.com cams, from `sitemap_en.xml`, categorised from its pages."""
 
     name: str = "skyline"
+    interval_hours: float = 24
     _cat: dict[str, str | None]  # cam URL -> category, filled by _page_urls
 
     def _category_slugs(self) -> list[str]:
@@ -110,7 +111,7 @@ class SkylineSource(HtmlScraperSource[_Ctx]):
 
     @override
     def _page_urls(self) -> list[str]:
-        # Rebuilt each build: the source lives for the process, and a cam Skyline
+        # Rebuilt each refresh: the source lives for the process, and a cam Skyline
         # re-files under another category must not keep its first one.
         self._cat = {}
         slugs = self._category_slugs()

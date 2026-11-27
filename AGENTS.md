@@ -13,35 +13,47 @@ skipping it is not.)
 
 ## Architecture & Extension Points (v2)
 
-The app is two phases, decoupled by a catalogue snapshot:
+The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
 
-1. **Catalogue build** (`catalogue.py`, every `CATALOGUE_INTERVAL_HOURS`): sources run
-   **concurrently** (discover + liveness), capped at `MAX_PARALLEL_SOURCES` so total
-   build concurrency stays ~cap × `SCRAPE_WORKERS` no matter how many sources exist, and
-   a source that crashes is isolated (reuses its last good set, the rest proceed). Each
+1. **Per-source refreshes** (`catalogue.Scheduler`): each source refreshes — discover,
+   then liveness — on its own interval: `Source.interval_hours`, declared on the source
+   class, unless `SOURCE_INTERVAL_HOURS` overrides it (`app._intervals_for`). One
+   scheduler thread (`run_forever`) starts due sources, most overdue first, on a pool
+   of `MAX_PARALLEL_SOURCES` workers, so total build concurrency stays ~cap ×
+   `SCRAPE_WORKERS` no matter how many sources exist. A source is due once its interval
+   has passed since its last refresh **finished**, and never runs two refreshes at
+   once, so one that overruns its interval doesn't restart the moment it ends. A source
+   that crashes is isolated (reuses its last good set, the rest proceed). Each
    `Source.discover()` yields `Candidate`s, every title passed once more through
    `base.decode_entities` as it leaves the source (see *Add a source*) →
    liveness filter (YouTube via the Data API batch; everything else via a
    **fetch-verified probe** — `make_liveness_check`
    actually fetches the HLS manifest (and a master playlist's first variant) and drops
    dead/404 and DASH cams; probed **once per distinct `target_url` across sources** —
-   two sources carrying the identical URL share one probe and the verdict counts in
-   each's stats. The key is `target_url`, NOT
+   `catalogue.VerdictTable` is one process-wide table whose verdicts answer for
+   `VERDICT_TTL_SECONDS` (~30 min, in memory only), so two sources carrying the
+   identical URL inside that window share one probe and the verdict counts in each's
+   stats. The key is `target_url`, NOT
    `predisc_key`: the merge identity is lossy (strips tokens, collapses feratel URL
    shapes), so sharing a verdict across it would apply one URL's result to a different
    one) → per-source
-   empty-guard (keeps the last good set if a source collapses ≥50%, needs 2 bad
-   cycles to accept) → `dedupe()`, the one place repeats merge, whether a stream is
-   on several pages of one source or found by several sources: one stream is a
-   shared `predisc_key`, or with none the identical `target_url`. No source drops a
-   repeated stream itself (fetching one page once under several index URLs, or counting
-   a page's repeated embed once when numbering its angles, is index parsing, not a
-   merge). The merge is per field: a category we can map beats one we
+   empty-guard, run when the refresh ends (keeps the last good set if a source
+   collapses ≥50%, needs 2 bad refreshes to accept) → **merge after every refresh**,
+   over every source's latest kept set: `dedupe()`, the one place repeats merge,
+   whether a stream is on several pages of one source or found by several sources:
+   one stream is a shared `predisc_key`, or with none the identical `target_url`. No
+   source drops a repeated stream itself (fetching one page once under several index
+   URLs, or counting a page's repeated embed once when numbering its angles, is index
+   parsing, not a merge). The merge is per field: a category we can map beats one we
    can't, a higher-ranked source's beats a lower one's; the longest title wins (which
    is why the decode runs first) unless both copies carry a `name_rank`, when the
-   better-ranked copy gives the title and the base → YouTube cams get
-   their category from the Data API; scraped titles get location appended
-   (`with_location`) → `CatalogueEntry`s with a stable id.
+   better-ranked copy gives the title and the base → category exclusion → YouTube cams
+   get their category from the Data API; scraped titles get location appended
+   (`with_location`) → `CatalogueEntry`s with a stable id, swapped into the
+   `LiveCatalogue`. The guard, the source's log line and the merge all run on the
+   scheduler thread, one finished refresh at a time, so they need no lock. On a cold
+   start the playlist serves from the first finished refresh and grows as the others
+   land.
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
    `/stream/<id>` URLs. On play, `ResolveCache` resolves the upstream via the
    `Registry`→`Extractor`, and the HLS manifest is proxied — child manifests rewritten
@@ -112,8 +124,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   (its `src` entity-decoded, as an HTML attribute), never simply its first iframe: CMS
   pages open `<body>` with GTM's `<noscript>` frame, and reading that one hides the
   player below it.
-- **Add a source** — implement the `Source` protocol (`sources/base.py`): a `name`
-  and `discover() -> Iterable[Candidate]`. HTML scrapers subclass `HtmlScraperSource`
+- **Add a source** — implement the `Source` protocol (`sources/base.py`): a `name`,
+  an `interval_hours` (6 unless the site's cost or churn says otherwise: hourly for a
+  single-call feed, daily for a crawl of thousands of pages), and
+  `discover() -> Iterable[Candidate]`. HTML scrapers subclass `HtmlScraperSource`
   (`sources/base.py`) and implement three hooks — `_page_urls()` (the cam detail-page
   URLs), `_page_meta(html, url)` (per-page `(category, ctx)`), and `_title_for(cand,
   url, category, ctx)` — the base owns the concurrent crawl + the extraction ladder.
@@ -123,7 +137,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   (whatsupcams) is fetched inside `_candidates`. Each base worker runs one page's
   whole step (fetch, `_page_meta`, `_candidates`, titles), so a second hop is as
   concurrent as the first and the stream carries cams, not page bodies; the hooks
-  therefore run on worker threads and must not mutate the source (per-build state is
+  therefore run on worker threads and must not mutate the source (per-refresh state is
   built in `_page_urls`). A stream on several pages is yielded once per page, and
   `dedupe()` merges the copies by the same rule it applies across sources; the base
   never drops them itself. Any other fetch map whose results are page bodies (a
@@ -140,13 +154,13 @@ The app is two phases, decoupled by a catalogue snapshot:
   `base.predisc_key` — and `None` = merged only with an identical `target_url`). A
   source that finds one cam in several places of differing authority sets
   `Candidate.name_rank` on each copy rather than merging them itself. A source never
-  puts a token it fetched into `target_url`: a target outlives the build that found
+  puts a token it fetched into `target_url`: a target outlives the refresh that found
   it, so a baked-in token lapses while the catalogue still holds the cam. A CDN that
   needs one gets an extractor that mints it at resolve time (beachcam's). Text a source
   reads out of a page (a title, a name, a category) goes through `base.decode_entities`
   as it is read, before any suffix
   strip or geo check compares it (`&#8211;` is not `–`, and `St. John&#39;s` misses
-  its own geo and repeats it); the build runs every title through it again, for text
+  its own geo and repeats it); each refresh runs every title through it again, for text
   a source passed straight through (Data API snippets, JSON feeds). It decodes only
   numeric references and exact `name;` entities, so a second pass leaves clean text
   like `Hot&notcold` alone (`html.unescape` stays for URLs read out of attributes).
@@ -229,7 +243,8 @@ The app is two phases, decoupled by a catalogue snapshot:
   bucket instead of thousands of URL-prefix ones. A third seam covers what
   the per-source stats can't see: the cross-source liveness fetchers (resolver +
   probe) carry their own named `FetchStats`, and the pacer counts per-host
-  penalties/backoff — both drained per rebuild into one INFO line each. The fourth
+  penalties/backoff — both drained on an hourly timer (`app._report_last_hour`) into
+  one `last hour:` INFO line each, since no single build spans every source any more. The fourth
   seam is the serve path: every request it refuses or relays as an upstream error
   logs a WARNING naming the entry id, the `loggable()` target or upstream, and why —
   the resolve error (`logging_redaction.describe_error`, kept on the negative cache
@@ -245,7 +260,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   client can trigger without a valid URL (bad signature, unknown id) share one key
   across all ids: made-up ids can't flood the log or grow the limiter. All of this
   detail is LOG-ONLY: `/health` stays a compact WHAT summary (per-source
-  `kept`/`discovered`/`crashed`/`status`, plus `last_build_seconds`).
+  `kept`/`discovered`/`crashed`/`status` plus `last_refresh_at`/`last_refresh_seconds`/
+  `interval_hours`, built by `app.source_status_for`; `overdue` = last refresh
+  finished over 2× its interval ago, unhealthy like `dead`).
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and
   ALWAYS validate: a bad/unparseable value must log a `WARNING` at startup and fall
   back to the default, never crash or silently misbehave (e.g. `_int_env` warns on a
@@ -270,7 +287,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   (`impersonate="chrome"`): a 200 means a fingerprint gate, and `impersonate=True` on that
   source's Fetcher fixes it. A 403 through every profile means an interactive
   (Turnstile) challenge, which no client-side change gets past.
-- **A build can rate-limit itself off its biggest source.** A source's whole worker
+- **A refresh can rate-limit itself off its own source.** A source's whole worker
   pool aims at ONE host, and the liveness phase then re-fetches the same site through
   the resolver at zero delay — the site sheds load (429/503) and every shed response
   is a cam silently missing from the playlist, with the resolver phase (not the polite
@@ -427,8 +444,9 @@ The app is two phases, decoupled by a catalogue snapshot:
   several cams), and re-fetching the page is what re-arms it. So serve-time must still
   re-resolve the page, its `Resolved.ttl_seconds` must stay under that lapse (60 → ~48s
   cached), and a discovery-time token is useless to the liveness phase minutes later —
-  which is why skyline's cam pages are deliberately fetched twice per build and that
-  cost is not a bug to optimise away.
+  which is why skyline's cam pages are deliberately fetched twice per refresh (once to
+  discover, once to resolve at liveness) and that cost is not a bug to optimise away.
+  Its daily interval is the lever on that load.
 - camscape aggregates from many providers. The cam list is the `webcam-sitemap*.xml`
   files named in `sitemap_index.xml`: they hold exactly the cams the category pages show
   as live, leaving out each page's "Gone quiet" box. The `/showing/` index is still
@@ -563,7 +581,7 @@ The app is two phases, decoupled by a catalogue snapshot:
   catalogue has held it. The hour is the only bound on a token the CDN stops
   accepting, since a 403 manifest never reaches the resolver. A failed re-fetch keeps
   the token in hand until it is 23h old, retrying after a minute (a failure with no
-  usable token is held a minute too, so a build's concurrent resolves don't each wait
+  usable token is held a minute too, so a refresh's concurrent resolves don't each wait
   on a dead endpoint). `predisc_key` strips `wmsAuthSign`, so another source's tokened
   copy merges with the bare cam. Child/segment URLs carry a
   per-manifest-fetch Nimble session → `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. The
@@ -705,9 +723,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   on its stream page (`webcams.windy.com/webcams/stream/<id>`: ~170-byte stub = not
   live, else a static wrapper with ONE entity-encoded iframe = the original provider's
   embed, ~85% servable by existing extractors and dedup-keyed by the shared predisc
-  rules). One build can't probe 65k pages politely, so `WindySource` keeps state
-  across rebuilds (sources live for the process lifetime) and spends a ~9k-request
-  budget per build: known-live re-probed first, the rest in rotating slices — coverage
+  rules). One refresh can't probe 65k pages politely, so `WindySource` keeps state
+  across refreshes (sources live for the process lifetime) and spends a ~9k-request
+  budget per refresh (which is why it stays on the 6h interval: a shorter one
+  multiplies its load): known-live re-probed first, the rest in rotating slices — coverage
   RAMPS over ~2 days and resets after a restart; growing counts are normal, not an
   outage. The API is internal and unversioned: if windy gates it, the per-source
   stats/status seam is what will say so.

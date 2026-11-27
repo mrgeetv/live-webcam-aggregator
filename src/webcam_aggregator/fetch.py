@@ -538,8 +538,8 @@ class FetchStats:
 
     One instance PER SOURCE (see app._build_sources). A single shared counter could not
     say WHICH source's fetches failed, and a process-global one would also be polluted
-    by serve-time player traffic between rebuilds — so the one line that is supposed to
-    explain an empty source would be reporting hosts the build never touched.
+    by serve-time player traffic between refreshes — so the one line that is supposed
+    to explain an empty source would be reporting hosts its refresh never touched.
     """
 
     _counts: dict[tuple[str, str], int]
@@ -797,7 +797,7 @@ class HostPacer:
         # Called with the lock held, only when a new host would exceed the cap.
         # Frees hosts that recovered AND had their counters drained — so between
         # drains it may free nothing; the cap (stop tracking new hosts) is the
-        # real bound, and drain() is what reclaims each cycle.
+        # real bound, and drain() is what reclaims each period.
         for host, s in list(self._hosts.items()):
             self._decay(s, now)
             if s.strikes == 0 and not s.penalties and not s.backoff_seconds:
@@ -808,7 +808,7 @@ class HostPacer:
 
         Returns them as {host: {"penalties": n, "backoff_seconds": s}} (backoff is
         thread-seconds slept behind the gate). Fully-recovered entries are dropped,
-        which is what bounds the map across cycles.
+        which is what bounds the map across drains.
         """
         out: dict[str, dict[str, float]] = {}
         with self._lock:

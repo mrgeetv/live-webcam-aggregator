@@ -14,11 +14,11 @@ _Avoid_: provider, scraper (a source need not scrape)
 The merged, deduplicated set of live cams the playlist is rendered from.
 _Avoid_: snapshot, index
 
-**Refresh** _(planned, #217)_:
+**Refresh**:
 One pass over a single source: discover its cams, then check which are live.
 _Avoid_: build, rebuild, cycle (those name an all-sources-at-once pass)
 
-**Interval** _(planned, #217)_:
+**Interval**:
 How long a source waits between refreshes.
 _Avoid_: period, schedule
 

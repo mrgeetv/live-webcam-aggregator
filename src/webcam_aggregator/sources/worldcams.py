@@ -30,6 +30,7 @@ class WorldcamsSource(HtmlScraperSource[_Ctx]):
     """worldcams.tv cams: list pages in sequence, detail pages concurrently."""
 
     name: str = "worldcams"
+    interval_hours: float = 6
 
     @override
     def _page_urls(self) -> list[str]:

@@ -1,9 +1,13 @@
-"""Catalogue builder: run sources concurrently, drop dead cams, dedupe, build."""
+"""Catalogue: refresh each source on its own interval, drop dead cams, merge."""
 
 from __future__ import annotations
 
 import logging
+import math
+import queue
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -34,25 +38,29 @@ _NO_EXCLUDE: frozenset[str] = (
 
 @dataclass
 class Hist:
-    """Per-source state carried between rebuilds.
+    """Per-source state carried between refreshes.
 
-    It holds the empty-guard's last good set and the raw outcome of the last cycle.
+    It holds the empty-guard's last good set and the raw outcome of the last refresh.
     """
 
     last_count: int | None = None
     shrink_streak: int = 0
     last_kept: list[Candidate] = field(default_factory=list)
-    # This-cycle RAW outcome, for /health monitoring — distinct from the guard's
-    # last-*good* state above. These record what actually happened on the most
-    # recent rebuild (crash / 0 kept) even while the empty-guard masks it by
+    # The last refresh's RAW outcome, for /health monitoring — distinct from the
+    # guard's last-*good* state above. These record what actually happened on the most
+    # recent refresh (crash / 0 kept) even while the empty-guard masks it by
     # reusing last_kept, so a failure surfaces to monitoring the moment it occurs.
     last_discovered: int = 0
     last_raw_kept: int = 0
     last_crashed: bool = False
     # Coarse health, for transition logging and /health: "ok" | "degraded" | "dead".
-    # No per-host/per-reason detail here: that goes to the per-cycle log lines,
+    # No per-host/per-reason detail here: that goes to the per-refresh log lines,
     # /health carries only these counts.
     status: str = "ok"
+    # When the last refresh finished (unix seconds) and how long it took; None until
+    # the source's first refresh.
+    last_refresh_at: float | None = None
+    last_refresh_seconds: float | None = None
 
 
 # Titles a source passed straight through can still be HTML-escaped (Data API
@@ -214,7 +222,7 @@ def _status_for(kept: int, *, crashed: bool, h: Hist) -> str:
 
 @dataclass
 class _SourceResult:
-    """One source's raw cycle outcome, before the empty-guard gets a say."""
+    """One source's raw refresh outcome, before the empty-guard gets a say."""
 
     name: str
     kept: list[Candidate]
@@ -225,24 +233,33 @@ class _SourceResult:
     resolve_details: dict[str, int] = field(default_factory=dict)
 
 
-class _SharedVerdicts:
-    """One liveness verdict per target URL, shared by every source in one build.
+# A verdict outlives the refresh that made it so that another source carrying the same
+# URL can reuse it, but not by much: tokens expire and cams go off air.
+VERDICT_TTL_SECONDS = 30 * 60
+
+
+class VerdictTable:
+    """One liveness verdict per target URL, shared by every source's refreshes.
 
     Meta-aggregators (windy, camscape) carry the same cams as the first-party sources,
-    so without this the same feratel page gets probed two or three times per build:
-    extra load aimed at exactly the hosts that already rate-limit us. A verdict must
-    never outlive its build (tokens expire), so each build makes a new one. The
+    so without this the same feratel page gets probed by each source that lists it:
+    extra load aimed at exactly the hosts that already rate-limit us. A verdict
+    answers for `VERDICT_TTL_SECONDS`, then the next source to ask probes again. The
     check-then-probe window means two sources racing on the same URL can still probe
     twice; that rare duplicate is cheaper than holding a lock across a network fetch.
     """
 
     _probe: Callable[[Candidate], str | None]
-    _verdicts: dict[str, str | None]
+    _clock: Callable[[], float]
+    _verdicts: dict[str, tuple[str | None, float]]
     _lock: threading.Lock
 
-    def __init__(self, probe: Callable[[Candidate], str | None]) -> None:
+    def __init__(
+        self, probe: Callable[[Candidate], str | None], clock: Callable[[], float]
+    ) -> None:
         """Wrap `probe`, the liveness check that returns a cam's drop reason."""
         self._probe = probe
+        self._clock = clock
         self._verdicts = {}
         self._lock = threading.Lock()
 
@@ -259,12 +276,19 @@ class _SharedVerdicts:
         # sources are the same fetch, so this still collapses the genuinely duplicated
         # probes.
         with self._lock:
-            if c.target_url in self._verdicts:
-                return self._verdicts[c.target_url]
+            hit = self._verdicts.get(c.target_url)
+            if hit is not None and hit[1] > self._clock():
+                return hit[0]
         reason = self._probe(c)
         with self._lock:
-            self._verdicts[c.target_url] = reason
+            self._verdicts[c.target_url] = (reason, self._clock() + VERDICT_TTL_SECONDS)
         return reason
+
+    def prune(self) -> None:
+        """Forget expired verdicts, so the table holds ~one TTL's worth of URLs."""
+        now = self._clock()
+        with self._lock:
+            self._verdicts = {u: v for u, v in self._verdicts.items() if v[1] > now}
 
 
 def _tally(
@@ -303,10 +327,10 @@ def _tally(
     )
 
 
-def _record_cycle(
+def _record_refresh(
     r: _SourceResult, h: Hist, fetches: dict[str, dict[str, int]]
 ) -> list[Candidate]:
-    """Log a source's cycle, update its history, and return the candidates to serve.
+    """Log a source's refresh, update its history, and return the candidates to serve.
 
     That is the new set, or the last good one while the empty-guard holds.
     """
@@ -332,9 +356,9 @@ def _record_cycle(
         )
     elif status == "dead" and not warned:
         # Still down, and nothing above said so. The empty-guard stops warning once
-        # it accepts the zero (after AGREE_TO_ACCEPT cycles), which would make a
+        # it accepts the zero (after AGREE_TO_ACCEPT refreshes), which would make a
         # long outage go quiet exactly when it matters. A source at zero warns every
-        # single cycle it stays there.
+        # single refresh it stays there.
         log.warning("%s: still dead (%d kept / %d discovered)", name, 0, discovered)
     h.status = status
     if crashed and h.last_kept:
@@ -366,73 +390,207 @@ def _record_cycle(
     return kept
 
 
-def build_catalogue(
-    sources: list[Source],
-    *,
-    drop_reason_for: Callable[[Candidate], str | None],
+def _refresh(
+    src: Source,
+    verdicts: VerdictTable,
     youtube_live: Callable[[Iterable[str]], Mapping[str, str]],
-    history: dict[str, Hist],
-    exclude_categories: frozenset[str] = _NO_EXCLUDE,
-    max_parallel_sources: int = 4,
-    fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None = None,
-) -> list[CatalogueEntry]:
-    """Build the catalogue entries from `sources`.
+    yt_lock: threading.Lock,
+) -> _SourceResult:
+    """Discover one source's cams and liveness-check them.
 
-    Each source discovers and liveness-checks concurrently; the per-source empty guard,
-    cross-source dedup and category mapping then run serially. `history` carries each
-    source's state between rebuilds.
+    Never raises: a source that blows up reports crashed=True instead, so it can't
+    take the scheduler, or any other source, down with it.
     """
-    # Sources discover + liveness-check CONCURRENTLY (each hits a different site), so
-    # the build's wall-clock is the slowest source, not the sum. Each source's work is
-    # self-contained and returns its kept candidates; the per-source empty guard and the
-    # cross-source dedup run serially in the main thread afterwards, so there are no
-    # shared-state races. The nested thread_map (inner liveness pool) is safe: the pools
-    # are separate objects, and the one thing that DOES span the nesting — the shared
-    # HostPacer — holds nothing while a thread waits (pacing is sleep-only), so it can
-    # slow a pool down but can never deadlock it. Keep it that way: nothing a fetch path
-    # acquires may be held while waiting on another thread.
-    yt_lock = threading.Lock()
-    verdicts = _SharedVerdicts(drop_reason_for)
-
-    def filter_source(src: Source) -> _SourceResult:
-        # Never raises — a source that blows up reports crashed=True instead of
-        # sinking the whole build (and every other source with it).
-        try:
-            cands = [_with_decoded_title(c) for c in src.discover()]
-        except Exception:
-            log.exception("source %s discover() failed", src.name)
-            return _SourceResult(src.name, [], 0, crashed=True)
-        try:
-            yt_ids = [
-                c.predisc_key[3:]
-                for c in cands
-                if c.predisc_key and c.predisc_key.startswith("yt:")
-            ]
-            # youtube_live hits the Data API through a shared client — serialise it.
-            with yt_lock:
-                live: Mapping[str, str] = youtube_live(yt_ids) if yt_ids else {}
-            reasons = thread_map(lambda c: verdicts.drop_reason(c, live), cands)
-            return _tally(src.name, cands, reasons, live)
-        except Exception:
-            log.exception("source %s liveness filter failed", src.name)
-            return _SourceResult(src.name, [], len(cands), crashed=True)
-
-    # Cap concurrent sources so total build concurrency stays ~max_parallel_sources ×
-    # SCRAPE_WORKERS regardless of source count (extra sources batch through the pool).
-    results = thread_map(filter_source, list(sources), workers=max_parallel_sources)
-
-    # Per-source empty guard + cross-source dedup, serial; results keep source order,
-    # so dedup sees the sources in the order they are listed. The fetch stats are
-    # drained per cycle for the log line only — the WHY lives in the logs, not on Hist.
-    kept_all: list[Candidate] = []
-    for r in results:
-        fetches = fetch_stats(r.name) if fetch_stats else {}
-        kept_all.extend(_record_cycle(r, history.setdefault(r.name, Hist()), fetches))
-
-    entries = [_to_entry(c) for c in dedupe(kept_all)]
-    if exclude_categories:
-        # exclude_categories is casefolded (config._csv_set) for case-insensitive match
-        entries = [
-            e for e in entries if e.category.casefold() not in exclude_categories
+    try:
+        cands = [_with_decoded_title(c) for c in src.discover()]
+    except Exception:
+        log.exception("source %s discover() failed", src.name)
+        return _SourceResult(src.name, [], 0, crashed=True)
+    try:
+        yt_ids = [
+            c.predisc_key[3:]
+            for c in cands
+            if c.predisc_key and c.predisc_key.startswith("yt:")
         ]
-    return entries
+        # youtube_live hits the Data API through a shared client — serialise it.
+        with yt_lock:
+            live: Mapping[str, str] = youtube_live(yt_ids) if yt_ids else {}
+        reasons = thread_map(lambda c: verdicts.drop_reason(c, live), cands)
+        return _tally(src.name, cands, reasons, live)
+    except Exception:
+        log.exception("source %s liveness filter failed", src.name)
+        return _SourceResult(src.name, [], len(cands), crashed=True)
+
+
+@dataclass
+class _Finished:
+    result: _SourceResult
+    started: float
+    finished: float
+
+
+# The scheduler re-checks what is due at least this often, even with nothing due
+# sooner, so a wall-clock step (NTP, a suspended host) can't strand a due source.
+_MAX_WAIT_SECONDS = 60.0
+
+
+class Scheduler:
+    """Refresh each source on its own interval and re-merge the catalogue after each.
+
+    A refresh is one source's discover + liveness, run on a pool of
+    `max_parallel_sources` workers, so total concurrency stays ~that × SCRAPE_WORKERS
+    however many sources exist. A source is due once its interval has passed since its
+    last refresh FINISHED, and never runs two refreshes at once, so one that overruns
+    its interval doesn't start again the moment it ends. Due sources go most overdue
+    first; one that has never refreshed is the most overdue of all.
+
+    Everything after a refresh (the empty-guard, the source's log line, the merge)
+    runs on the thread that calls `finish_next`, one refresh at a time, so `history`
+    and the merge need no lock. The liveness pool nested inside each refresh can't
+    deadlock the refresh pool: the one thing spanning both, the shared HostPacer,
+    holds nothing while a thread waits (pacing is sleep-only).
+    Keep it that way: nothing a fetch path acquires may be held while waiting on
+    another thread.
+    """
+
+    history: dict[str, Hist]
+    intervals: dict[str, float]
+    _sources: list[Source]
+    _youtube_live: Callable[[Iterable[str]], Mapping[str, str]]
+    _on_merge: Callable[[list[CatalogueEntry]], None]
+    _exclude: frozenset[str]
+    _max: int
+    _fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None
+    _clock: Callable[[], float]
+    _verdicts: VerdictTable
+    _yt_lock: threading.Lock
+    _running: set[str]
+    _done: queue.Queue[_Finished]
+    _pool: ThreadPoolExecutor
+
+    def __init__(
+        self,
+        sources: list[Source],
+        intervals: Mapping[str, float],
+        *,
+        drop_reason_for: Callable[[Candidate], str | None],
+        youtube_live: Callable[[Iterable[str]], Mapping[str, str]],
+        on_merge: Callable[[list[CatalogueEntry]], None],
+        exclude_categories: frozenset[str] = _NO_EXCLUDE,
+        max_parallel_sources: int = 4,
+        fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        """Schedule `sources`, each every `intervals[name]` hours.
+
+        `on_merge` receives the catalogue after every refresh. `clock` is wall-clock
+        unix seconds: it stamps `Hist.last_refresh_at`, which /health reports as UTC.
+        """
+        self._sources = list(sources)
+        self.intervals = {s.name: float(intervals[s.name]) for s in self._sources}
+        self.history = {s.name: Hist() for s in self._sources}
+        self._youtube_live = youtube_live
+        self._on_merge = on_merge
+        self._exclude = exclude_categories
+        self._max = max_parallel_sources
+        self._fetch_stats = fetch_stats
+        self._clock = clock
+        self._verdicts = VerdictTable(drop_reason_for, clock)
+        self._yt_lock = threading.Lock()
+        self._running = set()
+        self._done = queue.Queue()
+        self._pool = ThreadPoolExecutor(
+            max_workers=max_parallel_sources, thread_name_prefix="refresh"
+        )
+
+    def _due_at(self, name: str) -> float:
+        last = self.history[name].last_refresh_at
+        return -math.inf if last is None else last + self.intervals[name] * 3600
+
+    def tick(self) -> list[str]:
+        """Start the due sources, most overdue first, in free slots; return them."""
+        now = self._clock()
+        due = sorted(  # stable: equally overdue sources start in their listed order
+            (
+                s
+                for s in self._sources
+                if s.name not in self._running and self._due_at(s.name) <= now
+            ),
+            key=lambda s: self._due_at(s.name),
+        )
+        started = due[: self._max - len(self._running)]
+        for src in started:
+            self._running.add(src.name)
+            self._pool.submit(self._run, src)
+        return [s.name for s in started]
+
+    def _run(self, src: Source) -> None:
+        t0 = self._clock()
+        result = _refresh(src, self._verdicts, self._youtube_live, self._yt_lock)
+        self._done.put(_Finished(result, started=t0, finished=self._clock()))
+
+    def finish_next(self, timeout: float | None = None) -> bool:
+        """Wait up to `timeout` for a refresh to finish, then guard it and re-merge.
+
+        Return False if none finished in time.
+        """
+        try:
+            f = self._done.get(timeout=timeout)
+        except queue.Empty:
+            return False
+        r = f.result
+        h = self.history[r.name]
+        try:
+            # A source's fetch stats are its own Fetcher's, and only its refresh
+            # fetches through that, so draining here covers exactly this refresh.
+            fetches = self._fetch_stats(r.name) if self._fetch_stats else {}
+            _record_refresh(r, h, fetches)
+        finally:
+            # Whatever went wrong above, the refresh ran: the source must be due again
+            # an interval from now, never left marked running (it would never refresh
+            # again, and /health would show it "unknown" for good).
+            h.last_refresh_at = f.finished
+            h.last_refresh_seconds = round(f.finished - f.started, 1)
+            self._running.discard(r.name)
+        self._verdicts.prune()
+        self._merge()
+        return True
+
+    def _merge(self) -> None:
+        # Each source's kept set is its last_kept: the guard leaves the last good
+        # set there while it holds a collapse back. Sources merge in their listed
+        # order, so dedup's ties break the same way on every merge.
+        kept_all = [c for s in self._sources for c in self.history[s.name].last_kept]
+        entries = [_to_entry(c) for c in dedupe(kept_all)]
+        if self._exclude:
+            # exclude_categories is casefolded (config._csv_set) for case-insensitive
+            # match
+            entries = [e for e in entries if e.category.casefold() not in self._exclude]
+        self._on_merge(entries)
+        log.info("catalogue merged: %d entries", len(entries))
+
+    def run_once(self) -> None:
+        """Start whatever is due, then handle one finished refresh or wait for one."""
+        self.tick()
+        wait = _MAX_WAIT_SECONDS
+        if len(self._running) < self._max:
+            # A slot is free, so tick() started everything due: sleep until the next
+            # idle source falls due, unless a refresh finishes first.
+            idle = [
+                self._due_at(s.name)
+                for s in self._sources
+                if s.name not in self._running
+            ]
+            if idle:
+                wait = min(wait, max(0.0, min(idle) - self._clock()))
+        self.finish_next(timeout=wait)
+
+    def run_forever(self) -> None:
+        """Run the schedule until the process exits."""
+        while True:
+            try:
+                self.run_once()
+            # The loop is the only thing that refreshes anything: a bug in one step
+            # must be logged, never allowed to end the schedule.
+            except Exception:
+                log.exception("scheduler step failed; carrying on")

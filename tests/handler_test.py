@@ -11,15 +11,15 @@ import urllib.parse
 from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 
-from webcam_aggregator.app import CatalogueStore, make_handler
+from webcam_aggregator.app import LiveCatalogue, make_handler, source_status_for
 from webcam_aggregator.cache import ResolveCache
-from webcam_aggregator.catalogue import build_catalogue
+from webcam_aggregator.catalogue import Scheduler
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.signing import sign
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     import pytest
 
@@ -48,21 +48,36 @@ _RESOLVED_URL = "https://cdn.example/cam/playlist.m3u8"
 
 class _FakeSource:
     name: str = "fake"
+    interval_hours: float = 6
 
     def discover(self) -> Iterator[Candidate]:
         yield _CANDIDATE
 
 
-def _make_store(*, ready: bool = True) -> tuple[CatalogueStore, str]:
-    store = CatalogueStore()
+class _Clock:
+    now: float = 1_000_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _scheduler(catalogue: LiveCatalogue, clock: _Clock) -> Scheduler:
+    return Scheduler(
+        [_FakeSource()],
+        {"fake": 6},
+        drop_reason_for=lambda _c: None,
+        youtube_live=lambda ids: {i: i for i in ids},
+        on_merge=catalogue.swap,
+        clock=clock,
+    )
+
+
+def _make_store(*, ready: bool = True) -> tuple[LiveCatalogue, str]:
+    store = LiveCatalogue()
     if ready:
-        entries = build_catalogue(
-            [_FakeSource()],
-            drop_reason_for=lambda _c: None,
-            youtube_live=lambda ids: {i: i for i in ids},
-            history={},
-        )
-        store.swap(entries)
+        s = _scheduler(store, _Clock())
+        s.tick()
+        assert s.finish_next(timeout=5)
         entry_id = next(iter(store.snapshot().keys()))
     else:
         entry_id = "irrelevant"
@@ -95,14 +110,15 @@ def _healthy_status(name: str = "fake", kept: int = 1) -> dict[str, Any]:
     return {
         "sources": {name: {"kept": kept, "discovered": kept, "crashed": False}},
         "unhealthy": [],
-        "last_build_seconds": None,
+        "ready": True,
     }
 
 
 def _start_server(
-    store: CatalogueStore,
+    store: LiveCatalogue,
     cache: ResolveCache | None = None,
     source_status: dict[str, Any] | None = None,
+    status_fn: Callable[[], dict[str, Any]] | None = None,
 ) -> tuple[ThreadingHTTPServer, int]:
     if cache is None:
         cache = _make_cache()
@@ -112,7 +128,7 @@ def _start_server(
         cache,
         _BASE_URL,
         manifest_fetch=_manifest_fetch,
-        source_status=lambda: ss,
+        source_status=status_fn or (lambda: ss),
         segment_fetch=_segment_fetch,
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
@@ -141,7 +157,7 @@ def test_unknown_path_returns_404() -> None:
 
 
 def test_playlist_not_ready_returns_503() -> None:
-    """CatalogueStore with ready=False → 503 on /playlist.m3u8."""
+    """A catalogue with no merge yet → 503 on /playlist.m3u8."""
     store, _ = _make_store(ready=False)
     server, port = _start_server(store)
     try:
@@ -255,7 +271,6 @@ def test_health_returns_correct_json() -> None:
         assert isinstance(health["streams"], int)
         assert health["streams"] >= 1
         assert "rss_mb" in health
-        assert health["last_build_seconds"] is None
         assert health["sources"]["fake"] == {
             "kept": 3,
             "discovered": 3,
@@ -268,7 +283,6 @@ def test_health_returns_correct_json() -> None:
             "streams",
             "unhealthy_sources",
             "sources",
-            "last_build_seconds",
             "rss_mb",
         }
     finally:
@@ -285,7 +299,7 @@ def test_health_unhealthy_when_source_failed() -> None:
     status = {
         "sources": {"fake": {"kept": 0, "discovered": 0, "crashed": True}},
         "unhealthy": ["fake"],
-        "last_build_seconds": None,
+        "ready": True,
     }
     server, port = _start_server(store, source_status=status)
     try:
@@ -298,17 +312,58 @@ def test_health_unhealthy_when_source_failed() -> None:
 
 
 def test_health_not_healthy_during_cold_start() -> None:
-    """Before the first build completes (not ready), healthy is False.
+    """Until every source has finished a refresh (not ready), healthy is False.
 
     That holds even with no failing sources, which guards against a fresh container
     reporting a false all-clear.
     """
-    store, _ = _make_store(ready=False)
-    server, port = _start_server(store, source_status=_healthy_status())
+    store, _ = _make_store()  # the playlist already serves the first refresh
+    status = {**_healthy_status(), "ready": False}
+    server, port = _start_server(store, source_status=status)
     try:
         health = _get_health(port)
         assert health["ready"] is False
         assert health["healthy"] is False
+    finally:
+        server.shutdown()
+
+
+def test_health_reports_each_sources_refresh() -> None:
+    """The scheduler's per-source refresh times reach /health, and so does overdue."""
+    clock = _Clock()
+    catalogue = LiveCatalogue()
+    s = _scheduler(catalogue, clock)
+    server, port = _start_server(
+        catalogue, source_status=None, status_fn=lambda: source_status_for(s, clock())
+    )
+    try:
+        cold = _get_health(port)
+        assert cold["ready"] is False
+        assert cold["sources"]["fake"]["status"] == "unknown"
+        assert cold["sources"]["fake"]["last_refresh_at"] is None
+        assert cold["unhealthy_sources"] == []  # not run yet is not a failure
+
+        s.tick()
+        assert s.finish_next(timeout=5)
+        clock.now = 1_000_000.0 + 7200  # two hours after the refresh
+        health = _get_health(port)
+        assert health["ready"] is True
+        assert health["healthy"] is True
+        assert health["sources"]["fake"] == {
+            "kept": 1,
+            "discovered": 1,
+            "crashed": False,
+            "status": "ok",
+            "last_refresh_at": "1970-01-12T13:46:40Z",
+            "last_refresh_seconds": 0.0,
+            "interval_hours": 6.0,
+        }
+
+        clock.now = 1_000_000.0 + 12 * 3600 + 1  # just over 2x its 6h interval
+        late = _get_health(port)
+        assert late["sources"]["fake"]["status"] == "overdue"
+        assert late["unhealthy_sources"] == ["fake"]
+        assert late["healthy"] is False
     finally:
         server.shutdown()
 

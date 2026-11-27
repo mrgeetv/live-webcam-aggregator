@@ -272,7 +272,7 @@ def render_playlist(entries: list[CatalogueEntry], *, base_url: str) -> str:
         title, category = _m3u_text(e.title), _m3u_text(e.category)
         # tvg-id is the STABLE per-cam id (same value as the /stream/<id> URL). It
         # gives players (TiViMate) a fixed key to keep favourites linked to the right
-        # stream across catalogue rebuilds, independent of count, order, or title.
+        # stream across catalogue merges, independent of count, order, or title.
         lines.append(
             f'#EXTINF:-1 tvg-id="{e.id}" tvg-name="{title}" '
             f'group-title="{category}",{title}'

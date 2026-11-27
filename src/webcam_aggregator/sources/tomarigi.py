@@ -91,6 +91,7 @@ class TomarigiSource(HtmlScraperSource[str]):
     """
 
     name: str = "tomarigi"
+    interval_hours: float = 24
 
     @override
     def _page_urls(self) -> list[str]:

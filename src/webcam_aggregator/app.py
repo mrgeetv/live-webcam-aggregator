@@ -1,4 +1,4 @@
-"""App wiring: catalogue store, resolve cache, HTTP handler and the rebuild loop."""
+"""App wiring: live catalogue, resolve cache, HTTP handler and the refresh scheduler."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, ClassVar, override
@@ -19,8 +20,7 @@ import psutil
 from webcam_aggregator import config
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.catalogue import (
-    Hist,
-    build_catalogue,
+    Scheduler,
     failure_counts,
     top_counts,
 )
@@ -86,7 +86,7 @@ from webcam_aggregator.sources.worldcams import WorldcamsSource
 from webcam_aggregator.sources.youtube_api import YoutubeApiSource
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
     from googleapiclient._apis.youtube.v3.resources import YouTubeResource
 
@@ -248,21 +248,21 @@ def make_resolve(
     return resolve
 
 
-class CatalogueStore:
-    """The current catalogue snapshot, swapped in whole after each rebuild."""
+class LiveCatalogue:
+    """The catalogue being served, swapped in whole after each merge."""
 
     _snapshot: dict[str, CatalogueEntry]
-    ready: bool
+    serving: bool
 
     def __init__(self) -> None:
-        """Start empty and not ready."""
+        """Start empty, and not serving until the first merge lands."""
         self._snapshot = {}
-        self.ready = False
+        self.serving = False
 
     def swap(self, entries: list[CatalogueEntry]) -> None:
-        """Replace the snapshot with `entries` and mark the store ready."""
+        """Replace the snapshot with `entries`; the playlist serves from then on."""
         self._snapshot = {e.id: e for e in entries}  # atomic rebind
-        self.ready = True
+        self.serving = True
 
     def snapshot(self) -> dict[str, CatalogueEntry]:
         """Return the current snapshot, keyed by entry id."""
@@ -302,7 +302,7 @@ def make_liveness_check(
             log.debug("no extractor for %s", c.target_url)
             return NO_EXTRACTOR
         # Any extractor can raise anything (yt-dlp, a parse, a fetch); each is a drop
-        # reason for one cam, never a crash of the build.
+        # reason for one cam, never a crash of the refresh.
         except Exception as exc:  # noqa: BLE001
             log.debug("liveness resolve failed for %s: %s", c.target_url, exc)
             # The detail separates "yt-dlp is broken" from "this cam is off air".
@@ -347,7 +347,7 @@ def make_liveness_check(
 class _HandlerDeps:
     """What the HTTP handler serves from."""
 
-    store: CatalogueStore
+    catalogue: LiveCatalogue
     cache: ResolveCache
     base_url: str
     manifest_fetch: Callable[[str], tuple[str | None, str]]
@@ -381,11 +381,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._respond(404, "text/plain", b"not found")
 
     def _playlist(self) -> None:
-        if not self.deps.store.ready:
+        if not self.deps.catalogue.serving:
             self._respond(503, "text/plain", b"not ready yet")
             return
         body = render_playlist(
-            list(self.deps.store.snapshot().values()), base_url=self.deps.base_url
+            list(self.deps.catalogue.snapshot().values()), base_url=self.deps.base_url
         )
         self._respond(200, _HLS_CT, body.encode())
 
@@ -427,7 +427,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _stream(self, entry_id: str) -> None:
         status, ct_or_loc, body = serve_stream(
             entry_id,
-            catalogue=self.deps.store.snapshot(),
+            catalogue=self.deps.catalogue.snapshot(),
             cache=self.deps.cache,
             fetch=self.deps.manifest_fetch,
             base_url=self.deps.base_url,
@@ -441,21 +441,20 @@ class _Handler(BaseHTTPRequestHandler):
         self._respond(status, ct_or_loc, body)
 
     def _health(self) -> None:
-        snapshot = self.deps.store.snapshot()
+        snapshot = self.deps.catalogue.snapshot()
         st = self.deps.source_status()
         unhealthy = st["unhealthy"]
         # Single rollup for a JSON-query uptime monitor ($.healthy == true).
-        # False during the cold-start build (not ready yet) and whenever any source
-        # crashed or returned 0 cams this cycle — even while the empty-guard is
-        # still masking that failure in the served playlist.
-        healthy = self.deps.store.ready and not unhealthy
+        # False until every source has finished a refresh (not ready), and whenever
+        # a source crashed, returned 0 cams or is overdue — even while the
+        # empty-guard is still masking that failure in the served playlist.
+        healthy = st["ready"] and not unhealthy
         payload = {
-            "ready": self.deps.store.ready,
+            "ready": st["ready"],
             "healthy": healthy,
             "streams": len(snapshot),
             "unhealthy_sources": unhealthy,
             "sources": st["sources"],
-            "last_build_seconds": st["last_build_seconds"],
             "rss_mb": round(_total_rss() / 1048576, 1),
         }
         self._respond(200, "application/json", json.dumps(payload).encode())
@@ -483,7 +482,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def make_handler(
-    store: CatalogueStore,
+    catalogue: LiveCatalogue,
     cache: ResolveCache,
     base_url: str,
     *,
@@ -494,7 +493,7 @@ def make_handler(
 ) -> type[BaseHTTPRequestHandler]:
     """Build the handler class serving the playlist, `/health` and `/stream/<id>`."""
     deps = _HandlerDeps(
-        store=store,
+        catalogue=catalogue,
         cache=cache,
         base_url=base_url,
         manifest_fetch=manifest_fetch,
@@ -529,43 +528,53 @@ def run_http_server(
     log.info("HTTP server listening on port %d", port)
 
 
-def _source_status_for(expected: list[str], hist: dict[str, Hist]) -> dict[str, Any]:
-    """Build the /health `sources` block.
+# One interval late is a slow refresh; this many means the scheduler isn't getting to
+# the source at all.
+_OVERDUE_INTERVALS = 2
 
-    Holds the per-source RAW outcome of the last rebuild plus the sources that failed
-    this cycle (crashed, or 0 kept).
 
-    Values are the raw result even when the empty-guard is masking a failure in the
-    served playlist, so a dying source surfaces here immediately. Cold start (nothing
-    recorded yet) lists every source at zero; the top-level `ready` distinguishes that
-    from a real 0. Pure, so the payload shape is testable without building the app.
+def _utc(ts: float | None) -> str | None:
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    WHAT-only (kept/discovered/crashed/status): the WHY — per-host fetch outcomes,
-    drop reasons, no-extractor hosts, pacing — lives on the per-cycle log lines.
+
+def source_status_for(scheduler: Scheduler, now: float) -> dict[str, Any]:
+    """Build /health's per-source block, the failing sources and `ready`.
+
+    Values are each source's RAW last refresh even when the empty-guard is masking a
+    failure in the served playlist, so a dying source surfaces here immediately. A
+    source that hasn't refreshed yet is `unknown` and never counted unhealthy: the
+    top-level `ready` (every source has refreshed at least once) gates that window.
+
+    WHAT-only: the WHY — per-host fetch outcomes, drop reasons, no-extractor hosts,
+    pacing — lives on the log lines.
     """
     sources: dict[str, Any] = {}
     unhealthy: list[str] = []
-    for name in expected:
-        h = hist.get(name)
-        if h is None:
-            # Not attempted yet (cold start, before the first rebuild records it):
-            # placeholder zeros, never counted unhealthy — `ready` gates that window.
-            sources[name] = {
-                "kept": 0,
-                "discovered": 0,
-                "crashed": False,
-                "status": "unknown",
-            }
-            continue
+    for name, h in scheduler.history.items():
+        interval = scheduler.intervals[name]
+        if h.last_refresh_at is None:
+            status = "unknown"
+        elif now - h.last_refresh_at > _OVERDUE_INTERVALS * interval * 3600:
+            status = "overdue"
+        else:
+            status = h.status
         sources[name] = {
             "kept": h.last_raw_kept,
             "discovered": h.last_discovered,
             "crashed": h.last_crashed,
-            "status": h.status,
+            "status": status,
+            "last_refresh_at": _utc(h.last_refresh_at),
+            "last_refresh_seconds": h.last_refresh_seconds,
+            "interval_hours": interval,
         }
-        if h.last_crashed or h.last_raw_kept == 0:
+        if h.last_refresh_at is not None and (
+            h.last_crashed or h.last_raw_kept == 0 or status == "overdue"
+        ):
             unhealthy.append(name)
-    return {"sources": sources, "unhealthy": unhealthy}
+    ready = all(h.last_refresh_at is not None for h in scheduler.history.values())
+    return {"sources": sources, "unhealthy": unhealthy, "ready": ready}
 
 
 def _build_resolvers(
@@ -653,8 +662,8 @@ def _build_sources(
     """Build every active source, each with its own fetcher, and their fetch stats."""
     # One Fetcher — and one FetchStats — PER SOURCE. A shared fetcher could not say
     # which source's fetches failed, and a process-global counter would also collect
-    # serve-time player traffic between rebuilds, so the line meant to explain an
-    # empty source would name hosts the build never touched.
+    # serve-time player traffic between refreshes, so the line meant to explain an
+    # empty source would name hosts its refresh never touched.
     source_stats: dict[str, FetchStats] = {}
 
     def _source_fetcher(name: str, *, impersonate: bool = False) -> Fetcher:
@@ -706,7 +715,7 @@ def _build_sources(
 def _youtube_live_for(
     yt_source: YoutubeApiSource | None,
 ) -> Callable[[Iterable[str]], dict[str, str]]:
-    """Build the rebuild's YouTube live check: live video id -> category name."""
+    """Build the refreshes' YouTube live check: live video id -> category name."""
 
     def youtube_live(ids: Iterable[str]) -> dict[str, str]:
         if yt_source is None:
@@ -714,8 +723,8 @@ def _youtube_live_for(
         try:
             return yt_source.live_ids(ids)
         except Exception as exc:  # noqa: BLE001 - see below
-            # A YouTube quota/transient error must not abort the whole rebuild —
-            # just treat YT cams as offline this cycle (scrapers still build).
+            # A YouTube quota/transient error must not abort the refresh — just
+            # treat its YT cams as offline this time (its other cams still ship).
             # No log.exception: a traceback ends in str(exc), and HttpError's str
             # prints the request URI, which carries the developer key.
             log.warning(
@@ -728,12 +737,27 @@ def _youtube_live_for(
     return youtube_live
 
 
-def _report_build_diag(liveness: dict[str, FetchStats], pacer: HostPacer) -> None:
-    """Log the cross-source liveness fetch failures and pacing of the last rebuild.
+def _intervals_for(
+    sources: list[Source], overrides: Mapping[str, float]
+) -> dict[str, float]:
+    """Return each source's interval: its declared default, or its override."""
+    names = {s.name for s in sources}
+    unknown = sorted(set(overrides) - names)
+    if unknown:
+        log.warning(
+            "SOURCE_INTERVAL_HOURS: ignoring unknown source(s) %s (known: %s)",
+            ", ".join(unknown),
+            ", ".join(sorted(names)),
+        )
+    return {s.name: overrides.get(s.name, s.interval_hours) for s in sources}
 
-    The liveness fetchers and pacer are cross-source, so they report here rather than
-    on a source's own line. One aggregate INFO line each, only when something failed:
-    a healthy cycle adds no noise.
+
+def _report_last_hour(liveness: dict[str, FetchStats], pacer: HostPacer) -> None:
+    """Log the cross-source liveness fetch failures and pacing since the last call.
+
+    The liveness fetchers and pacer serve every source's refreshes, so they report on
+    a timer rather than on a source's own line. One aggregate INFO line each, only
+    when something failed: a healthy hour adds no noise.
     """
     for label, stats in liveness.items():
         fetches = stats.drain()
@@ -741,7 +765,7 @@ def _report_build_diag(liveness: dict[str, FetchStats], pacer: HostPacer) -> Non
         if failures:
             total = sum(sum(o.values()) for o in fetches.values())
             log.info(
-                "liveness %s: %d fetched, %d failed: %s",
+                "last hour: liveness %s: %d fetched, %d failed: %s",
                 label,
                 total,
                 sum(failures.values()),
@@ -753,7 +777,7 @@ def _report_build_diag(liveness: dict[str, FetchStats], pacer: HostPacer) -> Non
             :3
         ]
         log.info(
-            "pacing: %s",
+            "last hour: pacing: %s",
             ", ".join(
                 f"{int(v['penalties'])}x {h} ({v['backoff_seconds']:.0f}s backoff)"
                 for h, v in top_pace
@@ -761,19 +785,21 @@ def _report_build_diag(liveness: dict[str, FetchStats], pacer: HostPacer) -> Non
         )
 
 
-def build_app(
-    cfg: config.Config,
-) -> tuple[
-    CatalogueStore,
-    ResolveCache,
-    Callable[[], None],
-    Callable[[], dict[str, Any]],
-]:
-    """Wire sources, extractors, resolve cache and store from `cfg`.
+@dataclass(frozen=True)
+class App:
+    """The wired app: what `main` serves and runs."""
 
-    Return the catalogue store, the resolve cache, a function that runs one catalogue
-    rebuild, and a function reporting per-source status for `/health`.
-    """
+    catalogue: LiveCatalogue
+    cache: ResolveCache
+    scheduler: Scheduler
+    # /health's per-source block, failing sources and `ready`
+    source_status: Callable[[], dict[str, Any]]
+    # logs the cross-source liveness and pacing lines since its last call
+    report_last_hour: Callable[[], None]
+
+
+def build_app(cfg: config.Config) -> App:
+    """Wire sources, extractors, resolve cache, scheduler and catalogue from `cfg`."""
     # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
     # probe). Reactive: it is a no-op until a host answers 429/503, then that host
     # is spaced and its retries are gated past the shedding window so they succeed
@@ -782,8 +808,7 @@ def build_app(
     cache, resolve_build, resolver_stats = _build_resolvers(pacer)
     yt_source = _youtube_source(cfg)
     active_sources, source_stats = _build_sources(yt_source, pacer)
-    store = CatalogueStore()
-    history: dict[str, Hist] = {}
+    catalogue = LiveCatalogue()
     # delay=0: liveness verify-fetches hit CDNs (not the scraped sites) and run
     # concurrently, so politeness spacing isn't needed here. retries=2 so a paced
     # 503 gets its post-cooldown retry (range(retries) means retries=1 is ZERO
@@ -797,66 +822,50 @@ def build_app(
         pacer=pacer,
         retry_only_shedding=True,
     )
-    drop_reason_for = make_liveness_check(resolve_build, probe_fetcher.get_with_outcome)
-
-    youtube_live = _youtube_live_for(yt_source)
-    expected_sources = [s.name for s in active_sources]
-
-    # The one cross-source number /health carries; everything else the build-side
-    # diagnostics produce (liveness fetch outcomes, pacing counters) goes to the
-    # per-cycle log lines only — see _source_status_for on why.
-    diag: dict[str, Any] = {"last_build_seconds": None}
-
-    def source_status() -> dict[str, Any]:
-        # Copy defensively: build_catalogue mutates `history` from the rebuild thread,
-        # so a live /health request must not crash on "changed size during iteration".
-        try:
-            hist = dict(history)
-        except RuntimeError:
-            hist = {}
-        out = _source_status_for(expected_sources, hist)
-        out.update(diag)
-        return out
 
     def drain_source_stats(name: str) -> dict[str, dict[str, int]]:
         stats = source_stats.get(name)
         return stats.drain() if stats is not None else {}
 
-    def rebuild_once() -> None:
-        log.info("starting catalogue rebuild")
-        t0 = time.monotonic()
-        try:
-            entries = build_catalogue(
-                active_sources,
-                drop_reason_for=drop_reason_for,
-                youtube_live=youtube_live,
-                history=history,
-                exclude_categories=cfg.exclude_categories,
-                max_parallel_sources=cfg.max_parallel_sources,
-                fetch_stats=drain_source_stats,
-            )
-        finally:
-            # Drain whatever the aborted cycle managed to record. Without this a rebuild
-            # that raises leaves its counters to merge into the next cycle's totals —
-            # precisely when the numbers matter most.
-            for name in source_stats:
-                drain_source_stats(name)
-            _report_build_diag(
-                {"resolver": resolver_stats, "probe": probe_stats}, pacer
-            )
-            diag["last_build_seconds"] = round(time.monotonic() - t0, 1)
-        store.swap(entries)
-        log.info(
-            "catalogue rebuilt: %d entries in %.0fs",
-            len(entries),
-            time.monotonic() - t0,
-        )
+    scheduler = Scheduler(
+        active_sources,
+        _intervals_for(active_sources, cfg.source_interval_hours),
+        drop_reason_for=make_liveness_check(
+            resolve_build, probe_fetcher.get_with_outcome
+        ),
+        youtube_live=_youtube_live_for(yt_source),
+        on_merge=catalogue.swap,
+        exclude_categories=cfg.exclude_categories,
+        max_parallel_sources=cfg.max_parallel_sources,
+        fetch_stats=drain_source_stats,
+    )
+    return App(
+        catalogue=catalogue,
+        cache=cache,
+        scheduler=scheduler,
+        source_status=lambda: source_status_for(scheduler, time.time()),
+        report_last_hour=lambda: _report_last_hour(
+            {"resolver": resolver_stats, "probe": probe_stats}, pacer
+        ),
+    )
 
-    return store, cache, rebuild_once, source_status
+
+# The period `_report_last_hour`'s "last hour:" lines cover.
+_LAST_HOUR_SECONDS = 3600
+
+
+def _every(seconds: float, label: str, fn: Callable[[], None]) -> None:
+    """Call `fn` every `seconds`, forever; a failing call is logged, not fatal."""
+    while True:
+        time.sleep(seconds)
+        try:
+            fn()
+        except Exception:
+            log.exception("%s failed; trying again next time", label)
 
 
 def main() -> None:
-    """Serve HTTP and rebuild the catalogue every `CATALOGUE_INTERVAL_HOURS`."""
+    """Serve HTTP and refresh each source on its interval."""
     # Root stays at WARNING so third-party libs (googleapiclient, urllib3) never
     # log request URLs at DEBUG — those carry the API key as a query param. Only
     # our own loggers honour LOG_LEVEL.
@@ -873,7 +882,7 @@ def main() -> None:
     # a child logger (webcam-aggregator.catalogue, .fetch, .sources.youtube, …).
     for handler in logging.getLogger().handlers:
         handler.addFilter(RedactingFilter())
-    store, cache, rebuild_once, source_status = build_app(cfg)
+    app = build_app(cfg)
 
     # Unpaced by design: this is the serve-time hot path (manifest refreshes every
     # few seconds per viewer, plus segment relay) — per-host pacing here would stall
@@ -884,19 +893,19 @@ def main() -> None:
         delay=0.0, retries=1, byte_cap=MANIFEST_MAX_BYTES, keep_cookies=False
     )
     handler_cls = make_handler(
-        store,
-        cache,
+        app.catalogue,
+        app.cache,
         cfg.public_base_url,
         manifest_fetch=manifest_fetcher.get_with_outcome,
-        source_status=source_status,
+        source_status=app.source_status,
         segment_fetch=manifest_fetcher.get_segment,
         proxy_youtube=cfg.proxy_youtube,
     )
     run_http_server(handler_cls)
-
-    while True:
-        try:
-            rebuild_once()
-        except Exception:
-            log.exception("catalogue rebuild failed; will retry next cycle")
-        time.sleep(cfg.catalogue_interval_hours * 3600)
+    threading.Thread(
+        target=_every,
+        args=(_LAST_HOUR_SECONDS, "last-hour report", app.report_last_hour),
+        daemon=True,
+        name="last-hour",
+    ).start()
+    app.scheduler.run_forever()

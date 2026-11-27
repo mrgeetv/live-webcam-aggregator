@@ -28,6 +28,7 @@ class ExploreOrgSource:
     """
 
     name: str = "explore"
+    interval_hours: float = 1
     _fetch: FetcherProtocol
 
     def __init__(self, fetch: FetcherProtocol) -> None:

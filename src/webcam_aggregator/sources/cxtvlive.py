@@ -63,6 +63,7 @@ class CxtvliveSource(HtmlScraperSource[_Ctx]):
     """cxtvlive.com cams; the feed carries each cam's category and geo."""
 
     name: str = "cxtvlive"
+    interval_hours: float = 6
 
     # slug -> (raw category, cam name, geo parts); populated by _page_urls from the map
     # feed, read back per page in _page_meta. Sitemap-only cams are absent (no geo/cat).

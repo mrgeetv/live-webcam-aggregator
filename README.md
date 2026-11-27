@@ -37,20 +37,22 @@ stream is actually played.
 | YouTube Data API | Live webcam broadcasts found by search |
 
 The same camera found on more than one source is merged into a single channel. A
-typical build lands around **11000–12000 live channels** once every source is warm
-(windy.com's share ramps up over the first couple of days of builds), varying with
-how many cams are actually up and with `EXCLUDE_CATEGORIES`.
+typical catalogue holds around **11000–12000 live channels** once every source is
+warm (windy.com's share ramps up over the first couple of days of refreshes), varying
+with how many cams are actually up and with `EXCLUDE_CATEGORIES`.
 
 ## How it works
 
-- **Catalogue build** (periodic): every `CATALOGUE_INTERVAL_HOURS`, each source is
-  crawled, dead streams are dropped, survivors are de-duplicated, mapped to a unified
-  category, and written into a playlist of stable internal URLs. This is the slow
-  part — expect **20–30 minutes** for a catalogue this size. It's dominated by
-  *waiting*, not work: sources are crawled concurrently, and a site that rate-limits
-  (429/503) is backed off per host, so the build's wall-clock is set by the most
-  rate-limited source. That makes it depend on your egress IP far more than on your
-  hardware, and it's why raising `SCRAPE_WORKERS` doesn't reliably speed it up.
+- **Per-source refreshes** (periodic): each source refreshes on its own interval —
+  hourly for cheap single-feed sources, daily for the big crawls (skyline, tomarigi),
+  6 hours for the rest (override with `SOURCE_INTERVAL_HOURS`). A refresh crawls the
+  source and drops its dead streams; after each one the catalogue is re-merged from
+  every source's latest cams (de-duplicated, mapped to a unified category) into a
+  playlist of stable internal URLs. Up to `MAX_PARALLEL_SOURCES` refreshes run at
+  once. The big crawls take minutes to tens of minutes, and that time is dominated by
+  *waiting*, not work: a site that rate-limits (429/503) is backed off per host. So it
+  depends on your egress IP far more than on your hardware, and it's why raising
+  `SCRAPE_WORKERS` doesn't reliably speed it up.
 - **On-demand serving**: when a player opens a channel, the container resolves the
   stream on request and proxies the HLS manifest, refreshing expiring tokens
   transparently so long sessions keep playing. For most cams the video segments
@@ -92,9 +94,9 @@ services:
     restart: unless-stopped
 ```
 
-The playlist is then available at `http://localhost:23457/playlist.m3u8`. The first
-catalogue build takes **20–30 minutes** (discovery + liveness checks across every
-source); until it's ready, `/playlist.m3u8` returns `503`.
+The playlist is then available at `http://localhost:23457/playlist.m3u8`. It
+answers `503` until the first source has finished its first refresh, then grows as
+the others land; the full catalogue takes **20–30 minutes** after a start.
 
 Set `PUBLIC_BASE_URL` to the address your players actually reach; `localhost` only
 works for a player on the same machine (see *Exposing it*). These use the `:v2` major
@@ -142,7 +144,7 @@ mapping can sit in front. The only requirement is that the front door forwards
 | ---- | ------- |
 | `/playlist.m3u8` | The channel list |
 | `/stream/<id>` | On-demand resolve + HLS manifest proxy (302 for MP4 sources) |
-| `/health` | JSON status: readiness, `healthy` rollup, per-source outcome, build duration, memory |
+| `/health` | JSON status: readiness, `healthy` rollup, per-source outcome and refresh times, memory |
 
 ### Monitoring
 
@@ -156,30 +158,42 @@ alert when `$.healthy` isn't `true`.
   "streams": 3899,
   "unhealthy_sources": ["skyline"],
   "sources": {
-    "skyline": {"kept": 0, "discovered": 0, "crashed": false, "status": "dead"}
+    "skyline": {
+      "kept": 0,
+      "discovered": 0,
+      "crashed": false,
+      "status": "dead",
+      "last_refresh_at": "2026-11-26T21:04:12Z",
+      "last_refresh_seconds": 41.8,
+      "interval_hours": 24
+    }
   },
-  "last_build_seconds": 1187.3,
   "rss_mb": 1402.6
 }
 ```
 
 Fields:
 
-- `ready` — the first catalogue build has completed (the playlist is serveable).
-- `healthy` — `ready` **and** no source crashed or returned 0 cams on the last rebuild.
-- `unhealthy_sources` — the sources that failed this cycle (the reason `healthy` is `false`).
-- `sources.<name>` — the **raw** result of the last rebuild: `discovered` (found),
-  `kept` (passed liveness), `crashed` (`discover`/liveness threw). These stay raw even
-  when the empty-guard is still serving a failed source's last good set, so a dying
-  source surfaces immediately.
+- `ready` — every source has finished at least one refresh. The playlist serves
+  before that, from the first refresh to land.
+- `healthy` — `ready` **and** no source crashed, returned 0 cams on its last refresh,
+  or is overdue.
+- `unhealthy_sources` — the sources failing now (the reason `healthy` is `false`).
+- `sources.<name>` — the **raw** result of that source's last refresh: `discovered`
+  (found), `kept` (passed liveness), `crashed` (`discover`/liveness threw). These stay
+  raw even when the empty-guard is still serving a failed source's last good set, so a
+  dying source surfaces immediately.
 - `sources.<name>.status` — `ok`, `degraded` (collapsed, guard serving the last good
-  set), `dead` (0 cams or crashed), or `unknown` before the first rebuild.
-- `last_build_seconds` — wall-clock duration of the last catalogue build attempt
-  (`null` until the first attempt finishes).
+  set), `dead` (0 cams or crashed), `overdue` (its last refresh finished more than
+  twice its interval ago: the scheduler isn't getting to it), or `unknown` before its
+  first refresh.
+- `sources.<name>.last_refresh_at` / `last_refresh_seconds` — when its last refresh
+  finished (UTC) and how long it took; `null` until the first one.
+- `sources.<name>.interval_hours` — how often it refreshes.
 
 The payload answers *what happened*; the *why* — per-host fetch outcomes, drop
 reasons, hosts with no extractor, pacing/backoff counters — is on the log lines each
-rebuild writes (see `DEVELOPMENT.md`, *Catalogue & resolve logging*), and a stream that
+refresh writes (see `DEVELOPMENT.md`, *Catalogue & resolve logging*), and a stream that
 fails to play logs which cam and why (*Playback failures*).
 
 `/health` carries operational detail, so keep it off the public internet — expose only
@@ -189,18 +203,18 @@ The states you'll see:
 
 | `ready` | `healthy` | `unhealthy_sources` | Meaning |
 | ------- | --------- | ------------------- | ------- |
-| `false` | `false` | `[]` | Cold start — first build still running, nothing served yet |
+| `false` | `false` | `[]` | Cold start — some sources haven't finished a first refresh (the playlist serves the ones that have) |
 | `true` | `true` | `[]` | All sources succeeded |
-| `true` | `false` | non-empty | Serving, but a listed source crashed or returned 0 (`crashed` tells which) |
+| `true` | `false` | non-empty | Serving, but a listed source crashed, returned 0 or is overdue (`status` tells which) |
 
-The cold-start build reads as `healthy: false`, so give the monitor a couple of retries
-to ride out normal restarts before it alerts.
+A cold start reads as `healthy: false` until the slowest source's first refresh lands,
+so give the monitor a couple of retries to ride out normal restarts before it alerts.
 
 **Basic HTTP-status monitoring** (no JSON query) is also possible via response codes:
 
 - `/health` returns **200** whenever the process is up — even mid-cold-start — so a plain
   200 check only confirms the server is alive, not readiness or source health.
-- `/playlist.m3u8` returns **503** until the first catalogue build completes, then **200**.
+- `/playlist.m3u8` returns **503** until the first source's first refresh completes, then **200**.
   An HTTP-status monitor on it catches a down process and a stuck cold start, but not
   source-level degradation (a failed source still returns a served catalogue as `200`).
 
@@ -213,19 +227,19 @@ All via environment variables (see `.env.example`):
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `CATALOGUE_INTERVAL_HOURS` | `6` | Hours between catalogue refreshes (min 1) |
 | `EXCLUDE_CATEGORIES` | (none) | Comma-separated categories to drop, across all sources, case-insensitive. See *Filtering by category* |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `MAX_PARALLEL_SOURCES` | `4` | How many sources discover + liveness-check at once (min 1). Total build concurrency ≈ this × `SCRAPE_WORKERS`; extra sources queue |
+| `MAX_PARALLEL_SOURCES` | `4` | How many source refreshes (discover + liveness) run at once (min 1). Total concurrency ≈ this × `SCRAPE_WORKERS`; due sources queue, most overdue first |
 | `PROXY_YOUTUBE` | `false` | `false` redirects players straight to YouTube (lower latency, but playback stops when YouTube's ~6h stream token expires — reselect to resume; a player retrying a stream that failed gets a freshly resolved one). `true` proxies YouTube through the server so it keeps playing past that, at a small latency cost |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Externally-reachable base for the emitted URLs |
-| `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness during the catalogue build (sources also run concurrently). Lower it to reduce peak build-time memory (at the cost of a slower build). A host that starts rate-limiting (429/503) is backed off adaptively per host, so the effective rate to that host can drop below what this implies |
+| `SCRAPE_WORKERS` | `min(16, cpu×4)` | Per-source concurrency for scraping + liveness during a refresh (refreshes also run concurrently). Lower it to reduce peak memory (at the cost of slower refreshes). A host that starts rate-limiting (429/503) is backed off adaptively per host, so the effective rate to that host can drop below what this implies |
+| `SOURCE_INTERVAL_HOURS` | per source | Override sources' refresh intervals: `name=hours,…`, e.g. `skyline=48,explore=0.5` (names as in `/health`). An unknown name or bad value logs a warning and that source keeps its default |
 | `SEARCH_QUERY` | built-in webcam query | YouTube search terms (`\|`=OR, space=AND, `-`=exclude) |
 | `YOUTUBE_API_KEY` | (required) | YouTube Data API v3 key |
 
 > **Resource usage:** budget **~4 GB** for the container. A catalogue of this size sits
-> under **~1 GB** between builds, and each build runs a little below that with a brief
-> spike **near 3 GB** part-way through — that spike is the high-water mark, not a leak.
+> under **~1 GB** between refreshes, and spikes **near 3 GB** when big sources refresh
+> at once — that spike is the high-water mark, not a leak.
 > Sources parse each page as it arrives rather than holding a whole site's pages, so a
 > source's memory doesn't grow with its page count. RSS does **not** fall back to a small
 > baseline afterwards. Lower `SCRAPE_WORKERS` to cap the peak. Live memory is on
@@ -288,7 +302,7 @@ when a source provides no category, the title is checked for a keyword (a specie
 `harbour`, `beach`, `ski`…) or a `City, Country`-style location (→ `Travel & Events`)
 before falling back to `Other`. `Unmapped Category` is different — it flags cams whose
 source *did* give a category we don't recognise yet, so a missing mapping is visible (and
-logged at build) instead of hidden in `Other`.
+logged when its source refreshes) instead of hidden in `Other`.
 
 ## Upgrading from v1
 
@@ -299,13 +313,13 @@ if you track `:latest` you'll move to v2. To migrate your existing config:
 - **Set `PUBLIC_BASE_URL`** to the address your player actually reaches (see
   *Exposing it*). v1 didn't need it; v2 builds the `/stream/<id>` URLs from it, so
   leaving it unset points the playlist at `localhost` and nothing plays.
-- **Renamed:** `UPDATE_INTERVAL_HOURS` → `CATALOGUE_INTERVAL_HOURS`; and
-  `EXCLUDED_CATEGORIES` → `EXCLUDE_CATEGORIES` (note: no `D`). The v2 version filters
+- **Renamed:** `EXCLUDED_CATEGORIES` → `EXCLUDE_CATEGORIES` (note: no `D`). The v2 version filters
   **all** sources on the unified taxonomy, not YouTube's category names, so update the
   values to the v2 category names (see *Filtering by category*); old names like
   `Gaming` no longer exist (use `SEARCH_QUERY` exclusions like `-gaming` instead).
-- **Removed (silently ignored if still set):** `MAX_VIDEOS_PER_CYCLE`,
-  `CONCURRENT_EXTRACTIONS`.
+- **Removed (ignored, with a startup warning, if still set):** `MAX_VIDEOS_PER_CYCLE`,
+  `CONCURRENT_EXTRACTIONS`, and `UPDATE_INTERVAL_HOURS` — each source now refreshes on
+  its own interval, which `SOURCE_INTERVAL_HOURS` (`name=hours,…`) overrides.
 - **Unchanged:** `YOUTUBE_API_KEY`, `SEARCH_QUERY`, `LOG_LEVEL`, and the `23457:8000`
   port mapping.
 
