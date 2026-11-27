@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.20](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.19...v2.14.20) (2026-11-27)
+
+### Bug Fixes
+
+* **scraper:** match provider hosts with one host check, never a substring ([#233](https://github.com/mrgeetv/live-webcam-aggregator/issues/233)) ([e1311ec](https://github.com/mrgeetv/live-webcam-aggregator/commit/e1311ec8e6187493e8f565a9d9e5ec5fdb1dbaab))
+
 ## [2.14.19](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.18...v2.14.19) (2026-11-27)
 
 ### Code Refactoring
