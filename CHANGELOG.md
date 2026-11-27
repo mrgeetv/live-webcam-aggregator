@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.16](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.15...v2.14.16) (2026-11-27)
+
+### Bug Fixes
+
+* **docker:** move to python 3.15 ([#200](https://github.com/mrgeetv/live-webcam-aggregator/issues/200)) ([084a5c9](https://github.com/mrgeetv/live-webcam-aggregator/commit/084a5c9907f1a5402a72bc7fd9a08800ac299f02)), closes [#199](https://github.com/mrgeetv/live-webcam-aggregator/issues/199) [#199](https://github.com/mrgeetv/live-webcam-aggregator/issues/199) [#90](https://github.com/mrgeetv/live-webcam-aggregator/issues/90)
+
 ## [2.14.15](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.14...v2.14.15) (2026-11-24)
 
 ### Bug Fixes
