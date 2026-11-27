@@ -56,16 +56,17 @@ fi
 
 # The branch that matters is the one checked out where the commit runs, which
 # in a worktree is not the project's. ONE parser both decides whether the hook
-# is CERTAIN of that directory and computes it, so the two can't disagree:
-# everything before the commit must be segments joined by && or ; (no pipes, no
-# lone &, which run a cd in a subshell; no `$(...)`, backticks, brackets,
-# braces or redirects), each either exactly `cd <literal dir>`, which moves the
-# directory, or a command from SAFE, which can't move the shell. The commit's
-# own git options may only be unquoted `-C <dir>` (applied in order) and the
-# harmless ones in GIT_OPTS. Then the directory starts at the hook input's .cwd
-# and the cds and -Cs move it. Anything else leaves the hook UNSURE, and it
-# checks every directory it can find (cwd, project, every cd and -C target):
-# any on a protected branch, or any that doesn't resolve, denies.
+# is CERTAIN of that directory and computes it, so the two can't disagree.
+# Everything before the commit must be segments joined by && or ;, each either
+# exactly `cd <literal dir>`, which moves the directory, or a command from SAFE,
+# which can't move the shell. No pipes or lone & (they run a cd in a subshell),
+# no `$(...)`, backticks, brackets, braces, redirects, comments or escapes, and
+# quotes only around a cd's dir. The commit's own git options may only be
+# unquoted `-C <dir>` (applied in order) and the harmless ones in GIT_OPTS.
+# Then the directory starts at the hook input's .cwd and the cds and -Cs move
+# it. Anything else leaves the hook UNSURE, and it checks every directory it
+# can find (cwd, project, every cd and -C target): any on a protected branch,
+# or any that doesn't resolve, denies.
 SAFE=" git uv echo printf true ls cat gh python3 jq grep sed head tail wc cut sort mkdir cp mv touch test "
 GIT_OPTS=" --no-pager -P --paginate --no-optional-locks "
 LIT='("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'$`\\]+)'
@@ -81,9 +82,12 @@ certain=true
 dir=$cwd
 seen=("$cwd" "$project")
 joined=${before//&&/;}
-if [[ $joined == *[\|\&\(\)\{\}\$\`\<\>]* ]]; then
+if [[ $joined == *[\|\&\(\)\{\}\$\`\<\>\#\\]* ]]; then
   certain=false
 else
+  # A quote may only sit in an exact `cd "<dir>"` segment: a quoted `;` would
+  # otherwise split one argument into segments that look like commands.
+  quotes=$(printf '%s' "$joined" | tr -cd "\"'" | wc -c)
   mapfile -t segs < <(printf '%s' "$joined" | tr ';\n' '\n\n')
   for seg in "${segs[@]}"; do
     seg=$(printf '%s' "$seg" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
@@ -91,10 +95,12 @@ else
     if [[ $seg =~ ^cd[[:space:]]+$LIT$ ]]; then
       dir=$(resolve "$dir" "$(unquote "${BASH_REMATCH[1]}")")
       seen+=("$dir")
+      quotes=$((quotes - $(printf '%s' "$seg" | tr -cd "\"'" | wc -c)))
     elif [[ $SAFE != *" ${seg%%[[:space:]]*} "* ]]; then
       certain=false
     fi
   done
+  ((quotes == 0)) || certain=false
 fi
 # The commit's git options, token by token up to `commit`.
 if [[ $commit == *[\"\'\\]* ]]; then
