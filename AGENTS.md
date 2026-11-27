@@ -771,7 +771,7 @@ makes it a major) reaches semantic-release and the changelog. After that release
 `next` restarts from `main`.
 
 A Claude Code `PreToolUse` hook in `.claude/settings.json` enforces this
-by blocking `git commit` when the current branch is `main` or `master`.
+by blocking `git commit` when the current branch is `main`, `master` or `next`.
 The hook script lives at `.claude/hooks/block-commit-to-main.sh`.
 
 `.claude/settings.json` also carries two **non-blocking** editing reminders: editing

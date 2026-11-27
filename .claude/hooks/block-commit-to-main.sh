@@ -1,5 +1,6 @@
 #!/bin/bash
-# PreToolUse hook: blocks `git commit` when the current branch is main or master.
+# PreToolUse hook: blocks `git commit` when the current branch is main, master or
+# next (the shared branch for the coming major).
 #
 # Registered in .claude/settings.json against `matcher: "Bash"` (every Bash call).
 # The security decision is made HERE, not via a settings `if` predicate: that
@@ -7,7 +8,7 @@
 # command substitution), firing the hook on unrelated commands. Instead we read
 # the literal command from stdin and only act on a genuine `git commit`.
 #
-# Emits a deny decision as JSON on main/master; silent pass-through otherwise.
+# Emits a deny decision as JSON on those branches; silent pass-through otherwise.
 
 set -euo pipefail
 
@@ -33,7 +34,7 @@ fi
 branch=$(git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 case "$branch" in
-  main|master)
+  main|master|next)
     jq -n --arg b "$branch" '{
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
