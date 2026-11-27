@@ -33,8 +33,13 @@ The app is two phases, decoupled by a catalogue snapshot:
    empty-guard (keeps the last good set if a source collapses ≥50%, needs 2 bad
    cycles to accept) → `dedupe()`, the one place repeats merge, whether a stream is
    on several pages of one source or found by several sources: one stream is a
-   shared `predisc_key`, or with none the identical `target_url` (per-field merge; it
-   keeps the longest title, which is why the decode runs first) → YouTube cams get
+   shared `predisc_key`, or with none the identical `target_url`. No source drops a
+   repeated stream itself (fetching one page once under several index URLs, or counting
+   a page's repeated embed once when numbering its angles, is index parsing, not a
+   merge). The merge is per field: a category we can map beats one we
+   can't, a higher-ranked source's beats a lower one's; the longest title wins (which
+   is why the decode runs first) unless both copies carry a `name_rank`, when the
+   better-ranked copy gives the title and the base → YouTube cams get
    their category from the Data API; scraped titles get location appended
    (`with_location`) → `CatalogueEntry`s with a stable id.
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
@@ -130,13 +135,16 @@ The app is two phases, decoupled by a catalogue snapshot:
   Add the instance to `active_sources` in `app._build_sources`, built with
   `_source_fetcher(name)` — `impersonate=True` when the site's Cloudflare gate 403s
   `requests` on its TLS/HTTP2 fingerprint (see the security model). Set `Candidate.predisc_key` so
-  dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8,
-  `None` = merged only with an identical `target_url`). A source never puts a token
-  it fetched into `target_url`: a target outlives the build that found it, so a
-  baked-in token lapses while the catalogue still holds the cam. A CDN that needs one
-  gets an extractor that mints it at resolve time (beachcam's). Text a source reads out
-  of a page (a title, a name, a category) goes through `base.decode_entities` as it is
-  read, before any suffix
+  dedup can merge it (`yt:<id>` for YouTube, `hls:<normalised>` for direct m3u8, the
+  site's own cam id where its URLs vary — `feratel:`, `viewsurf:`, `hdontap:`, in
+  `base.predisc_key` — and `None` = merged only with an identical `target_url`). A
+  source that finds one cam in several places of differing authority sets
+  `Candidate.name_rank` on each copy rather than merging them itself. A source never
+  puts a token it fetched into `target_url`: a target outlives the build that found
+  it, so a baked-in token lapses while the catalogue still holds the cam. A CDN that
+  needs one gets an extractor that mints it at resolve time (beachcam's). Text a source
+  reads out of a page (a title, a name, a category) goes through `base.decode_entities`
+  as it is read, before any suffix
   strip or geo check compares it (`&#8211;` is not `–`, and `St. John&#39;s` misses
   its own geo and repeats it); the build runs every title through it again, for text
   a source passed straight through (Data API snippets, JSON feeds). It decodes only
@@ -520,9 +528,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   (`data-src-cmplz`), and each embed's `title`. Every trust page's chrome links the
   trust's YouTube channel, so a *linked* channel `/live` is the cam only on an index
   card's page with nothing else — elsewhere it is chrome, and when that channel is live
-  it duplicates a cam already listed by video id. A cam reached from several places is
-  one candidate (keyed by `predisc_key`, else target), named by the page that embeds it
-  over a card over a page that links it; untitled YouTube embeds on a multi-cam page
+  it duplicates a cam already listed by video id. A cam reached from several places
+  comes out once per place, its `name_rank` saying how well each names it (the page
+  that embeds it, then a card, then a page that links it), and `dedupe()` takes the
+  best; untitled YouTube embeds on a multi-cam page
   take the video's title from YouTube's oEmbed (the Derby blog embeds Rutland's and
   Holkham's cams). `angle_key` is the cam's key, never its position, so a stable id
   stays with its cam when a page's embeds change. **streamdays** (Essex badgers,
@@ -585,9 +594,10 @@ The app is two phases, decoupled by a catalogue snapshot:
 - resortcams.com (~100 US-Southeast cams): WP sitemap → pages with an **open** Wowza HLS
   (`stream.resortcams.com`) in static HTML; fully tokenless chain, plain `DirectHls`, no
   host-list entries. Pages with no static player yield nothing and drop.
-- hdontap.com (~200 cams): sitemap → `/stream/<id>/<slug>/` pages (id is the dedupe key —
-  one cam can carry two slugs). A `<script id="player-data">` JSON blob marks a native-HLS
-  cam: the candidate is the **page URL** (predisc None) and `HdontapResolver` re-reads the
+- hdontap.com (~200 cams): sitemap → `/stream/<id>/<slug>/` pages, each id fetched once
+  (one cam can carry two slugs), and `hdontap:<id>` is the merge key. A
+  `<script id="player-data">` JSON blob marks a native-HLS cam: the candidate is the
+  **page URL** and `HdontapResolver` re-reads the
   blob at serve time because the `streamSrc` HLS carries a per-page-fetch `t`/`e` token pair
   (~13h; BOTH params required — a URL clipped at the JSON-escaped `&` 403s, hence
   `json.loads`, never a regex over raw HTML). No blob → standard ladder (~25% are YouTube
@@ -631,8 +641,10 @@ The app is two phases, decoupled by a catalogue snapshot:
   The cdn-0NN host varies per cam, so the API call is the only id→URL mapping. The
   tempting `/cdn-api/streams/` list endpoint returns a random sample — unusable.
 - viewsurf.com (~1000 French cams): the sitemap is the index AND the category seam
-  (`/univers/<slug>/vue/<id>-…`; a cam repeats once per univers → dedup on id,
-  preferring a mapped univers; unknown slugs log once and pass through raw). Target =
+  (`/univers/<slug>/vue/<id>-…`; a cam repeats once per univers → fetched once per id,
+  its first listing's univers its category; unknown slugs log once and pass through
+  raw). The merge key is `viewsurf:<uuid>`, so another site's joada embed of the same
+  cam, presentation params and all, merges with it. Target =
   the canonical joada embed (`platforms5.joada.net/embeded/embeded.html?uuid=…&type=…`,
   presentation params stripped); `ViewsurfResolver` GETs
   `platforms8/9.joada.net/api/videos/manifest/<uuid>` (the player rotates platforms6-12

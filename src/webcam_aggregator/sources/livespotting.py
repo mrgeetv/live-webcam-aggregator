@@ -55,7 +55,6 @@ class LivespottingSource:
                 page_for.setdefault(cam_id, _BASE + path)
         ids = sorted(page_for)
         raws = thread_imap(self._fetch.get, [_API.format(cam_id=i) for i in ids])
-        seen: set[str] = set()
         for cam_id, raw in zip(ids, raws, strict=True):
             try:
                 data = json.loads(raw or "")
@@ -65,9 +64,8 @@ class LivespottingSource:
                 continue
             url = str(data.get("source") or "")
             name = str(data.get("name") or "").strip()
-            if ".m3u8" not in url or not name or url in seen:
+            if ".m3u8" not in url or not name:
                 continue
-            seen.add(url)
             yield Candidate(
                 title=with_location_parts(
                     name,

@@ -1,6 +1,7 @@
 import time
 from collections import Counter
 
+from webcam_aggregator.dedup import dedupe
 from webcam_aggregator.models import Candidate, stable_id
 from webcam_aggregator.sources.wildlife_trusts import (
     _TAG,  # pyright: ignore[reportPrivateUsage]
@@ -163,7 +164,8 @@ class _FakeFetch:
 
 
 def _discover() -> dict[str, Candidate]:
-    return {c.target_url: c for c in WildlifeTrustsSource(_FakeFetch()).discover()}
+    cams = dedupe(list(WildlifeTrustsSource(_FakeFetch()).discover()))
+    return {c.target_url: c for c in cams}
 
 
 def test_wildlife_trusts_finds_cams_from_cards_sitemaps_and_every_embed_form() -> None:
@@ -244,7 +246,7 @@ def test_wildlife_trusts_stable_ids_are_unique_and_follow_the_cam() -> None:
     Every YouTube card shares the index page, and a page's embeds can be added, removed
     or reordered.
     """
-    cams = list(WildlifeTrustsSource(_FakeFetch()).discover())
+    cams = dedupe(list(WildlifeTrustsSource(_FakeFetch()).discover()))
     assert max(Counter(stable_id(c) for c in cams).values()) == 1
 
     hub = "https://www.essexwt.org/wildlife/webcams"
@@ -261,7 +263,7 @@ def test_wildlife_trusts_stable_ids_are_unique_and_follow_the_cam() -> None:
 
     after = {
         c.target_url: stable_id(c)
-        for c in WildlifeTrustsSource(_Fetch()).discover()
+        for c in dedupe(list(WildlifeTrustsSource(_Fetch()).discover()))
         if c.source_page_url == hub
     }
     assert before

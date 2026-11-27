@@ -4,6 +4,7 @@ import json
 from typing import TYPE_CHECKING
 
 from webcam_aggregator.categories import _MAP  # pyright: ignore[reportPrivateUsage]
+from webcam_aggregator.dedup import dedupe
 from webcam_aggregator.sources.shareju import (
     _TAG_CATEGORY,  # pyright: ignore[reportPrivateUsage]
     SharejuSource,
@@ -119,7 +120,7 @@ def test_duplicate_embeds_and_geo_already_in_name() -> None:
             _cam("重複", "https://www.youtube.com/embed/aaaaaaaaaaa?si=x"),
         ]
     )
-    cands = list(_source(html).discover())
+    cands = dedupe(list(_source(html).discover()))
     assert len(cands) == 1
     assert cands[0].category == "Rivers Lakes"
     # 川越市 is not literally in the name, 埼玉県 is appended too

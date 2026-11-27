@@ -474,3 +474,23 @@ def test_html_scraper_base_yields_every_pages_copy_of_a_target() -> None:
         ("https://s/b", "yt:aaaaaaaaaaa"),
         ("https://s/b", "yt:bbbbbbbbbbb"),
     ]
+
+
+def test_cam_id_keys_merge_every_url_shape_of_a_cam() -> None:
+    """A site's own cam id is the identity, whatever page or player URL carries it."""
+    joada = "https://platforms5.joada.net/embeded/embeded.html?uuid=d26-9f&type=live"
+    assert predisc_key(joada) == "viewsurf:d26-9f"
+    assert predisc_key(joada.replace("?uuid", "?autoplay=1&uuid")) == "viewsurf:d26-9f"
+    page = "https://hdontap.com/stream/269629/carmel-by-the-sea-live-webcam/"
+    assert predisc_key(page) == "hdontap:269629"
+    assert predisc_key(page.replace("carmel-by-the-sea", "carmel")) == "hdontap:269629"
+    assert predisc_key("https://hdontap.com/stream/269629") == "hdontap:269629"
+
+
+def test_a_cam_id_key_never_takes_part_of_an_id() -> None:
+    """An id the key's pattern can't read whole gives no key, never a prefix of it."""
+    joada = "https://platforms5.joada.net/embeded/embeded.html?uuid=5eAB12&type=live"
+    assert not (predisc_key(joada) or "").startswith("viewsurf:")
+    assert not (predisc_key("https://hdontap.com/stream/2696x9/") or "").startswith(
+        "hdontap:"
+    )
