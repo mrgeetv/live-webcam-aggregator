@@ -29,9 +29,26 @@ if ! printf '%s' "$cmd" | grep -Eq '\bgit\b[^;&|]*[[:space:]]commit\b'; then
   exit 0
 fi
 
-# Pin the branch lookup to the project, not the shell's cwd: a hook that runs
-# from anywhere else gets an empty branch and would silently fail OPEN.
-branch=$(git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# The branch that matters is the one checked out where the commit runs, which
+# in a worktree is not the project's. That directory is the shell's cwd (the
+# hook input's .cwd), moved by the last `cd <dir>` before the commit and then
+# by the commit's own `git -C <dir>`. A target we can't resolve (a variable, a missing dir)
+# falls back to the project dir: an empty branch would silently fail OPEN.
+unquote() { local p=${1#[\"\']}; p=${p%[\"\']}; [[ $p == "~"* ]] && p=$HOME${p#\~}; printf '%s' "$p"; }
+resolve() { if [[ $2 == /* ]]; then printf '%s' "$2"; else printf '%s/%s' "$1" "$2"; fi; }
+
+project=${CLAUDE_PROJECT_DIR:-.}
+dir=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
+[[ -n $dir ]] || dir=$project
+before=$(printf '%s' "$cmd" | sed -E 's/\bgit\b[^;&|]*[[:space:]]commit\b.*//')
+cd_target=$(printf '%s' "$before" | grep -oE '(^|[;&|(][[:space:]]*)cd[[:space:]]+[^[:space:];&|)]+' | tail -n1 | sed -E 's/.*cd[[:space:]]+//' || true)
+[[ -n $cd_target ]] && dir=$(resolve "$dir" "$(unquote "$cd_target")")
+commit=$(printf '%s' "$cmd" | grep -oE '\bgit\b[^;&|]*[[:space:]]commit\b' | head -n1 || true)
+c_target=$(printf '%s' "$commit" | grep -oE '[[:space:]]-C[[:space:]]+[^[:space:]]+' | head -n1 | sed -E 's/.*-C[[:space:]]+//' || true)
+[[ -n $c_target ]] && dir=$(resolve "$dir" "$(unquote "$c_target")")
+
+branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+[[ -n $branch ]] || branch=$(git -C "$project" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 case "$branch" in
   main|master|next)

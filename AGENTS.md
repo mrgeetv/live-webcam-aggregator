@@ -773,7 +773,8 @@ and the changelog read, and the betas' GitHub notes keep the per-PR detail. Then
 `main` into `next` again so it carries the release.
 
 A Claude Code `PreToolUse` hook in `.claude/settings.json` enforces this
-by blocking `git commit` when the current branch is `main`, `master` or `next`.
+by blocking `git commit` when the branch checked out where the commit runs (a worktree
+included) is `main`, `master` or `next`.
 The hook script lives at `.claude/hooks/block-commit-to-main.sh`.
 
 `.claude/settings.json` also carries two **non-blocking** editing reminders: editing
