@@ -44,15 +44,26 @@ protected() { [[ $1 == main || $1 == master || $1 == next ]]; }
 branch_of() { git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null || true; }
 unquote() { local p=${1#[\"\']}; p=${p%[\"\']}; [[ $p == "~"* ]] && p=$HOME${p#\~}; printf '%s' "$p"; }
 resolve() { if [[ $2 == /* ]]; then printf '%s' "$2"; else printf '%s/%s' "$1" "$2"; fi; }
+# Read a `git checkout|switch ...` into NEW (a branch it creates) and POS (its
+# other non-option words; a lone one names the branch it switches to).
+parse_switch() {
+  local -a w
+  read -ra w <<<"$1"
+  NEW="" POS=()
+  local j
+  for ((j = 2; j < ${#w[@]}; j++)); do
+    case ${w[j]} in
+      -b | -B | -c | -C | --orphan) NEW=${w[j + 1]:-}; j=$((j + 1)) ;;
+      --) POS=(); return ;;
+      -) POS+=(-) ;;
+      -*) ;;
+      *) POS+=("${w[j]}") ;;
+    esac
+  done
+}
 deny_branch() {
   deny "direct commit to protected branch \"$1\". Per project CLAUDE.md, create a feature branch first: git checkout -b fix/your-change"
 }
-
-# Something other than the directory picks the repository: the hook can't
-# follow it, so it refuses rather than guess.
-if printf '%s' "$cmd" | grep -Eq 'GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|--git-dir|--work-tree|core\.worktree'; then
-  deny "this commit names its repository through GIT_DIR, --git-dir, --work-tree or core.worktree, which this hook can't check. Commit from the worktree's own directory instead."
-fi
 
 # The branch that matters is the one checked out where the commit runs, which
 # in a worktree is not the project's. ONE parser both decides whether the hook
@@ -66,20 +77,48 @@ fi
 # Then the directory starts at the hook input's .cwd and the cds and -Cs move
 # it. Anything else leaves the hook UNSURE, and it checks every directory it
 # can find (cwd, project, every cd and -C target): any on a protected branch,
-# or any that doesn't resolve, denies.
+# or any that doesn't resolve, denies. A `git checkout`/`switch` before the
+# commit counts too: onto a protected branch (or `-`) it denies; onto a branch
+# that exists or that it creates, in a SAFE segment, that branch decides.
 SAFE=" git uv echo printf true ls cat gh python3 jq grep sed head tail wc cut sort mkdir cp mv touch test "
 GIT_OPTS=" --no-pager -P --paginate --no-optional-locks "
 LIT='("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'$`\\]+)'
 project=${CLAUDE_PROJECT_DIR:-.}
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
 [[ -n $cwd ]] || cwd=$project
-# -z: the whole command is one record, so a heredoc's lines after the commit
-# (its message) are cut away with it instead of read as commands before it.
-before=$(printf '%s' "$cmd" | sed -zE 's/\bgit\b[^;&|]*[[:space:]]commit\b.*//' | tr -d '\0')
-commit=$(printf '%s' "$cmd" | grep -oE '\bgit\b[^;&|]*[[:space:]]commit\b' | head -n1 || true)
+# `git` must start a command word (not `/git/` in a path), and the span to
+# `commit` stops at a newline as well as at ; & |. sed -z makes the whole
+# command one record, so a heredoc's lines after the commit (its message) are
+# cut away with it instead of read as commands before it.
+before=$(printf '%s' "$cmd" | sed -zE 's/(^|[[:space:];&|(])git[[:space:]]([^;&|\n]*[[:space:]])?commit\b.*/\1/' | tr -d '\0')
+commit=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?commit\b' | head -n1 || true)
+commits=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?commit\b' | wc -l)
+
+# Something other than the directory picks the repository: the hook can't
+# follow it, so it refuses rather than guess. Only what runs is read, not the
+# commit message after it.
+if printf '%s' "$before$commit" | grep -Eq 'GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|--git-dir|--work-tree|core\.worktree'; then
+  deny "this commit names its repository through GIT_DIR, --git-dir, --work-tree or core.worktree, which this hook can't check. Commit from the worktree's own directory instead."
+fi
+# A checkout onto a protected branch before the commit commits there.
+while read -r sw; do
+  sw=${sw#"${sw%%git*}"}
+  parse_switch "$sw"
+  if [[ -n $NEW ]]; then
+    if protected "$NEW"; then deny_branch "$NEW"; fi
+  else
+    for tok in "${POS[@]}"; do
+      if protected "$tok"; then deny_branch "$tok"; fi
+      [[ $tok == - ]] && deny "can't tell which branch \`git checkout -\` lands on. Commit in a separate command."
+    done
+  fi
+done < <(printf '%s' "$before" | grep -oE '(^|[[:space:];&|(])git[[:space:]]+(checkout|switch)([[:space:]][^;&|]*)?' || true)
 
 certain=true
+# A second commit in the same command isn't parsed: be unsure.
+((commits <= 1)) || certain=false
 dir=$cwd
+override=""
 seen=("$cwd" "$project")
 joined=${before//&&/;}
 if [[ $joined == *[\|\&\(\)\{\}\$\`\<\>\#\\]* ]]; then
@@ -95,7 +134,17 @@ else
     if [[ $seg =~ ^cd[[:space:]]+$LIT$ ]]; then
       dir=$(resolve "$dir" "$(unquote "${BASH_REMATCH[1]}")")
       seen+=("$dir")
+      override=""
       quotes=$((quotes - $(printf '%s' "$seg" | tr -cd "\"'" | wc -c)))
+    elif [[ $seg =~ ^git[[:space:]]+(checkout|switch)([[:space:]]|$) ]]; then
+      parse_switch "$seg"
+      if [[ -n $NEW ]]; then
+        override=$NEW
+      elif ((${#POS[@]} == 1)) && git -C "$dir" show-ref --verify --quiet "refs/heads/${POS[0]}"; then
+        override=${POS[0]}
+      fi
+    elif [[ $seg =~ ^git[[:space:]] && $seg =~ [[:space:]](checkout|switch)([[:space:]]|$) ]]; then
+      certain=false
     elif [[ $SAFE != *" ${seg%%[[:space:]]*} "* ]]; then
       certain=false
     fi
@@ -120,13 +169,13 @@ else
   done
 fi
 if ! $certain; then
-  # Over-collect: every cd and -C target anywhere before the commit is checked.
-  mapfile -t more < <(printf '%s' "$before$commit" | grep -oE '(cd|-C)[[:space:]]+[^[:space:];&|)]+' | sed -E 's/^(cd|-C)[[:space:]]+//' || true)
+  # Over-collect: every cd and -C target anywhere in the command is checked.
+  mapfile -t more < <(printf '%s' "$cmd" | grep -oE '(cd|-C)[[:space:]]+[^[:space:];&|)]+' | sed -E 's/^(cd|-C)[[:space:]]+//' || true)
   for t in "${more[@]}"; do seen+=("$(resolve "$cwd" "$(unquote "$t")")"); done
 fi
 
 if $certain && [[ -d $dir ]]; then
-  branch=$(branch_of "$dir")
+  branch=${override:-$(branch_of "$dir")}
   # Not a repo: git commit fails there anyway, so the project's branch decides.
   [[ -n $branch ]] || branch=$(branch_of "$project")
   if protected "$branch"; then deny_branch "$branch"; fi
