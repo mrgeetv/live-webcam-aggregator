@@ -55,15 +55,20 @@ if printf '%s' "$cmd" | grep -Eq 'GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|--git-dir
 fi
 
 # The branch that matters is the one checked out where the commit runs, which
-# in a worktree is not the project's. The hook is CERTAIN of that directory only
-# when everything before the commit is an allowlisted shape: `cd <literal dir>`,
-# or a command from SAFE, which can't move the shell (so no eval, exec, sh -c,
-# pushd, subshells, `$(...)`, `||`, braces or variable assignments), joined by
-# && or ;. Then the last cd's directory (else the hook input's .cwd), moved by
-# the commit's own `git -C`, decides. Otherwise it is UNSURE and checks every
-# directory involved (cwd, project, each cd and -C target): any on a protected
-# branch, or any target that doesn't resolve to a directory, denies.
+# in a worktree is not the project's. ONE parser both decides whether the hook
+# is CERTAIN of that directory and computes it, so the two can't disagree:
+# everything before the commit must be segments joined by && or ; (no pipes, no
+# lone &, which run a cd in a subshell; no `$(...)`, backticks, brackets,
+# braces or redirects), each either exactly `cd <literal dir>`, which moves the
+# directory, or a command from SAFE, which can't move the shell. The commit's
+# own git options may only be unquoted `-C <dir>` (applied in order) and the
+# harmless ones in GIT_OPTS. Then the directory starts at the hook input's .cwd
+# and the cds and -Cs move it. Anything else leaves the hook UNSURE, and it
+# checks every directory it can find (cwd, project, every cd and -C target):
+# any on a protected branch, or any that doesn't resolve, denies.
 SAFE=" git uv echo printf true ls cat gh python3 jq grep sed head tail wc cut sort mkdir cp mv touch test "
+GIT_OPTS=" --no-pager -P --paginate --no-optional-locks "
+LIT='("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'$`\\]+)'
 project=${CLAUDE_PROJECT_DIR:-.}
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
 [[ -n $cwd ]] || cwd=$project
@@ -71,27 +76,48 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
 # (its message) are cut away with it instead of read as commands before it.
 before=$(printf '%s' "$cmd" | sed -zE 's/\bgit\b[^;&|]*[[:space:]]commit\b.*//' | tr -d '\0')
 commit=$(printf '%s' "$cmd" | grep -oE '\bgit\b[^;&|]*[[:space:]]commit\b' | head -n1 || true)
-mapfile -t cds < <(printf '%s' "$before" | grep -oE '(^|[^[:alnum:]_-])cd[[:space:]]+[^[:space:];&|)]+' | sed -E 's/.*cd[[:space:]]+//' || true)
-mapfile -t cs < <(printf '%s' "$commit" | grep -oE '[[:space:]]-C[[:space:]]*[^[:space:]]+' | sed -E 's/.*-C[[:space:]]*//' || true)
 
 certain=true
-if [[ $before$commit == *'||'* || $before$commit == *'$('* || $before$commit == *'`'* ]] || ((${#cs[@]} > 1)); then
-  certain=false
-fi
-mapfile -t segs < <(printf '%s' "$before" | sed -E 's/&&|;|\|/\n/g')
-for seg in "${segs[@]}"; do
-  seg=$(printf '%s' "$seg" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
-  [[ -z $seg ]] && continue
-  [[ $seg =~ ^cd[[:space:]]+(\"[^\"\$\`]*\"|\'[^\']*\'|[^[:space:]\"\'\$\`\(\)\{\}\;\&\|]+)$ ]] && continue
-  [[ $seg == *[\(\)\{\}\$\`]* || $SAFE != *" ${seg%%[[:space:]]*} "* ]] && certain=false
-done
-
 dir=$cwd
 seen=("$cwd" "$project")
-for t in "${cds[@]}" "${cs[@]}"; do
-  dir=$(resolve "$dir" "$(unquote "$t")")
-  seen+=("$dir")
-done
+joined=${before//&&/;}
+if [[ $joined == *[\|\&\(\)\{\}\$\`\<\>]* ]]; then
+  certain=false
+else
+  mapfile -t segs < <(printf '%s' "$joined" | tr ';\n' '\n\n')
+  for seg in "${segs[@]}"; do
+    seg=$(printf '%s' "$seg" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+    [[ -z $seg ]] && continue
+    if [[ $seg =~ ^cd[[:space:]]+$LIT$ ]]; then
+      dir=$(resolve "$dir" "$(unquote "${BASH_REMATCH[1]}")")
+      seen+=("$dir")
+    elif [[ $SAFE != *" ${seg%%[[:space:]]*} "* ]]; then
+      certain=false
+    fi
+  done
+fi
+# The commit's git options, token by token up to `commit`.
+if [[ $commit == *[\"\'\\]* ]]; then
+  certain=false
+else
+  read -ra toks <<<"$commit"
+  i=1
+  while ((i < ${#toks[@]})) && [[ ${toks[i]} != commit ]]; do
+    if [[ ${toks[i]} == -C ]] && ((i + 1 < ${#toks[@]})); then
+      dir=$(resolve "$dir" "${toks[i + 1]}")
+      seen+=("$dir")
+      i=$((i + 2))
+      continue
+    fi
+    [[ $GIT_OPTS == *" ${toks[i]} "* ]] || certain=false
+    i=$((i + 1))
+  done
+fi
+if ! $certain; then
+  # Over-collect: every cd and -C target anywhere before the commit is checked.
+  mapfile -t more < <(printf '%s' "$before$commit" | grep -oE '(cd|-C)[[:space:]]+[^[:space:];&|)]+' | sed -E 's/^(cd|-C)[[:space:]]+//' || true)
+  for t in "${more[@]}"; do seen+=("$(resolve "$cwd" "$(unquote "$t")")"); done
+fi
 
 if $certain && [[ -d $dir ]]; then
   branch=$(branch_of "$dir")
