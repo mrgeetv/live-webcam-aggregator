@@ -12,6 +12,7 @@ from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.catalogue import Scheduler
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
+from webcam_aggregator.store import open_storeless
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -80,7 +81,7 @@ def _youtube_live(ids: Iterable[str]) -> dict[str, str]:
 
 def test_end_to_end_server() -> None:
     # Build catalogue
-    store = LiveCatalogue()
+    catalogue = LiveCatalogue()
     cache = _make_cache()
 
     scheduler = Scheduler(
@@ -88,17 +89,18 @@ def test_end_to_end_server() -> None:
         {"fake": 6},
         drop_reason_for=lambda _c: None,
         youtube_live=_youtube_live,
-        on_merge=store.swap,
+        on_merge=catalogue.swap,
+        store=open_storeless(),
     )
     scheduler.run_once()
 
-    entries = store.snapshot()
+    entries = catalogue.snapshot()
     assert len(entries) == 1, f"expected 1 entry, got {len(entries)}"
-    entry_id = next(iter(store.snapshot().keys()))
+    entry_id = next(iter(catalogue.snapshot().keys()))
 
     # Start server on port 0 (OS assigns free port)
     handler_cls = make_handler(
-        store,
+        catalogue,
         cache,
         _BASE_URL,
         manifest_fetch=_manifest_fetch,

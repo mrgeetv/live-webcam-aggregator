@@ -24,6 +24,7 @@ from webcam_aggregator.models import Candidate
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # origin_of helper — must return the scheme+host with trailing slash
@@ -267,7 +268,7 @@ def test_liveness_check_trusts_non_hls_resolve() -> None:
 
 
 def test_build_app_starts_without_youtube_when_client_init_fails(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A failed YouTube client init degrades gracefully.
 
@@ -289,7 +290,7 @@ def test_build_app_starts_without_youtube_when_client_init_fails(
         proxy_youtube=False,
         max_parallel_sources=4,
     )
-    app = _app.build_app(cfg)
+    app = _app.build_app(cfg, tmp_path / "s.db")
     assert "youtube-api" not in app.scheduler.intervals
     # Cold start: no refresh has run, so nothing is unhealthy yet (`ready` gates that
     # window) and every expected source is listed — never an empty {}.
@@ -317,8 +318,8 @@ def _cfg(source_interval_hours: dict[str, float] | None = None) -> Config:
     )
 
 
-def test_each_source_refreshes_on_its_declared_interval() -> None:
-    intervals = _app.build_app(_cfg()).scheduler.intervals
+def test_each_source_refreshes_on_its_declared_interval(tmp_path: Path) -> None:
+    intervals = _app.build_app(_cfg(), tmp_path / "s.db").scheduler.intervals
     hourly = {"explore", "shareju", "earthcam", "livespotting", "livefromiceland"}
     daily = {"skyline", "tomarigi"}
     assert {n for n, h in intervals.items() if h == 1} == hourly
@@ -329,11 +330,11 @@ def test_each_source_refreshes_on_its_declared_interval() -> None:
 
 
 def test_interval_overrides_apply_and_unknown_names_warn(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     cfg = _cfg(source_interval_hours={"skyline": 48, "skyfine": 2})
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator"):
-        intervals = _app.build_app(cfg).scheduler.intervals
+        intervals = _app.build_app(cfg, tmp_path / "s.db").scheduler.intervals
     assert intervals["skyline"] == 48
     assert "skyfine" not in intervals
     assert "SOURCE_INTERVAL_HOURS" in caplog.text
@@ -358,7 +359,7 @@ def test_last_hour_lines_carry_the_prefix(caplog: pytest.LogCaptureFixture) -> N
 
 
 def test_only_fingerprint_gated_sources_get_the_impersonating_transport(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """wildlife-trusts' index 403s the requests client on its TLS fingerprint.
 
@@ -381,6 +382,18 @@ def test_only_fingerprint_gated_sources_get_the_impersonating_transport(
 
     monkeypatch.setattr(_app, "WildlifeTrustsSource", recorder("wildlife-trusts"))
     monkeypatch.setattr(_app, "ExploreOrgSource", recorder("explore"))
-    _app.build_app(_cfg())
+    _app.build_app(_cfg(), tmp_path / "s.db")
     assert isinstance(seen["wildlife-trusts"]._session, _ImpersonatingSession)
     assert not isinstance(seen["explore"]._session, _ImpersonatingSession)
+
+
+def test_build_app_runs_storeless_when_the_store_cannot_open(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    unusable = tmp_path / "no-such-dir" / "webcam-aggregator.db"
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.store"):
+        app = _app.build_app(_cfg(), unusable)
+    assert "running storeless" in caplog.text
+    st = app.source_status()
+    assert st["ready"] is False
+    assert st["sources"]

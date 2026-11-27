@@ -35,6 +35,10 @@ COPY pyproject.toml uv.lock ./
 RUN uv export --frozen --no-dev --no-emit-project --output-file requirements.txt \
  && pip3 install --no-cache-dir --require-hashes --no-deps --target=/deps -r requirements.txt
 
+# An empty directory for the runtime's /data, created here because the runtime image
+# runs no build commands.
+RUN mkdir /data-dir
+
 # Stage 2: Runtime
 FROM ${RUNTIME_IMAGE}
 
@@ -64,10 +68,14 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifi
 # Copy application package
 COPY src/webcam_aggregator/ ./src/webcam_aggregator/
 
+# The store lives in /data, owned by the runtime user so it can write there; mount a
+# host directory over it to keep the store across a container recreate.
+COPY --from=builder --chown=65532:65532 /data-dir /data
+
 # Run as a non-root user (defense-in-depth). Numeric UID works on both the DHI
 # runtime (nonroot is 65532) and the local python:slim image (no /etc/passwd entry
-# needed). HOME=/tmp gives yt-dlp/deno a writable cache dir — the app itself writes
-# nothing to disk, and /app/src + /deps are world-readable.
+# needed). HOME=/tmp gives yt-dlp/deno a writable cache dir. The app writes its store
+# to /data (to /tmp when it can't), and /app/src + /deps are world-readable.
 ENV HOME=/tmp
 USER 65532:65532
 

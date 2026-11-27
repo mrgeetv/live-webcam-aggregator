@@ -23,7 +23,7 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
    `SCRAPE_WORKERS` no matter how many sources exist. A source is due once its interval
    has passed since its last refresh **finished**, and never runs two refreshes at
    once, so one that overruns its interval doesn't restart the moment it ends. A source
-   that crashes is isolated (reuses its last good set, the rest proceed). Each
+   that crashes is isolated (reuses its kept set, the rest proceed). Each
    `Source.discover()` yields `Candidate`s, every title passed once more through
    `base.decode_entities` as it leaves the source (see *Add a source*) →
    liveness filter (YouTube via the Data API batch; everything else via a
@@ -37,7 +37,7 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
    `predisc_key`: the merge identity is lossy (strips tokens, collapses feratel URL
    shapes), so sharing a verdict across it would apply one URL's result to a different
    one) → per-source
-   empty-guard, run when the refresh ends (keeps the last good set if a source
+   empty-guard, run when the refresh ends (keeps its previous kept set if a source
    collapses ≥50%, needs 2 bad refreshes to accept) → **merge after every refresh**,
    over every source's latest kept set: `dedupe()`, the one place repeats merge,
    whether a stream is on several pages of one source or found by several sources:
@@ -51,9 +51,16 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
    get their category from the Data API; scraped titles get location appended
    (`with_location`) → `CatalogueEntry`s with a stable id, swapped into the
    `LiveCatalogue`. The guard, the source's log line and the merge all run on the
-   scheduler thread, one finished refresh at a time, so they need no lock. On a cold
-   start the playlist serves from the first finished refresh and grows as the others
-   land.
+   scheduler thread, one finished refresh at a time, so they need no lock. So does the
+   commit after each refresh: the source's raw outcome, status, guard state, refresh
+   times and whole kept set go to the store (below) in one transaction, and a refresh
+   cut short by a restart is simply lost. At startup the scheduler loads every stored
+   source and merges at once, before the HTTP server starts, so the playlist and the
+   `/stream/<id>` URLs players hold survive a restart; only due sources refresh, a set
+   older than `catalogue.STALE_INTERVALS` × its interval (the same bound /health calls
+   `overdue`) is dropped and that source starts as new, and a restored `status` keeps a
+   `still dead` run going without a fresh transition WARNING. On a true cold start the
+   playlist serves from the first finished refresh and grows as the others land.
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
    `/stream/<id>` URLs. On play, `ResolveCache` resolves the upstream via the
    `Registry`→`Extractor`, and the HLS manifest is proxied — child manifests rewritten
@@ -372,7 +379,9 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   default — `SEARCH_QUERY` and `EXCLUDE_CATEGORIES` were missing for months. Compose
   forwards `${VAR:-}` as an empty string when a var is absent, so `config._int_env`,
   `_bool_env` and `fetch.resolve_scrape_workers` all treat **blank as unset**, not as an
-  invalid value to warn about.
+  invalid value to warn about. The one deliberate exception is `DATA_DIR`: compose reads
+  it for the `/data` bind mount and the app never sees it (the DB path is hard-coded),
+  so it stays out of `environment:`.
 
 - Route ipcamlive **`player/player.php` URLs and bare `www.ipcamlive.com/<alias>` share
   pages** to the resolver; direct `s*.ipcamlive.com/.../stream.m3u8` (the majority) must
@@ -732,6 +741,28 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   RAMPS over ~2 days and resets after a restart; growing counts are normal, not an
   outage. The API is internal and unversioned: if windy gates it, the per-source
   stats/status seam is what will say so.
+
+**The store** (`store.py`) is a SQLite file at the hard-coded `/data/webcam-aggregator.db`
+holding only re-derivable data, so losing it costs a cold start, never correctness.
+Rules that must survive refactors:
+
+- `store` owns every connection, pragma and transaction; nothing else imports
+  `sqlite3`. Other modules write SQL through its helpers: `Store.write(label, fn)` runs
+  `fn` in one `BEGIN IMMEDIATE` transaction on the single write connection, behind a
+  lock held for the whole transaction, and on a SQLite error rolls back, logs a WARNING
+  and returns False so the caller carries on in memory. `Store.read` opens a fresh
+  `query_only` connection per call. `autocommit=True` everywhere, never `False` (it
+  makes `BEGIN IMMEDIATE` impossible, no-ops `foreign_keys=ON` and pins read
+  snapshots).
+- No transaction spans a network fetch: fetch, then write.
+- Playback never reads it: `/stream` reads `LiveCatalogue` and `ResolveCache` only.
+- The schema is `store.MIGRATIONS`, append-only numbered steps against `PRAGMA
+  user_version`, all run in one transaction at startup. Never edit a released step: a
+  self-hoster's DB may sit at any earlier version. `store_test` builds every earlier
+  version from the steps and upgrades it, so a new step is covered without a test.
+- A store that can't be opened or migrated logs a WARNING and the app runs
+  **storeless**: a throwaway temp-file DB, same code and pragmas, discarded at exit.
+  Not `:memory:`, which WAL can't share across connections.
 
 **Security model:** every outbound fetch is validated by `fetch._validate_ip`
 (rejects non-http(s) and private/loopback/link-local/reserved IPs, and says which),

@@ -52,7 +52,9 @@ with how many cams are actually up and with `EXCLUDE_CATEGORIES`.
   once. The big crawls take minutes to tens of minutes, and that time is dominated by
   *waiting*, not work: a site that rate-limits (429/503) is backed off per host. So it
   depends on your egress IP far more than on your hardware, and it's why raising
-  `SCRAPE_WORKERS` doesn't reliably speed it up.
+  `SCRAPE_WORKERS` doesn't reliably speed it up. What each refresh found is kept in a
+  small store under `/data`, so a restart serves the playlist at once (see
+  *Persistent data*).
 - **On-demand serving**: when a player opens a channel, the container resolves the
   stream on request and proxies the HLS manifest, refreshing expiring tokens
   transparently so long sessions keep playing. For most cams the video segments
@@ -71,11 +73,14 @@ with how many cams are actually up and with `EXCLUDE_CATEGORIES`.
 
 ### Run
 
-Pull and run the published image:
+Make a directory for its data (see *Persistent data*), then pull and run the
+published image:
 
 ```bash
+mkdir -p ./data && sudo chown 65532:65532 ./data
 docker run -d --name webcams \
   -p 23457:8000 \
+  -v "$PWD/data:/data" \
   -e YOUTUBE_API_KEY=your_key_here \
   -e PUBLIC_BASE_URL=http://localhost:23457 \
   ghcr.io/mrgeetv/live-webcam-aggregator:v3
@@ -88,15 +93,17 @@ services:
   webcams:
     image: ghcr.io/mrgeetv/live-webcam-aggregator:v3
     ports: ["23457:8000"]
+    volumes: ["./data:/data"]
     environment:
       YOUTUBE_API_KEY: your_key_here
       PUBLIC_BASE_URL: http://localhost:23457
     restart: unless-stopped
 ```
 
-The playlist is then available at `http://localhost:23457/playlist.m3u8`. It
-answers `503` until the first source has finished its first refresh, then grows as
-the others land; the full catalogue takes **20–30 minutes** after a start.
+The playlist is then available at `http://localhost:23457/playlist.m3u8`. On the
+very first start it answers `503` until the first source has finished its first
+refresh, then grows as the others land; the full catalogue takes **20–30 minutes**.
+After that, a restart serves the stored catalogue straight away.
 
 Set `PUBLIC_BASE_URL` to the address your players actually reach; `localhost` only
 works for a player on the same machine (see *Exposing it*). These use the `:v3` major
@@ -181,9 +188,9 @@ Fields:
 - `unhealthy_sources` — the sources failing now (the reason `healthy` is `false`).
 - `sources.<name>` — the **raw** result of that source's last refresh: `discovered`
   (found), `kept` (passed liveness), `crashed` (`discover`/liveness threw). These stay
-  raw even when the empty-guard is still serving a failed source's last good set, so a
+  raw even when the empty-guard is still serving a failed source's kept set, so a
   dying source surfaces immediately.
-- `sources.<name>.status` — `ok`, `degraded` (collapsed, guard serving the last good
+- `sources.<name>.status` — `ok`, `degraded` (collapsed, guard serving the kept
   set), `dead` (0 cams or crashed), `overdue` (its last refresh finished more than
   twice its interval ago: the scheduler isn't getting to it), or `unknown` before its
   first refresh.
@@ -227,6 +234,7 @@ All via environment variables (see `.env.example`):
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
+| `DATA_DIR` | `./data` | **Compose only**, read by `docker compose` itself, never by the app: the host directory the repo's `docker-compose.yml` mounts at `/data`. See *Persistent data* |
 | `EXCLUDE_CATEGORIES` | (none) | Comma-separated categories to drop, across all sources, case-insensitive. See *Filtering by category* |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `MAX_PARALLEL_SOURCES` | `4` | How many source refreshes (discover + liveness) run at once (min 1). Total concurrency ≈ this × `SCRAPE_WORKERS`; due sources queue, most overdue first |
@@ -244,6 +252,33 @@ All via environment variables (see `.env.example`):
 > source's memory doesn't grow with its page count. RSS does **not** fall back to a small
 > baseline afterwards. Lower `SCRAPE_WORKERS` to cap the peak. Live memory is on
 > `/health` (`rss_mb`).
+
+## Persistent data
+
+The app keeps a small SQLite store at `/data/webcam-aggregator.db`: each source's
+cams from its last refresh, the outcome of that refresh and when it ran. On a
+restart it serves those at once, so players keep working and the `/stream/<id>`
+links they hold stay valid, and only the sources that are due refresh. A stored set
+older than twice its source's interval is dropped rather than served, and that
+source refreshes first.
+
+- **Everything in it can be rebuilt.** Losing it costs one cold start (the 20–30
+  minutes above), never data. Deleting the directory is a safe reset. It needs no
+  backup; if you take one anyway, use `sqlite3 webcam-aggregator.db ".backup copy.db"`
+  or `VACUUM INTO`, never a file copy while the app is running.
+- **Mount a directory, never the file.** SQLite keeps `-wal` and `-shm` files beside
+  the DB, and they must live on the same filesystem. Create the directory and give it
+  to the container's user (uid 65532) before the first start:
+  `mkdir -p /srv/webcams && sudo chown 65532:65532 /srv/webcams`. With the repo's
+  `docker-compose.yml`, set `DATA_DIR` to that path (default `./data`).
+- **Local disks only.** NFS and SMB shares are unsupported: SQLite's WAL mode needs
+  shared memory, which network filesystems don't reliably provide, and the app can't
+  detect it.
+- **Upgrades migrate it automatically**, including across several skipped releases.
+- **Without a mount** the store lives in the container's own layer: it survives a
+  restart but not a recreate, and startup logs a warning saying so. If it can't be
+  opened at all the app runs **storeless** (a throwaway store, discarded at restart)
+  and logs a warning; everything else works.
 
 ## Tuning the search query
 
@@ -319,6 +354,9 @@ running but gets no more updates.
   (see *Monitoring*).
 - **Playlist:** it serves from the first finished refresh and grows as the others land,
   instead of waiting for every source.
+- **New: a `/data` mount.** Mount a host directory at `/data` so a restart serves at
+  once instead of starting cold (see *Persistent data*). Without one the app still
+  runs, and says so at startup.
 
 ## Upgrading from v1
 

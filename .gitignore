@@ -4,6 +4,9 @@
 # Environment configuration (use .env.example as template)
 .env
 
+# The store, bind-mounted at /data by docker-compose.yml
+/data/
+
 # Python cache
 __pycache__/
 *.py[cod]

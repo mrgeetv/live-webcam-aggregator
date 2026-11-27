@@ -34,14 +34,14 @@ _Avoid_: corpus, sitemap (one kind of index), catalogue (that is the merged outp
 What a source learned from one cam page: the cams on it, or that it has none.
 _Avoid_: cache entry, cached page (the page itself is never kept)
 
-**Kept set** _(planned, #218)_:
+**Kept set**:
 The cams a source's latest accepted refresh found live: what that source contributes to the catalogue.
 _Avoid_: last good set, snapshot
 
-**Store** _(planned, #218)_:
+**Store**:
 The place on disk where what each source learned survives a restart: its kept set, its page records, when it last refreshed. Everything in it can be learned again; losing it costs time, never correctness.
 _Avoid_: database, cache (the page records are one part of it)
 
-**Storeless** _(planned, #218)_:
+**Storeless**:
 Running with a throwaway store that is discarded at restart, because the real one can't be used (written by a newer release, or its location isn't writable). Everything works; nothing learned survives a restart.
 _Avoid_: offline, degraded (that is a source status)

@@ -20,6 +20,7 @@ import psutil
 from webcam_aggregator import config
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.catalogue import (
+    STALE_INTERVALS,
     Scheduler,
     failure_counts,
     top_counts,
@@ -85,9 +86,11 @@ from webcam_aggregator.sources.wildlife_trusts import WildlifeTrustsSource
 from webcam_aggregator.sources.windy import WindySource
 from webcam_aggregator.sources.worldcams import WorldcamsSource
 from webcam_aggregator.sources.youtube_api import YoutubeApiSource
+from webcam_aggregator.store import DB_PATH, open_store
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
+    from pathlib import Path
 
     from googleapiclient._apis.youtube.v3.resources import YouTubeResource
 
@@ -539,11 +542,6 @@ def run_http_server(
     log.info("HTTP server listening on port %d", port)
 
 
-# One interval late is a slow refresh; this many means the scheduler isn't getting to
-# the source at all.
-_OVERDUE_INTERVALS = 2
-
-
 def _utc(ts: float | None) -> str | None:
     if ts is None:
         return None
@@ -567,7 +565,7 @@ def source_status_for(scheduler: Scheduler, now: float) -> dict[str, Any]:
         interval = scheduler.intervals[name]
         if h.last_refresh_at is None:
             status = "unknown"
-        elif now - h.last_refresh_at > _OVERDUE_INTERVALS * interval * 3600:
+        elif now - h.last_refresh_at > STALE_INTERVALS * interval * 3600:
             status = "overdue"
         else:
             status = h.status
@@ -809,8 +807,12 @@ class App:
     report_last_hour: Callable[[], None]
 
 
-def build_app(cfg: config.Config) -> App:
-    """Wire sources, extractors, resolve cache, scheduler and catalogue from `cfg`."""
+def build_app(cfg: config.Config, db_path: Path = DB_PATH) -> App:
+    """Wire sources, extractors, resolve cache, scheduler and catalogue from `cfg`.
+
+    The store at `db_path` restores what sources learned before a restart; playback
+    never reads it, only the scheduler.
+    """
     # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
     # probe). Reactive: it is a no-op until a host answers 429/503, then that host
     # is spaced and its retries are gated past the shedding window so they succeed
@@ -846,6 +848,7 @@ def build_app(cfg: config.Config) -> App:
         ),
         youtube_live=_youtube_live_for(yt_source),
         on_merge=catalogue.swap,
+        store=open_store(db_path),
         exclude_categories=cfg.exclude_categories,
         max_parallel_sources=cfg.max_parallel_sources,
         fetch_stats=drain_source_stats,

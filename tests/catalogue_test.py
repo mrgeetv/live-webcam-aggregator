@@ -5,15 +5,19 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
+from webcam_aggregator import store
+from webcam_aggregator.app import source_status_for
 from webcam_aggregator.catalogue import (
     AGREE_TO_ACCEPT,
     Hist,
     Scheduler,
 )
 from webcam_aggregator.models import Candidate, CatalogueEntry
+from webcam_aggregator.store import open_storeless
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
+    from pathlib import Path
 
     import pytest
 
@@ -98,6 +102,7 @@ def _scheduler(
     exclude_categories: frozenset[str] = _NO_EXCLUDE,
     max_parallel_sources: int = 4,
     fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None = None,
+    db: store.Store | None = None,
 ) -> Scheduler:
     sink = merges if merges is not None else []
     return Scheduler(
@@ -110,6 +115,7 @@ def _scheduler(
         max_parallel_sources=max_parallel_sources,
         fetch_stats=fetch_stats,
         clock=clock or _Clock(),
+        store=db or open_storeless(),
     )
 
 
@@ -504,10 +510,10 @@ def _make_old_candidates(n: int) -> list[Candidate]:
 
 
 def test_empty_guard_reuses_previous_on_first_shrink() -> None:
-    """Prior last_kept of 10; build returning 2 kept (>50% drop) reuses old 10."""
+    """Prior kept_set of 10; build returning 2 kept (>50% drop) reuses old 10."""
     old_kept = _make_old_candidates(10)
     history: dict[str, Hist] = {
-        "worldcams": Hist(last_count=10, shrink_streak=0, last_kept=old_kept)
+        "worldcams": Hist(last_count=10, shrink_streak=0, kept_set=old_kept)
     }
 
     # Only 2 candidates survive — 80% drop, triggers guard
@@ -540,7 +546,7 @@ def test_empty_guard_accepts_after_agree_to_accept_consecutive_shrinks() -> None
         "worldcams": Hist(
             last_count=10,
             shrink_streak=AGREE_TO_ACCEPT - 1,
-            last_kept=old_kept,
+            kept_set=old_kept,
         )
     }
 
@@ -581,7 +587,7 @@ def test_empty_guard_streak_increments_then_resets() -> None:
     """Two consecutive shrinks: the first reuses the old set; the second accepts."""
     old_kept = _make_old_candidates(10)
     history: dict[str, Hist] = {
-        "worldcams": Hist(last_count=10, shrink_streak=0, last_kept=old_kept)
+        "worldcams": Hist(last_count=10, shrink_streak=0, kept_set=old_kept)
     }
 
     small_cands = [
@@ -612,8 +618,8 @@ def test_empty_guard_streak_increments_then_resets() -> None:
     assert history["worldcams"].last_count == 2  # updated to new small count
 
 
-def test_crash_reuses_last_good_set_and_never_wipes() -> None:
-    """A source whose discover() keeps raising keeps reusing its last good set.
+def test_crash_reuses_the_kept_set_and_never_wipes() -> None:
+    """A source whose discover() keeps raising keeps reusing its kept set.
 
     Two consecutive crashes must NOT be accepted as an empty set.
     """
@@ -645,7 +651,7 @@ def test_crash_reuses_last_good_set_and_never_wipes() -> None:
         [src], drop_reason_for=_always_alive, youtube_live=_no_yt_live, history=history
     )
     assert len(first) == 1
-    for _ in range(2):  # the old bug wiped last_kept on the 2nd consecutive crash
+    for _ in range(2):  # the second crash in a row is the one that could wipe it
         result = _build(
             [src],
             drop_reason_for=_always_alive,
@@ -664,7 +670,7 @@ def test_health_fields_record_raw_outcome_under_guard() -> None:
     """
     old_kept = _make_old_candidates(10)
     history: dict[str, Hist] = {
-        "worldcams": Hist(last_count=10, shrink_streak=0, last_kept=old_kept)
+        "worldcams": Hist(last_count=10, shrink_streak=0, kept_set=old_kept)
     }
     small = [
         _make_candidate(
@@ -740,7 +746,7 @@ def test_health_fields_flag_crash() -> None:
 def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
     """A source whose liveness probe raises is treated like a crash.
 
-    Sources run concurrently; it reuses its last good set and must NOT sink the other
+    Sources run concurrently; it reuses its kept set and must NOT sink the other
     sources' results.
     """
     boom = _make_candidate(
@@ -757,7 +763,7 @@ def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
         return None
 
     history: dict[str, Hist] = {
-        "worldcams": Hist(last_count=1, shrink_streak=0, last_kept=[boom])
+        "worldcams": Hist(last_count=1, shrink_streak=0, kept_set=[boom])
     }
     entries = _build(
         [_Src("worldcams", [boom]), _Src("cxtvlive", [good])],
@@ -767,8 +773,8 @@ def test_source_liveness_failure_is_isolated_and_reuses_history() -> None:
     )
     srcs = {e.source for e in entries}
     assert "cxtvlive" in srcs  # healthy source unaffected by the other's liveness crash
-    assert "worldcams" in srcs  # failed source reused its last good set
-    assert history["worldcams"].last_kept == [boom]  # history not wiped
+    assert "worldcams" in srcs  # failed source reused its kept set
+    assert history["worldcams"].kept_set == [boom]  # history not wiped
 
 
 def test_exclude_categories_drops_matching_entries() -> None:
@@ -1396,3 +1402,152 @@ def test_a_failure_after_the_refresh_does_not_strand_the_source() -> None:
     assert s.history["explore"].last_refresh_at == clock.now  # it did run
     clock.advance(1)
     assert s.tick() == ["explore"]  # not stuck as "running" forever
+
+
+# ---------------------------------------------------------------------------
+# Restart: a second scheduler opened on the same store
+# ---------------------------------------------------------------------------
+
+
+def _cams(name: str, n: int) -> list[Candidate]:
+    return [
+        _make_candidate(
+            source=name,
+            key=f"hls:{name}{i}",
+            page=f"https://{name}/{i}",
+            target=f"https://{name}/{i}.m3u8",
+            title=f"{name} cam {i}",
+        )
+        for i in range(n)
+    ]
+
+
+def _restart(
+    path: Path,
+    sources: list[Source],
+    clock: _Clock,
+    *,
+    merges: list[list[CatalogueEntry]] | None = None,
+    intervals: Mapping[str, float] | None = None,
+) -> Scheduler:
+    return _scheduler(
+        sources,
+        db=store.Store(path),
+        clock=clock,
+        merges=merges,
+        intervals=intervals,
+    )
+
+
+def test_a_restart_serves_the_stored_kept_sets_at_once(tmp_path: Path) -> None:
+    db = tmp_path / "s.db"
+    clock = _Clock()
+    srcs: list[Source] = [_Src("explore", _cams("explore", 3)), _Src("feratel", [])]
+    first: list[list[CatalogueEntry]] = []
+    s = _restart(db, srcs, clock, merges=first)
+    _finish_all(s, s.tick())
+
+    clock.advance(0.5)
+    after: list[list[CatalogueEntry]] = []
+    s2 = _restart(db, srcs, clock, merges=after)
+    assert after == [first[-1]]  # merged at startup, before any refresh
+    assert s2.tick() == []  # neither is due: each waits out its interval
+
+
+def test_only_due_sources_refresh_after_a_restart(tmp_path: Path) -> None:
+    db = tmp_path / "s.db"
+    clock = _Clock()
+    srcs: list[Source] = [
+        _Src("explore", _cams("explore", 1)),
+        _Src("skyline", _cams("skyline", 1)),
+    ]
+    intervals = {"explore": 1, "skyline": 24}
+    s = _restart(db, srcs, clock, intervals=intervals)
+    _finish_all(s, s.tick())
+
+    clock.advance(1.5)
+    s2 = _restart(db, srcs, clock, intervals=intervals)
+    assert s2.tick() == ["explore"]
+    _finish_all(s2, ["explore"])
+
+
+def test_a_set_older_than_twice_its_interval_is_dropped(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = tmp_path / "s.db"
+    clock = _Clock()
+    srcs: list[Source] = [
+        _Src("explore", _cams("explore", 2)),
+        _Src("skyline", _cams("skyline", 2)),
+    ]
+    intervals = {"explore": 1, "skyline": 24}
+    s = _restart(db, srcs, clock, intervals=intervals)
+    _finish_all(s, s.tick())
+
+    clock.advance(3)  # explore 3x its interval old, skyline well inside its own
+    merges: list[list[CatalogueEntry]] = []
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        s2 = _restart(db, srcs, clock, merges=merges, intervals=intervals)
+    assert {e.source for e in merges[-1]} == {"skyline"}
+    assert s2.history["explore"].last_refresh_at is None  # starts as new
+    assert "loaded skyline; over age, so starting as new: explore" in caplog.text
+    assert s2.tick() == ["explore"]
+    _finish_all(s2, ["explore"])
+
+
+def test_a_restart_mid_outage_still_needs_two_bad_refreshes(tmp_path: Path) -> None:
+    db = tmp_path / "s.db"
+    clock = _Clock()
+    src = _Src("skyline", _cams("skyline", 10))
+    s = _restart(db, [src], clock)
+    _finish_all(s, s.tick())
+
+    src._c = _cams("skyline", 2)  # pyright: ignore[reportPrivateUsage]
+    for bad in range(AGREE_TO_ACCEPT):
+        clock.advance(6)
+        merges: list[list[CatalogueEntry]] = []
+        s = _restart(db, [src], clock, merges=merges)
+        assert len(merges[-1]) == 10  # the guard's kept set, served at startup
+        _finish_all(s, s.tick())
+        held = bad + 1 < AGREE_TO_ACCEPT
+        assert len(merges[-1]) == (10 if held else 2)
+
+
+def test_rows_for_a_source_the_code_no_longer_has_are_ignored(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "s.db"
+    clock = _Clock()
+    s = _restart(db, [_Src("gone", _cams("gone", 2))], clock)
+    _finish_all(s, s.tick())
+
+    merges: list[list[CatalogueEntry]] = []
+    s2 = _restart(db, [_Src("explore", _cams("explore", 1))], clock, merges=merges)
+    assert "gone" not in s2.history
+    assert merges == []  # nothing of explore's stored, so nothing to serve yet
+    _finish_all(s2, s2.tick())
+    assert {e.source for e in merges[-1]} == {"explore"}
+
+
+def test_health_reads_the_same_either_side_of_a_restart(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = tmp_path / "s.db"
+    clock = _Clock(1_000_000.7)
+    srcs: list[Source] = [_Src("explore", _cams("explore", 2)), _Src("feratel", [])]
+    s = _restart(db, srcs, clock)
+    _finish_all(s, s.tick())
+    before = source_status_for(s, clock())
+
+    clock.advance(1)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.catalogue"):
+        s2 = _restart(db, srcs, clock)
+        assert source_status_for(s2, clock()) == source_status_for(s, clock())
+        assert source_status_for(s2, clock() - 3600) == before
+        assert s2.history["feratel"].status == "dead"
+        clock.advance(6)
+        _finish_all(s2, s2.tick())
+    # The outage reads on as one: no fresh "-> dead" transition, only "still dead".
+    assert "-> dead" not in caplog.text
+    assert "feratel: still dead" in caplog.text
