@@ -24,6 +24,8 @@ from curl_cffi.curl import CURL_WRITEFUNC_ERROR
 from requests.adapters import HTTPAdapter
 from requests.structures import CaseInsensitiveDict
 
+from webcam_aggregator.hosts import on_host
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
@@ -487,9 +489,8 @@ _REFERER_HOSTS: dict[str, str] = {
 
 
 def _referer_for(url: str) -> dict[str, str]:
-    host = urlsplit(url).hostname or ""
     for h, ref in _REFERER_HOSTS.items():
-        if host == h or host.endswith("." + h):
+        if on_host(url, h):
             return {"Referer": ref}
     return {}
 

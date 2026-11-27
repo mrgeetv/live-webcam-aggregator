@@ -10,6 +10,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urljoin, urlsplit
 
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.logging_redaction import trim_url
 from webcam_aggregator.signing import sign, verify
 
@@ -188,8 +189,7 @@ _DIRECT_PLAYBACK_HOSTS = ("pixelcaster.com",)
 
 
 def _is_direct_playback(url: str) -> bool:
-    host = urlsplit(url).hostname or ""
-    return any(host == h or host.endswith("." + h) for h in _DIRECT_PLAYBACK_HOSTS)
+    return on_host(url, *_DIRECT_PLAYBACK_HOSTS)
 
 
 # Hosts whose segments fail a direct player fetch, so we relay the bytes too:
@@ -221,13 +221,11 @@ _PROXY_SEGMENT_HOSTS = (
 
 
 def _proxy_segments_for(url: str) -> bool:
-    host = urlsplit(url).hostname or ""
-    return any(host == h or host.endswith("." + h) for h in _PROXY_SEGMENT_HOSTS)
+    return on_host(url, *_PROXY_SEGMENT_HOSTS)
 
 
 def _is_youtube(url: str) -> bool:
-    host = urlsplit(url).hostname or ""
-    return host == "googlevideo.com" or host.endswith(".googlevideo.com")
+    return on_host(url, "googlevideo.com")
 
 
 def _redirects_youtube(url: str, *, proxy_youtube: bool) -> bool:

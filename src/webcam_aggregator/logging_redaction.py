@@ -7,6 +7,8 @@ import re
 from typing import override
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
+from webcam_aggregator.hosts import on_host
+
 # googleapiclient puts the developer key in the request URI, and HttpError.__str__
 # (which IS its __repr__) prints that URI — so ANY log of such an exception writes the
 # key to disk. log.exception is the easiest way to do it by accident, since a traceback
@@ -51,19 +53,16 @@ def trim_url(url: str, *, keep_ids: bool = True) -> str:
     """
     try:
         parts = urlsplit(url)
-        name = (parts.hostname or "").rstrip(".")  # `host.` is the same host
     except ValueError:
         return "<malformed url>"
     host = parts.netloc.rpartition("@")[2]
     path = parts.path
-    if name.endswith(".googlevideo.com"):
+    if on_host(url, "googlevideo.com"):
         path = _googlevideo_path(path)
     ids = [
         (k, v)
         for k, v in parse_qsl(parts.query)
-        if keep_ids
-        and k in _ID_PARAMS
-        and (name == _ID_PARAMS[k] or name.endswith("." + _ID_PARAMS[k]))
+        if keep_ids and k in _ID_PARAMS and on_host(url, _ID_PARAMS[k])
     ]
     query = f"?{urlencode(ids)}" if ids else ""
     return f"{parts.scheme}://{host}{path}{query}"

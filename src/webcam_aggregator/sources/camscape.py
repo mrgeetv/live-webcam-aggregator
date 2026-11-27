@@ -6,15 +6,19 @@ import json
 import logging
 import re
 from typing import override
-from urllib.parse import urlsplit
 
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     predisc_key,
     with_location_parts,
 )
-from webcam_aggregator.sources.camsecure import hls_from_player, player_iframe
+from webcam_aggregator.sources.camsecure import (
+    hls_from_player,
+    is_camsecure,
+    player_iframe,
+)
 
 log = logging.getLogger("webcam-aggregator.camscape")
 
@@ -90,18 +94,6 @@ _TAG = re.compile(r'class="where-link" href="/showing/([a-z0-9-]+)/"')
 _LOC = re.compile(r'class="where-link" href="/location/([a-z0-9-]+)/"')
 _STREAMS = '<script id="streams-data" type="application/json">'
 _CHANNEL = re.compile(r"[?&]channel=([A-Za-z0-9_]+)")
-
-
-def _is_camsecure(url: str) -> bool:
-    """Match a camsecure embed (camsecure.co / .uk / .co.uk, any subdomain).
-
-    The embed is resolved to its HLS below. It is read from the hostname's labels: as a
-    regex, a run of label repeats and the `camsecure.` literal compete for the same
-    characters.
-    """
-    parts = urlsplit(url)
-    labels = (parts.hostname or "").split(".")
-    return "camsecure" in labels[:-1] and parts.path.startswith("/")
 
 
 # ctx = (location parts, {stream index: name})
@@ -203,9 +195,9 @@ class CamscapeSource(HtmlScraperSource[_Ctx]):
             if not embed:
                 continue
             # Twitch player embeds need normalising to twitch.tv/<channel> for yt-dlp.
-            m = _CHANNEL.search(embed) if "player.twitch.tv" in embed else None
+            m = _CHANNEL.search(embed) if on_host(embed, "player.twitch.tv") else None
             target = f"https://www.twitch.tv/{m.group(1)}" if m else embed
-            if _is_camsecure(target) and ".m3u8" not in target:
+            if is_camsecure(target) and ".m3u8" not in target:
                 target = self._camsecure_hls(target) or target
             out.append(
                 Candidate(
