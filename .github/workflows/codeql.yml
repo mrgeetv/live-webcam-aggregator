@@ -1,11 +1,6 @@
 name: CodeQL
 
-# Static analysis of the Python and of these workflow files (the `actions`
-# language), set up as a file rather than GitHub's default setup so its actions
-# are pinned and bumped like every other workflow's. Alerts land in the
-# Security tab, where Copilot Autofix proposes fixes for the languages it
-# covers. The weekly run catches
-# new queries against code that hasn't changed.
+# CodeQL for the Python and the workflow files.
 on:
   push:
     branches: [main, next]
