@@ -78,8 +78,10 @@ deny_branch() {
 # it. Anything else leaves the hook UNSURE, and it checks every directory it
 # can find (cwd, project, every cd and -C target): any on a protected branch,
 # or any that doesn't resolve, denies. A `git checkout`/`switch` before the
-# commit counts too: onto a protected branch (or `-`) it denies; onto a branch
-# that exists or that it creates, in a SAFE segment, that branch decides.
+# commit counts too: onto a protected branch (or `-`) it denies. Onto a branch
+# that exists or that it creates, that branch decides only when the checkout
+# ran in the commit's directory and everything is joined by && (so a failed
+# checkout stops the commit); otherwise the directory's own branch does.
 SAFE=" git uv echo printf true ls cat gh python3 jq grep sed head tail wc cut sort mkdir cp mv touch test "
 GIT_OPTS=" --no-pager -P --paginate --no-optional-locks "
 LIT='("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'$`\\]+)'
@@ -90,14 +92,19 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
 # `commit` stops at a newline as well as at ; & |. sed -z makes the whole
 # command one record, so a heredoc's lines after the commit (its message) are
 # cut away with it instead of read as commands before it.
-before=$(printf '%s' "$cmd" | sed -zE 's/(^|[[:space:];&|(])git[[:space:]]([^;&|\n]*[[:space:]])?commit\b.*/\1/' | tr -d '\0')
+# (The trailing x keeps $(...) from stripping a newline that separates the
+# commit from what came before it.)
+before=$(printf '%s' "$cmd" | sed -zE 's/(^|[[:space:];&|(])git[[:space:]]([^;&|\n]*[[:space:]])?commit\b.*/\1/' | tr -d '\0'; printf x)
+before=${before%x}
 commit=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?commit\b' | head -n1 || true)
 commits=$(printf '%s' "$cmd" | grep -oE '(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?commit\b' | wc -l)
 
 # Something other than the directory picks the repository: the hook can't
-# follow it, so it refuses rather than guess. Only what runs is read, not the
-# commit message after it.
-if printf '%s' "$before$commit" | grep -Eq 'GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|--git-dir|--work-tree|core\.worktree'; then
+# follow it, so it refuses rather than guess. One commit: only what runs up to
+# it is read, not its message. More than one: the whole command is.
+scan=$before$commit
+((commits <= 1)) || scan=$cmd
+if printf '%s' "$scan" | grep -Eq 'GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|--git-dir|--work-tree|core\.worktree'; then
   deny "this commit names its repository through GIT_DIR, --git-dir, --work-tree or core.worktree, which this hook can't check. Commit from the worktree's own directory instead."
 fi
 # A checkout onto a protected branch before the commit commits there.
@@ -150,6 +157,8 @@ else
     fi
   done
   ((quotes == 0)) || certain=false
+  # A ; or newline lets the commit run after a failed checkout.
+  [[ $before == *";"* || $before == *$'\n'* ]] && override=""
 fi
 # The commit's git options, token by token up to `commit`.
 if [[ $commit == *[\"\'\\]* ]]; then
@@ -160,6 +169,7 @@ else
   while ((i < ${#toks[@]})) && [[ ${toks[i]} != commit ]]; do
     if [[ ${toks[i]} == -C ]] && ((i + 1 < ${#toks[@]})); then
       dir=$(resolve "$dir" "${toks[i + 1]}")
+      override="" # a checkout ran elsewhere
       seen+=("$dir")
       i=$((i + 2))
       continue
