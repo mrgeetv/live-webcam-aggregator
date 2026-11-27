@@ -78,7 +78,7 @@ docker run -d --name webcams \
   -p 23457:8000 \
   -e YOUTUBE_API_KEY=your_key_here \
   -e PUBLIC_BASE_URL=http://localhost:23457 \
-  ghcr.io/mrgeetv/live-webcam-aggregator:v2
+  ghcr.io/mrgeetv/live-webcam-aggregator:v3
 ```
 
 Or with a minimal `docker-compose.yml` (uses the published image, no build):
@@ -86,7 +86,7 @@ Or with a minimal `docker-compose.yml` (uses the published image, no build):
 ```yaml
 services:
   webcams:
-    image: ghcr.io/mrgeetv/live-webcam-aggregator:v2
+    image: ghcr.io/mrgeetv/live-webcam-aggregator:v3
     ports: ["23457:8000"]
     environment:
       YOUTUBE_API_KEY: your_key_here
@@ -99,11 +99,11 @@ answers `503` until the first source has finished its first refresh, then grows 
 the others land; the full catalogue takes **20–30 minutes** after a start.
 
 Set `PUBLIC_BASE_URL` to the address your players actually reach; `localhost` only
-works for a player on the same machine (see *Exposing it*). These use the `:v2` major
-tag, so you get v2.x updates but never an automatic jump to a future breaking major
-(`:latest` would); see *Upgrading from v1*. The latest release's tags (`:v2`
+works for a player on the same machine (see *Exposing it*). These use the `:v3` major
+tag, so you get v3.x updates but never an automatic jump to a future breaking major
+(`:latest` would); see *Upgrading from v2*. The latest release's tags (`:v3`
 included) are rebuilt daily when a base image is republished with patches, so
-pulling `:v2` again picks them up; an older `:v2.x.y` pin is never rebuilt. `:beta`
+pulling `:v3` again picks them up; an older `:v3.x.y` pin is never rebuilt. `:beta`
 carries prereleases of the next major: breaking changes, never rebuilt, for trying it
 early. Want to build from source instead? See [DEVELOPMENT.md](DEVELOPMENT.md).
 
@@ -304,6 +304,22 @@ before falling back to `Other`. `Unmapped Category` is different — it flags ca
 source *did* give a category we don't recognise yet, so a missing mapping is visible (and
 logged when its source refreshes) instead of hidden in `Other`.
 
+## Upgrading from v2
+
+v3 refreshes each source on its own schedule instead of rebuilding everything at once,
+which is a **breaking change** if you tune or monitor the refresh. A pinned `:v2` keeps
+running but gets no more updates.
+
+- **Removed:** `CATALOGUE_INTERVAL_HOURS` (it warns if still set). Each source has its
+  own interval, and `SOURCE_INTERVAL_HOURS` (`name=hours,…`) overrides any of them (see
+  *Configuration*).
+- **`/health`:** `last_build_seconds` is gone. Each source reports `last_refresh_at`,
+  `last_refresh_seconds` and `interval_hours` instead, and a source whose last refresh
+  finished more than twice its interval ago is `overdue`, which counts as unhealthy
+  (see *Monitoring*).
+- **Playlist:** it serves from the first finished refresh and grows as the others land,
+  instead of waiting for every source.
+
 ## Upgrading from v1
 
 v2 is a ground-up rewrite and a **breaking change**. Images are tagged `:latest`,
@@ -343,7 +359,7 @@ Each image the release workflow publishes carries signed build provenance, so yo
 check that this repo's build workflow made it before running it:
 
 ```bash
-gh attestation verify oci://ghcr.io/mrgeetv/live-webcam-aggregator:v2 \
+gh attestation verify oci://ghcr.io/mrgeetv/live-webcam-aggregator:v3 \
   --repo mrgeetv/live-webcam-aggregator \
   --signer-workflow mrgeetv/live-webcam-aggregator/.github/workflows/docker-build.yml
 ```

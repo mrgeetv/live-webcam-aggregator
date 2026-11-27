@@ -170,7 +170,7 @@ the merge. Test files are named `*_test.py` (enforced by the `name-tests-test` h
 ```text
 live-webcam-aggregator/
 ├── src/
-│   └── webcam_aggregator/      # v2 application package
+│   └── webcam_aggregator/      # application package
 │       ├── __main__.py         # Entry point (python -m webcam_aggregator)
 │       ├── app.py              # App wiring, /health and the HTTP handler
 │       ├── config.py           # Environment variable config
