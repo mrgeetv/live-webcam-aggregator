@@ -324,3 +324,14 @@ project structure. Built test-first; run the checks with
 The on-demand stream proxy validates and signs the URLs it will fetch and refuses to
 reach private/loopback addresses, but this is a self-hosted tool, so put it behind your
 own reverse proxy / network controls rather than exposing the raw port to the internet.
+
+Each image the release workflow publishes carries signed build provenance, so you can
+check that this repo's build workflow made it before running it:
+
+```bash
+gh attestation verify oci://ghcr.io/mrgeetv/live-webcam-aggregator:v2 \
+  --repo mrgeetv/live-webcam-aggregator \
+  --signer-workflow mrgeetv/live-webcam-aggregator/.github/workflows/docker-build.yml
+```
+
+Found a vulnerability? Report it privately, as [SECURITY.md](SECURITY.md) describes.
