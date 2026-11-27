@@ -6,6 +6,7 @@ import re
 from typing import TYPE_CHECKING, override
 from urllib.parse import unquote, urljoin, urlsplit
 
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
@@ -67,6 +68,11 @@ def player_iframe(html: str) -> str | None:
     return m.group(1) if m else None
 
 
+def is_camsecure(url: str) -> bool:
+    """Return whether `url` is on camsecure's site or one of its player hosts."""
+    return on_host(url, "camsecure.co.uk", "camsecure.co", "camsecure.uk")
+
+
 def hls_from_player(html: str, player_url: str) -> str | None:
     """Return the absolute HLS URL in a camsecure player page's video.js `<source>`."""
     src = next((s for s in _SOURCE_SRC.findall(html) if ".m3u8" in s), None)
@@ -109,7 +115,7 @@ class CamSecureSource(HtmlScraperSource[str]):
             {
                 loc.replace(" ", "%20")
                 for loc in _LOC.findall(sm)
-                if "camsecure.co.uk" in loc.lower()
+                if on_host(loc, "camsecure.co.uk")
                 and urlsplit(loc).path.strip("/")  # not the homepage
                 and not any(s in loc.lower() for s in _SKIP)
             }

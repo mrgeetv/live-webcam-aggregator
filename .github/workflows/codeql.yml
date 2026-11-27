@@ -37,6 +37,10 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
+          # test fixtures and asserts are full of URL substrings by design
+          config: |
+            paths-ignore:
+              - tests
 
       - name: Analyse
         uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5

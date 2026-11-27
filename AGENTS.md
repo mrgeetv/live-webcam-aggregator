@@ -155,7 +155,9 @@ The app is two phases, decoupled by a catalogue snapshot:
 - **Add an extractor** — implement the `Extractor` protocol (`extractors/base.py`):
   `resolve(target_url) -> Resolved(url, stream_type, ttl_seconds)`. Add it to the
   `_extractor_set` factory in `app._build_resolvers` AND a predicate to `build_registry`
-  (startup validation raises if a rule names an extractor not in the dict). The one
+  (startup validation raises if a rule names an extractor not in the dict) that matches
+  the target's host with `hosts.on_host` (plus a path marker), never a substring. Every
+  other check of which site a URL is on goes through `on_host` too. The one
   factory builds TWO sets: the build-time one (its fetcher is paced + stats-wired,
   because liveness re-fetches source sites en masse) and the serve-time one (unpaced
   — a build-inflicted cooldown must never stall a player's `/stream` resolve, which

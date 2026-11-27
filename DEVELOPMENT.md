@@ -176,6 +176,7 @@ live-webcam-aggregator/
 │       ├── config.py           # Environment variable config
 │       ├── models.py           # Data contracts and stream models
 │       ├── fetch.py            # HTTP fetch: SSRF guard, per-host pacing, stats, browser-fingerprint transport
+│       ├── hosts.py            # Host matching (`on_host`): the one check of which site a URL is on
 │       ├── registry.py         # Extractor registry
 │       ├── dedup.py            # Deduplication and field merge
 │       ├── categories.py       # Category taxonomy mapping

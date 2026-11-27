@@ -10,13 +10,14 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote, urljoin, urlsplit
 
 from webcam_aggregator.fetch import FetcherProtocol, thread_imap, thread_map
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     decode_entities,
     extract_candidates,
     predisc_key,
 )
-from webcam_aggregator.sources.camsecure import hls_from_player
+from webcam_aggregator.sources.camsecure import hls_from_player, is_camsecure
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -165,7 +166,7 @@ class WildlifeTrustsSource:
         found: list[Candidate] = []
         card_titles: dict[str, str] = {}
         for href, title in self._cards():
-            if "youtube.com/" in href:
+            if on_host(href, "youtube.com"):
                 # Not a page to scrape: the card IS the video (or the channel).
                 tab = _YT_CHANNEL_TAB.match(href)
                 target = f"{tab.group(1)}/live" if tab else href
@@ -312,12 +313,11 @@ class WildlifeTrustsSource:
         key = predisc_key(embed) or ""
         if key.startswith("yt:"):
             return [f"https://www.youtube.com/watch?v={key[3:]}"]
-        host = urlsplit(embed).hostname or ""
-        if "youtube" in host:
+        if on_host(embed, "youtube.com", "youtube-nocookie.com"):
             return []  # a playlist: recordings, never a live cam
-        if host.endswith("camstreamer.com"):
+        if on_host(embed, "camstreamer.com"):
             return [self._camstreamer_target(embed)]
-        if "camsecure." in host:
+        if is_camsecure(embed):
             # The m3u8 is the key the camsecure source shares; it is not derivable
             # from the player URL, so read it from the player page.
             return [hls_from_player(self._fetch.get(embed) or "", embed) or embed]

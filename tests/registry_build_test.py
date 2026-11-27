@@ -127,3 +127,25 @@ def test_beachcam_playlist_routes_to_its_token_resolver() -> None:
     assert _route(bare) == "beachcam"
     # a host merely named in the path or query is not the CDN
     assert _route(f"https://cdn.example/x.m3u8?u={bare}") == "direct"
+
+
+@pytest.mark.parametrize(
+    ("marker", "provider"),
+    [
+        ("balticlivecam.com/cameras/x/", "baltic"),
+        ("ipcamlive.com/player/player.php?alias=x", "ipcamlive"),
+        ("api.wetmet.net/widgets/stream/frame.php?uid=1", "wetmet"),
+        ("www.skylinewebcams.com/en/webcam/italia/x/cam.html", "skyline"),
+        ("www.earthcam.com/usa/x/?cam=y", "earthcam"),
+        ("www.twitch.tv/somechannel", "ytdlp"),
+        ("www.youtube.com/watch?v=aaaaaaaaaaa", "ytdlp"),
+        ("youtu.be/aaaaaaaaaaa", "ytdlp"),
+        ("www.dailymotion.com/video/x1", "ytdlp"),
+        ("worldcams.tv/player?url=https://x/p", "direct"),
+    ],
+)
+def test_a_provider_named_only_in_the_query_does_not_route(
+    marker: str, provider: str
+) -> None:
+    """Every provider rule matches the target's own host, never a substring."""
+    assert _route(f"https://evil.example/page?u=https://{marker}") != provider

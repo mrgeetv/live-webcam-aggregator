@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, override
 from urllib.parse import urlsplit
 
 from webcam_aggregator.fetch import thread_imap
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
@@ -37,11 +38,6 @@ _API = "https://www.whatsupcams.com/cdn-api/streams/"
 _CAM_PAGE_DEPTH = 6
 
 
-def _on_site(url: str) -> bool:
-    host = (urlsplit(url).hostname or "").lower()
-    return host == "whatsupcams.com" or host.endswith(".whatsupcams.com")
-
-
 class WhatsupcamsSource(HtmlScraperSource[str]):
     """whatsupcams.com: a Croatian-run, Adriatic-heavy network of cams.
 
@@ -59,7 +55,7 @@ class WhatsupcamsSource(HtmlScraperSource[str]):
         maps = [
             u
             for u in _LOC.findall(idx)
-            if _on_site(u) and _CAM_SITEMAP.search(urlsplit(u).path)
+            if on_host(u, "whatsupcams.com") and _CAM_SITEMAP.search(urlsplit(u).path)
         ]
         pages: set[str] = set()
         for sm in thread_imap(self._fetch.get, maps):
@@ -69,7 +65,7 @@ class WhatsupcamsSource(HtmlScraperSource[str]):
                 # our own host too: a tampered sitemap must not steer the build-time
                 # fetcher at arbitrary third-party hosts.
                 depth = len(urlsplit(loc).path.strip("/").split("/"))
-                if _on_site(loc) and depth >= _CAM_PAGE_DEPTH:
+                if on_host(loc, "whatsupcams.com") and depth >= _CAM_PAGE_DEPTH:
                     pages.add(loc)
         return sorted(pages)
 

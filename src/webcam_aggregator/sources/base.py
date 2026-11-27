@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 from urllib.parse import unquote, urljoin, urlsplit
 
 from webcam_aggregator.fetch import FetcherProtocol, thread_imap
+from webcam_aggregator.hosts import on_host
 from webcam_aggregator.models import Candidate
 
 if TYPE_CHECKING:
@@ -99,11 +100,10 @@ def _not_a_stream(target: str) -> bool:
     counts that say which extractor to write next.
     """
     parts = urlsplit(target)
-    host = (parts.hostname or "").lower()
     return (
         parts.scheme not in ("http", "https")
         or bool(_IMAGE_EXT.search(parts.path))
-        or any(host == h or host.endswith("." + h) for h in _NEVER_A_STREAM_HOSTS)
+        or on_host(target, *_NEVER_A_STREAM_HOSTS)
     )
 
 
