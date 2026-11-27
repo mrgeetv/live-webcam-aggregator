@@ -1,7 +1,8 @@
 name: Dependency Review
 
-# Fails a pull request that adds a dependency with a known vulnerability, read
-# from the dependency graph's diff between the PR and its base.
+# Fails this check on a pull request that adds a dependency with a known
+# vulnerability, read from the dependency graph's diff between the PR and its
+# base. A red check, not a merge block: main requires no status checks.
 on:
   pull_request:
     branches: [main, next]

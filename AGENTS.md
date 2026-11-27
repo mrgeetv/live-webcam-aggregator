@@ -887,17 +887,18 @@ GitHub's security features, all free on a public repo, run beside those hooks:
 - **CodeQL** (`codeql.yml`): Python and the workflow files themselves (the `actions`
   language), on pushes and PRs to `main` and `next` and weekly. It is a workflow file
   rather than GitHub's default setup so its actions are pinned and bumped like the rest.
-  Alerts land in the Security tab, where Copilot Autofix proposes fixes.
-- **Dependency review** (`dependency-review.yml`): fails a PR that adds a dependency with
-  a known vulnerability.
+  Alerts land in the Security tab, where Copilot Autofix proposes fixes for the
+  languages it covers.
+- **Dependency review** (`dependency-review.yml`): fails the check on a PR that adds a
+  dependency with a known vulnerability (a red check, not a merge block: `main`
+  requires no status checks).
 - **Repo settings, not files:** Dependabot alerts and security updates (`dependabot.yml`
   only drives the scheduled version bumps), secret scanning with push protection, and
   private vulnerability reporting, which `SECURITY.md` points reporters to. They live
   only in the repo's settings, so `gh api` is how to check or restore them.
 - **Image provenance:** `docker-build.yml` signs SLSA build provenance for every image it
-  pushes (`actions/attest`). That needs `id-token`, `attestations` and
-  `artifact-metadata` write, which every workflow calling `docker-build.yml` must grant
-  its calling job: a reusable workflow can't hold more than its caller gives it, and the
+  pushes (`actions/attest`). That needs `id-token` and `attestations` write, which every
+  workflow calling `docker-build.yml` must grant its calling job: a reusable workflow can't hold more than its caller gives it, and the
   call fails at startup if it asks for more.
 
 ## Python Version Synchronization

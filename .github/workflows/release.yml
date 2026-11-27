@@ -78,7 +78,6 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-      artifact-metadata: write
     uses: ./.github/workflows/docker-build.yml
     with:
       # The tag, not the pushed commit: the image's revision label must name the

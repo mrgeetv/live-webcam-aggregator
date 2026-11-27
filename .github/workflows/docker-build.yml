@@ -22,10 +22,9 @@ permissions:
   contents: read
   packages: write
   # actions/attest: an OIDC token for the Sigstore certificate, and the right
-  # to store the attestation and its artifact metadata record.
+  # to store the attestation.
   id-token: write
   attestations: write
-  artifact-metadata: write
 
 jobs:
   docker-build:
@@ -93,8 +92,11 @@ jobs:
 
       # Signed SLSA build provenance for the pushed image (Sigstore's public
       # instance, as the repo is public), stored with the repo and pushed to
-      # ghcr beside the image, so `gh attestation verify oci://<image>:<tag>
-      # --repo <owner>/<repo>` proves which workflow and commit built it.
+      # ghcr beside the image, so `gh attestation verify` proves this workflow
+      # built it. The commit it records is the run's trigger, not inputs.ref:
+      # for a release that is the commit before the tag, so the image's
+      # revision label stays the record of what was built. No storage record:
+      # the API behind it exists only for organisation-owned repos.
       - name: Attest build provenance
         if: inputs.push
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -102,6 +104,7 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
 
       - name: Registry Push
         run: |
