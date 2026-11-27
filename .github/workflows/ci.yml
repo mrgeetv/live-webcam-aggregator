@@ -2,7 +2,7 @@ name: CI Validation
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, next]
   workflow_call: # Allow other workflows to call this
   workflow_dispatch: # Manual trigger
 

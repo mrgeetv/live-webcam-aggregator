@@ -139,8 +139,12 @@ The app is two phases, decoupled by a catalogue snapshot:
   site's own cam id where its URLs vary — `feratel:`, `viewsurf:`, `hdontap:`, in
   `base.predisc_key` — and `None` = merged only with an identical `target_url`). A
   source that finds one cam in several places of differing authority sets
-  `Candidate.name_rank` on each copy rather than merging them itself. Text a source reads out of a
-  page (a title, a name, a category) goes through `base.decode_entities` as it is read, before any suffix
+  `Candidate.name_rank` on each copy rather than merging them itself. A source never
+  puts a token it fetched into `target_url`: a target outlives the build that found
+  it, so a baked-in token lapses while the catalogue still holds the cam. A CDN that
+  needs one gets an extractor that mints it at resolve time (beachcam's). Text a source
+  reads out of a page (a title, a name, a category) goes through `base.decode_entities`
+  as it is read, before any suffix
   strip or geo check compares it (`&#8211;` is not `–`, and `St. John&#39;s` misses
   its own geo and repeats it); the build runs every title through it again, for text
   a source passed straight through (Data API snippets, JSON feeds). It decodes only
@@ -552,11 +556,17 @@ The app is two phases, decoupled by a catalogue snapshot:
   lake/wake-park/city outliers beat ~190 Portuguese titles the English keyword fallback
   would dump in "Other"): the page's `data-video-url` m3u8 (video-auth1.iol.pt)
   answers **403 bare** — the JW player appends `?wmsAuthSign=<token>` from
-  `services.iol.pt/matrix?userId=` (anonymous, ~24h validity), so the source fetches ONE
-  token per build and bakes it into `target_url` (predisc key stays on the BARE url for
-  cross-build stability). Child/segment URLs carry a per-manifest-fetch Nimble session →
-  `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. Raising `CATALOGUE_INTERVAL_HOURS` past
-  ~24 outlives the token; an empty-guard-preserved stale set carries a lapsing one. The
+  `services.iol.pt/matrix?userId=` (anonymous; a Wowza SecureToken that decodes to
+  `validminutes=1440`, and one token plays every cam). The target and predisc key are
+  the bare m3u8; `BeachcamResolver`, routed on that host, fetches the token at resolve
+  time, holds it in-process for an hour and appends it, so a cam plays however long the
+  catalogue has held it. The hour is the only bound on a token the CDN stops
+  accepting, since a 403 manifest never reaches the resolver. A failed re-fetch keeps
+  the token in hand until it is 23h old, retrying after a minute (a failure with no
+  usable token is held a minute too, so a build's concurrent resolves don't each wait
+  on a dead endpoint). `predisc_key` strips `wmsAuthSign`, so another source's tokened
+  copy merges with the bare cam. Child/segment URLs carry a
+  per-manifest-fetch Nimble session → `video-auth1.iol.pt` in `_PROXY_SEGMENT_HOSTS`. The
   ladder is bypassed (`_candidates` override) because every page footer links the site's
   YouTube channel, which the channel rule would emit as a bogus extra candidate per page.
 - cxtvlive.com (~770 global cams): the index is `sitemap.php` **unioned with** the
@@ -783,8 +793,24 @@ For any new work (fixes, features, chores, etc.):
 2. Create new branch from main
 3. Make changes and commit
 
+A breaking change held for the next major branches from **`next`** instead, and its PR
+targets `next`. CI runs there too, and every merge publishes a prerelease
+(`vX.0.0-beta.N`, image tags `:vX.0.0-beta.N` and `:beta` only, never `:latest` or
+`:vN`; `release.config.cjs` and `release.yml`). Keep `next` current by merging `main`
+into it with a **merge commit**, never a squash or rebase: `next` must carry `main`'s
+own commits, or every later sync conflicts on them. The `!` goes on the first breaking PR into
+`next`, so its betas count towards the new major. The major ships when `next` is
+**squash-merged** to `main` (which requires linear history) under a `feat(<scope>)!:`
+title, with a body naming the breaking changes: that one commit is what semantic-release
+and the changelog read, and the betas' GitHub notes keep the per-PR detail. Then
+**delete `next`** and branch it afresh from `main` when the following major's work
+starts. Never merge `main` back into it: the squash leaves `next`'s own commits outside
+the release's history, so semantic-release counts their `!` again and publishes a bogus
+`v(N+1).0.0-beta.1`.
+
 A Claude Code `PreToolUse` hook in `.claude/settings.json` enforces this
-by blocking `git commit` when the current branch is `main` or `master`.
+by blocking `git commit` when the branch checked out where the commit runs (a worktree
+included) is `main`, `master` or `next`.
 The hook script lives at `.claude/hooks/block-commit-to-main.sh`.
 
 `.claude/settings.json` also carries two **non-blocking** editing reminders: editing
@@ -903,6 +929,25 @@ Pre-commit hooks enforced:
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
 - **pytest** - Full test suite + coverage floor (`--cov-fail-under`); runs when `src/`, `scripts/`, `tests/`, `pyproject.toml` or `uv.lock` change. Also runs in CI.
 - **vulture** - Dead-code detection (unused functions/attributes/fields) on `src/` at confidence 60; catches what ruff/basedpyright miss (they only flag unused imports/locals). Framework-dispatched handler methods are ignored by name. Configured in `pyproject.toml`'s `[tool.vulture]`.
+
+GitHub's security features, all free on a public repo, run beside those hooks:
+
+- **CodeQL** (`codeql.yml`): Python and the workflow files themselves (the `actions`
+  language), on pushes and PRs to `main` and `next` and weekly. It is a workflow file
+  rather than GitHub's default setup so its actions are pinned and bumped like the rest.
+  Alerts land in the Security tab, where Copilot Autofix proposes fixes for the
+  languages it covers.
+- **Dependency review** (`dependency-review.yml`): fails the check on a PR that adds a
+  dependency with a known vulnerability (a red check, not a merge block: `main`
+  requires no status checks).
+- **Repo settings, not files:** Dependabot alerts and security updates (`dependabot.yml`
+  only drives the scheduled version bumps), secret scanning with push protection, and
+  private vulnerability reporting, which `SECURITY.md` points reporters to. They live
+  only in the repo's settings, so `gh api` is how to check or restore them.
+- **Image provenance:** `docker-build.yml` signs SLSA build provenance for every image it
+  pushes (`actions/attest`). That needs `id-token` and `attestations` write, which every
+  workflow calling `docker-build.yml` must grant its calling job: a reusable workflow can't hold more than its caller gives it, and the
+  call fails at startup if it asks for more.
 
 ## Python Version Synchronization
 

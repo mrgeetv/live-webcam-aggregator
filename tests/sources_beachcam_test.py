@@ -5,9 +5,6 @@ from webcam_aggregator.sources.beachcam import BeachcamSource
 _FIX = Path(__file__).parent / "fixtures"
 
 _INDEX = "https://beachcam.meo.pt/livecams/"
-_TOKEN_API = "https://services.iol.pt/matrix?userId="  # noqa: S105 - a URL, no secret
-# same base64 shape as the real IOL auth token, deliberately not a real one
-_TOK = "dGVzdC1vbmx5LXdtc0F1dGhTaWduLXRva2VuLXZhbHVl=="
 
 # region label carries an HTML entity ("Portimão") + h1 with a trailing space
 _ALVOR_HTML = """
@@ -21,7 +18,6 @@ _ALVOR_HTML = """
 
 _PAGES = {
     _INDEX: (_FIX / "beachcam_index.html").read_text(),
-    _TOKEN_API: _TOK,
     "https://beachcam.meo.pt/livecams/carcavelos-calhau/": (
         _FIX / "beachcam_cam.html"
     ).read_text(),
@@ -34,12 +30,17 @@ _PAGES = {
 
 
 class _FakeFetch:
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
     def get(self, url: str, _timeout: float = 20.0) -> str | None:
+        self.urls.append(url)
         return _PAGES.get(url)
 
 
-def test_beachcam_appends_auth_token_and_keys_on_bare_url() -> None:
-    cands = list(BeachcamSource(_FakeFetch()).discover())
+def test_beachcam_targets_are_bare_playlists_keyed_on_themselves() -> None:
+    fetch = _FakeFetch()
+    cands = list(BeachcamSource(fetch).discover())
     by_title = {c.title: c for c in cands}
 
     # only pages with a data-video-url stream; the footer's @Beachcamportugal
@@ -51,50 +52,17 @@ def test_beachcam_appends_auth_token_and_keys_on_bare_url() -> None:
 
     carc = by_title["Carcavelos | Calhau — Cascais, Portugal"]
     bare = "https://video-auth1.iol.pt/auth-beachcam/carcavelos2/playlist.m3u8"
-    # the playable URL carries the per-build auth token...
-    assert carc.target_url == f"{bare}?wmsAuthSign={_TOK}"
-    # ...but the merge key stays on the bare URL (the token changes every build)
+    # no token: the beachcam extractor mints one at resolve time, so a held target
+    # never carries a lapsed one
+    assert carc.target_url == bare
     assert carc.predisc_key == f"hls:{bare}"
+    assert not any("iol.pt" in u for u in fetch.urls)
 
     for c in cands:
         assert c.source == "beachcam"
         # blanket category: ~97% right beats ~190 Portuguese titles in "Other"
         assert c.category == "Beaches"
         assert c.angle_key is None  # one stream per page
-
-
-def test_beachcam_token_special_chars_are_url_encoded() -> None:
-    # a Wowza wmsAuthSign is base64 and can contain '+', which a bare query decodes to
-    # a space -> signature mismatch -> 403; it must be percent-encoded
-    # ≥20 chars (the _TOKEN_SHAPE floor) and carries the base64 '+' and '/'
-    plus_tok = "aGVsbG8+d29ybGQ/dGVzdA=="
-    pages = dict(_PAGES, **{_TOKEN_API: plus_tok})
-
-    class _PlusToken:
-        def get(self, url: str, _timeout: float = 20.0) -> str | None:
-            return pages.get(url)
-
-    cands = list(BeachcamSource(_PlusToken()).discover())
-    assert cands
-    for c in cands:
-        token = c.target_url.split("wmsAuthSign=")[1]
-        assert "%2B" in token
-        assert "%2F" in token
-        assert "+" not in token
-
-
-def test_beachcam_token_failure_ships_bare_urls() -> None:
-    # an error page is not a token: the bare URL still ships, so liveness sees the
-    # cams die (dead-manifest) instead of the whole source vanishing silently
-    pages = dict(_PAGES, **{_TOKEN_API: "<html>Forbidden</html>"})
-
-    class _NoToken:
-        def get(self, url: str, _timeout: float = 20.0) -> str | None:
-            return pages.get(url)
-
-    cands = list(BeachcamSource(_NoToken()).discover())
-    assert cands
-    assert all("wmsAuthSign" not in c.target_url for c in cands)
 
 
 def test_beachcam_handles_missing_index() -> None:
