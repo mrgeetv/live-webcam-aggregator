@@ -1,4 +1,4 @@
-# Project: Live Webcam Aggregator (multi-source, v2)
+# Project: Live Webcam Aggregator (multi-source)
 
 > **Note**: CLAUDE.md is a symlink to this file. Edit AGENTS.md only.
 
@@ -11,7 +11,7 @@ don't bolt new code onto known-bad old code, and don't leave a wart you noticed 
 the next person. (Surfacing a genuinely separate fix for a decision is fine; silently
 skipping it is not.)
 
-## Architecture & Extension Points (v2)
+## Architecture & Extension Points
 
 The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
 

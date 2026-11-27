@@ -143,15 +143,15 @@ def test_unknown_exclude_category_warns(caplog: pytest.LogCaptureFixture) -> Non
     assert "relgion" in caplog.text.lower()
 
 
-def test_legacy_v1_var_renamed_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_legacy_var_renamed_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
         config.load({"YOUTUBE_API_KEY": "k", "EXCLUDED_CATEGORIES": "Sports"})
-    # points the migrator at the v2 name
+    # points at the setting to use instead
     assert "EXCLUDED_CATEGORIES" in caplog.text
     assert "EXCLUDE_CATEGORIES" in caplog.text
 
 
-def test_legacy_v1_var_removed_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_legacy_var_removed_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="webcam-aggregator.config"):
         config.load({"YOUTUBE_API_KEY": "k", "MAX_VIDEOS_PER_CYCLE": "500"})
     assert "MAX_VIDEOS_PER_CYCLE" in caplog.text

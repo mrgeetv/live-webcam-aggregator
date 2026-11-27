@@ -19,8 +19,9 @@ _DEFAULT_SEARCH_QUERY = (
 log = logging.getLogger("webcam-aggregator.config")
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
-# v1 env vars that v2 ignores — warn so migrators aren't caught out by silent no-ops.
+# Env vars that no longer do anything, and the one to use instead (None: gone).
 _LEGACY_VARS: dict[str, str | None] = {
+    "CATALOGUE_INTERVAL_HOURS": "SOURCE_INTERVAL_HOURS",
     "UPDATE_INTERVAL_HOURS": None,
     "EXCLUDED_CATEGORIES": "EXCLUDE_CATEGORIES",
     "MAX_VIDEOS_PER_CYCLE": None,
@@ -122,20 +123,13 @@ def _warn_on_suspect_config(cfg: Config) -> None:
 
 
 def _warn_legacy_env(env: dict[str, str]) -> None:
-    if env.get("CATALOGUE_INTERVAL_HOURS", "").strip():
-        log.warning(
-            "CATALOGUE_INTERVAL_HOURS is no longer used: each source refreshes on its "
-            "own interval — set SOURCE_INTERVAL_HOURS=name=hours,… to change one"
-        )
     for old, new in _LEGACY_VARS.items():
-        if not env.get(old):
+        if not env.get(old, "").strip():
             continue
         if new:
-            log.warning(
-                "%s is a v1 setting, ignored in v2 — did you mean %s?", old, new
-            )
+            log.warning("%s is no longer used — did you mean %s?", old, new)
         else:
-            log.warning("%s is a v1 setting, ignored in v2 (removed)", old)
+            log.warning("%s is no longer used (removed)", old)
 
 
 def load(env: dict[str, str] | None = None) -> Config:
