@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.14.18](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.17...v2.14.18) (2026-11-27)
+
+### Code Refactoring
+
+* **scraper:** run each page's whole step in the HtmlScraperSource workers ([#223](https://github.com/mrgeetv/live-webcam-aggregator/issues/223)) ([7875e70](https://github.com/mrgeetv/live-webcam-aggregator/commit/7875e70fbf393ea25907f9aa507e762421ba5853)), closes [#216](https://github.com/mrgeetv/live-webcam-aggregator/issues/216)
+
 ## [2.14.17](https://github.com/mrgeetv/live-webcam-aggregator/compare/v2.14.16...v2.14.17) (2026-11-27)
 
 ### Bug Fixes
