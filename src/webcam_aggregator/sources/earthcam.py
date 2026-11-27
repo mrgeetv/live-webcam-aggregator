@@ -90,20 +90,13 @@ class EarthCamSource:
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
-        """Yield each routable EarthCam cam once, across its two feeds."""
-        seen: set[str] = set()
+        """Yield each routable cam in both feeds (a cam in both comes out twice)."""
         for endpoint in (_NETWORK, _GLOBAL):
             for p in _places(self._fetch.get(endpoint)):
                 routed = _routable(str(p.get("url") or ""))
                 if routed is None:
                     continue
                 target, key = routed
-                dedup = (
-                    key or target
-                )  # de-dupe within EarthCam (same cam in both feeds)
-                if dedup in seen:
-                    continue
-                seen.add(dedup)
                 geo = [str(p[k]) for k in ("country", "state", "city") if p.get(k)]
                 yield Candidate(
                     title=with_location_parts(str(p.get("name") or ""), geo),

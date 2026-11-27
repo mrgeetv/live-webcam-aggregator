@@ -188,6 +188,7 @@ live-webcam-aggregator/
 │       │   ├── direct_hls.py   # Direct HLS link extractor
 │       │   ├── metatag.py      # HTML meta-tag extractor
 │       │   ├── baltic.py       # Baltic Live cam extractor
+│       │   ├── beachcam.py     # MEO Beachcam extractor (bare m3u8 + minted iol.pt token)
 │       │   ├── ipcamlive.py    # IPCamLive extractor
 │       │   ├── earthcam.py     # EarthCam extractor (page -> HLS)
 │       │   ├── hdontap.py      # HDOnTap extractor (cam page player-data -> tokened HLS)
@@ -200,7 +201,7 @@ live-webcam-aggregator/
 │           ├── worldcams.py    # worldcams.tv scraper source
 │           ├── cxtvlive.py     # CXTV Live scraper source
 │           ├── airportwebcams.py  # airportwebcams.net -> YouTube channel-live cams
-│           ├── beachcam.py     # MEO Beachcam scraper source (tokened direct HLS)
+│           ├── beachcam.py     # MEO Beachcam scraper source (bare iol.pt HLS)
 │           ├── camscape.py     # Camscape aggregator scraper source
 │           ├── camsecure.py    # CamSecure scraper source (sitemap -> direct HLS)
 │           ├── earthcam.py     # EarthCam mapsearch API source

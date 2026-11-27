@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from webcam_aggregator.dedup import dedupe
 from webcam_aggregator.sources.livespotting import LivespottingSource
 
 _FIX = Path(__file__).parent / "fixtures"
@@ -94,3 +95,22 @@ def test_livespotting_survives_all_fetches_failing() -> None:
             return None
 
     assert list(LivespottingSource(_Dead()).discover()) == []
+
+
+class _AliasFetch:
+    """One country page listing two ids whose player APIs name the same stream."""
+
+    def get(self, url: str, _timeout: float = 20.0) -> str | None:
+        if url == "https://www.livespotting.tv/deutschland":
+            return (
+                '<a href="/deutschland/a/aaaa1111"></a>'
+                '<a href="/deutschland/b/bbbb2222"></a>'
+            )
+        if url.startswith(_API):
+            return json.dumps(_INFOS["4egsy980"])
+        return None
+
+
+def test_two_ids_sharing_a_stream_ship_once() -> None:
+    cands = list(LivespottingSource(_AliasFetch()).discover())
+    assert len(dedupe(cands)) == 1

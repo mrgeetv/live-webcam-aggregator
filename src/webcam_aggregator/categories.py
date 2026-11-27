@@ -86,6 +86,15 @@ UNMAPPED = "Unmapped Category"
 _seen_unmapped: set[str] = set()
 
 
+def is_mapped(raw: str | None) -> bool:
+    """Return whether `raw` is a category the mapping knows, "Other" included.
+
+    `_MAP` or a native YouTube one; an unrecognised value (which `map_category` sends
+    to "Unmapped Category") or none at all is not.
+    """
+    return bool(raw) and (raw in _MAP or raw in _NATIVE_YT)
+
+
 def map_category(raw: str | None) -> str:
     """Map a source's raw category to the unified taxonomy.
 

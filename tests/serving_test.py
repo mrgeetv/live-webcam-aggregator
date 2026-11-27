@@ -1580,7 +1580,7 @@ def test_loggable_keeps_host_and_path_for_diagnosis() -> None:
             "https://platforms5.joada.net/embeded/embeded.html?uuid=u-1&type=live",
             "https://platforms5.joada.net/embeded/embeded.html?uuid=u-1",
         ),
-        # a beachcam target carries its token beside nothing worth keeping
+        # a resolved beachcam playlist carries its token beside nothing worth keeping
         (
             "https://video-auth1.iol.pt/beachcam/x/playlist.m3u8?wmsAuthSign=SECRET",
             "https://video-auth1.iol.pt/beachcam/x/playlist.m3u8",

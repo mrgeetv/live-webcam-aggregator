@@ -105,9 +105,9 @@ _TITLE_SUFFIX = re.compile(
     r"(?<!\s)\s*[|–-](?=[^|–-]*(?:Wildlife|Trust))[^|–-]*$", re.IGNORECASE
 )
 
-# Where a target was found, best first. A cam reached from several places takes its
-# name from the best one: the page that embeds it, then an index card, then a page
-# that merely links it.
+# Where a target was found, best first: each copy's Candidate.name_rank, so a cam
+# reached from several places takes its name (and page) from the best one in the
+# merge: the page that embeds it, then an index card, then a page that merely links it.
 _EMBEDDED, _CARD, _LINKED = 0, 1, 2
 
 
@@ -119,7 +119,7 @@ def _site(url: str) -> str:
     return (urlsplit(url).hostname or "").removeprefix("www.")
 
 
-def _cand(target: str, page_url: str, title: str) -> Candidate:
+def _cand(target: str, page_url: str, title: str, rank: int) -> Candidate:
     key = predisc_key(target)
     return Candidate(
         title=title,
@@ -132,6 +132,7 @@ def _cand(target: str, page_url: str, title: str) -> Candidate:
         source_page_url=page_url,
         target_url=target,
         predisc_key=key,
+        name_rank=rank,
     )
 
 
@@ -156,15 +157,19 @@ class WildlifeTrustsSource:
         self._fetch = fetch
 
     def discover(self) -> Iterator[Candidate]:
-        """Yield the cams from the index cards and the trust sitemaps, once per cam."""
-        found: list[tuple[int, Candidate]] = []
+        """Yield the cams from the index cards and the trust sitemaps.
+
+        A cam found in several places comes out once per place, ranked by where it was
+        found; `dedup.dedupe` merges the copies.
+        """
+        found: list[Candidate] = []
         card_titles: dict[str, str] = {}
         for href, title in self._cards():
             if "youtube.com/" in href:
                 # Not a page to scrape: the card IS the video (or the channel).
                 tab = _YT_CHANNEL_TAB.match(href)
                 target = f"{tab.group(1)}/live" if tab else href
-                found.append((_CARD, _cand(target, _INDEX, title)))
+                found.append(_cand(target, _INDEX, title, _CARD))
             else:
                 card_titles.setdefault(href, title)
         trusts = _TRUST_SITE.findall(self._fetch.get(_TRUSTS) or "")
@@ -178,13 +183,7 @@ class WildlifeTrustsSource:
         ):
             if html:
                 found.extend(self._page(url, html, card_titles.get(url)))
-        best: dict[str, tuple[int, Candidate]] = {}
-        for rank, c in found:
-            cam = c.predisc_key or c.target_url
-            if cam not in best or rank < best[cam][0]:
-                best[cam] = (rank, c)
-        for _, c in best.values():
-            yield c
+        yield from found
 
     def _cards(self) -> Iterator[tuple[str, str]]:
         for chunk in (self._fetch.get(_INDEX) or "").split(_CARD_MARK)[1:]:
@@ -227,9 +226,7 @@ class WildlifeTrustsSource:
             log.info("%s: sitemap walk hit its bound; cam pages may be missed", site)
         return pages[:_MAX_PAGES]
 
-    def _page(
-        self, url: str, html: str, card_title: str | None
-    ) -> list[tuple[int, Candidate]]:
+    def _page(self, url: str, html: str, card_title: str | None) -> list[Candidate]:
         titled: dict[str, str] = {}  # embedded target -> the embed's own title, or ""
         raw_embeds: set[str] = set()
         for tag in _TAG.findall(html):
@@ -269,7 +266,7 @@ class WildlifeTrustsSource:
         page_title = card_title or self._page_title(html)
         untitled = titles.count("")
         n = 0
-        out: list[tuple[int, Candidate]] = []
+        out: list[Candidate] = []
         for target, found in zip(targets, titles, strict=True):
             title = found
             if not title:
@@ -279,7 +276,7 @@ class WildlifeTrustsSource:
                 rank = _EMBEDDED
             else:
                 rank = _CARD if card_title is not None else _LINKED
-            out.append((rank, _cand(target, url, title)))
+            out.append(_cand(target, url, title, rank))
         return out
 
     @staticmethod

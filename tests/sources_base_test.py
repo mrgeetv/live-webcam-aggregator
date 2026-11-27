@@ -1,6 +1,9 @@
 import threading
+from functools import partial
 from typing import TYPE_CHECKING, override
 
+from webcam_aggregator import fetch as fetch_mod
+from webcam_aggregator.sources import base
 from webcam_aggregator.sources.base import (
     HtmlScraperSource,
     decode_entities,
@@ -11,6 +14,10 @@ from webcam_aggregator.sources.base import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    import pytest
+
     from webcam_aggregator.models import Candidate
 
 
@@ -242,6 +249,12 @@ def test_feratel_embeds_key_on_the_cam_id() -> None:
     )
 
 
+def test_a_wowza_token_is_not_part_of_the_predisc_key() -> None:
+    bare = "https://video-auth1.iol.pt/auth-beachcam/alvor/playlist.m3u8"
+    tokened = f"{bare}?wmsAuthSign=c2VydmVyX3RpbWU9MQ=="
+    assert predisc_key(tokened) == predisc_key(bare) == f"hls:{bare}"
+
+
 def test_channel_has_no_predisc_key() -> None:
     html = '<a href="https://www.youtube.com/@SomeCam/live">live</a>'
     # NOTE: a bare channel link with no attribution prefix is a stream candidate
@@ -414,3 +427,70 @@ def test_an_m3u8_url_is_taken_whole_from_the_page() -> None:
         "https://cdn.example/live/cam.m3u8?token=abc",
         "https://relay.example/play?u=https://cdn.example/b.m3u8",
     ]
+
+
+class _SecondHopSource(_StubSource):
+    """Each page's cams need a second hop, which waits until two pages are in it."""
+
+    _hop: threading.Barrier
+
+    def __init__(self, fetch: _FakeFetch, urls: list[str]) -> None:
+        super().__init__(fetch, urls)
+        self._hop = threading.Barrier(2, timeout=5)
+
+    @override
+    def _candidates(self, html: str, url: str) -> Iterable[Candidate]:
+        self._hop.wait()
+        return super()._candidates(html, url)
+
+
+def test_html_scraper_base_runs_second_hops_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A page's extra hop runs in the crawl's workers, not one page at a time."""
+    # Two workers whatever SCRAPE_WORKERS the environment sets: with one, the two
+    # hops can't meet at the barrier however the base runs them.
+    monkeypatch.setattr(base, "thread_imap", partial(fetch_mod.thread_imap, workers=2))
+    urls = ["https://s/a", "https://s/b"]
+    embed = '<iframe src="https://www.youtube.com/embed/{}"></iframe>'
+    fetch = _FakeFetch({u: embed.format(u[-1] * 11) for u in urls})
+    cands = list(_SecondHopSource(fetch, urls).discover())
+    assert [c.source_page_url for c in cands] == urls
+
+
+def test_html_scraper_base_yields_every_pages_copy_of_a_target() -> None:
+    """A stream on several pages comes out once per page; the merge picks its fields."""
+    pages = {
+        "https://s/a": '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>',
+        "https://s/b": (
+            '<iframe src="https://www.youtube.com/embed/aaaaaaaaaaa"></iframe>'
+            '<iframe src="https://www.youtube.com/embed/bbbbbbbbbbb"></iframe>'
+        ),
+    }
+    src = _StubSource(_FakeFetch(pages), ["https://s/a", "https://s/b"])
+    got = [(c.source_page_url, c.predisc_key) for c in src.discover()]
+    assert got == [
+        ("https://s/a", "yt:aaaaaaaaaaa"),
+        ("https://s/b", "yt:aaaaaaaaaaa"),
+        ("https://s/b", "yt:bbbbbbbbbbb"),
+    ]
+
+
+def test_cam_id_keys_merge_every_url_shape_of_a_cam() -> None:
+    """A site's own cam id is the identity, whatever page or player URL carries it."""
+    joada = "https://platforms5.joada.net/embeded/embeded.html?uuid=d26-9f&type=live"
+    assert predisc_key(joada) == "viewsurf:d26-9f"
+    assert predisc_key(joada.replace("?uuid", "?autoplay=1&uuid")) == "viewsurf:d26-9f"
+    page = "https://hdontap.com/stream/269629/carmel-by-the-sea-live-webcam/"
+    assert predisc_key(page) == "hdontap:269629"
+    assert predisc_key(page.replace("carmel-by-the-sea", "carmel")) == "hdontap:269629"
+    assert predisc_key("https://hdontap.com/stream/269629") == "hdontap:269629"
+
+
+def test_a_cam_id_key_never_takes_part_of_an_id() -> None:
+    """An id the key's pattern can't read whole gives no key, never a prefix of it."""
+    joada = "https://platforms5.joada.net/embeded/embeded.html?uuid=5eAB12&type=live"
+    assert not (predisc_key(joada) or "").startswith("viewsurf:")
+    assert not (predisc_key("https://hdontap.com/stream/2696x9/") or "").startswith(
+        "hdontap:"
+    )
