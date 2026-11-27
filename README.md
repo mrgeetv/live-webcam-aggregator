@@ -101,8 +101,9 @@ works for a player on the same machine (see *Exposing it*). These use the `:v2` 
 tag, so you get v2.x updates but never an automatic jump to a future breaking major
 (`:latest` would); see *Upgrading from v1*. The latest release's tags (`:v2`
 included) are rebuilt daily when a base image is republished with patches, so
-pulling `:v2` again picks them up; an older `:v2.x.y` pin is never rebuilt. Want to
-build from source instead? See [DEVELOPMENT.md](DEVELOPMENT.md).
+pulling `:v2` again picks them up; an older `:v2.x.y` pin is never rebuilt. `:beta`
+carries prereleases of the next major: breaking changes, never rebuilt, for trying it
+early. Want to build from source instead? See [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Adding it to a player
 

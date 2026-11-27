@@ -102,8 +102,8 @@ DHI republishes patched images under the same tag, which on its own never rebuil
 ours. `.github/workflows/base-images.yml` runs daily at 06:00 UTC (or by hand) and
 rebuilds the **latest release tag** (not main's HEAD) when its published image was
 built on other base digests or from another commit, re-pushing `latest`, `vX`,
-`vX.Y` and `vX.Y.Z`; older releases' tags are never rebuilt. It also keeps one
-issue open, *Newer DHI base image tags available*, while dhi.io carries a newer
+`vX.Y` and `vX.Y.Z`; older releases' tags and prereleases (`:beta`) are never
+rebuilt. It also keeps one issue open, *Newer DHI base image tags available*, while dhi.io carries a newer
 python/alpine tag than the Dockerfile uses. It opens labelled `dependencies`,
 `docker` and `ready-for-agent`; those bumps are manual (see *Python Version
 Synchronization* in `AGENTS.md`), and the issue closes itself once they land.
@@ -476,7 +476,8 @@ docker compose logs -f
 
 1. Fork the repository on GitHub
 2. Clone your fork locally
-3. Create a feature branch from `main`
+3. Create a feature branch from `main` (from `next` for a breaking change held for
+   the next major, with the pull request targeting `next`)
 4. Make your changes
 5. Ensure pre-commit hooks pass
 6. Test locally with Docker Compose

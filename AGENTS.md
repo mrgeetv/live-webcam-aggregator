@@ -761,6 +761,15 @@ For any new work (fixes, features, chores, etc.):
 2. Create new branch from main
 3. Make changes and commit
 
+A breaking change held for the next major branches from **`next`** instead, and its PR
+targets `next`. CI runs there too, and every merge publishes a prerelease
+(`vX.0.0-beta.N`, image tags `:vX.0.0-beta.N` and `:beta` only, never `:latest` or
+`:vN`; `release.config.cjs` and `release.yml`). Keep `next` current by merging `main`
+into it, never rebasing: the branch is shared. The major ships when `next` merges to
+`main` with a **merge commit**, not a squash, so each PR's own commit (and the `!` that
+makes it a major) reaches semantic-release and the changelog. After that release,
+`next` restarts from `main`.
+
 A Claude Code `PreToolUse` hook in `.claude/settings.json` enforces this
 by blocking `git commit` when the current branch is `main` or `master`.
 The hook script lives at `.claude/hooks/block-commit-to-main.sh`.
