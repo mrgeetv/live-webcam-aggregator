@@ -30,25 +30,56 @@ if ! printf '%s' "$cmd" | grep -Eq '\bgit\b[^;&|]*[[:space:]]commit\b'; then
 fi
 
 # The branch that matters is the one checked out where the commit runs, which
-# in a worktree is not the project's. That directory is the shell's cwd (the
-# hook input's .cwd), moved by the last `cd <dir>` before the commit and then
-# by the commit's own `git -C <dir>`. A target we can't resolve (a variable, a missing dir)
-# falls back to the project dir: an empty branch would silently fail OPEN.
+# in a worktree is not the project's. In a plain `cd <dir> && ... git commit`
+# that is the last cd's directory (else the hook input's .cwd), moved by the
+# commit's own `git -C <dir>`. Anything this can't read for certain (a subshell
+# or `$(...)`, `||`, a conditional or loop, pushd/popd, `cd -`, GIT_DIR and
+# friends, two -C, a target that isn't a directory) fails CLOSED: the commit is
+# denied if ANY directory involved (cwd, project, every cd and -C target) is on
+# a protected branch. A guess that picked the wrong one would fail open.
+protected() { [[ $1 == main || $1 == master || $1 == next ]]; }
+branch_of() { git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null || true; }
 unquote() { local p=${1#[\"\']}; p=${p%[\"\']}; [[ $p == "~"* ]] && p=$HOME${p#\~}; printf '%s' "$p"; }
 resolve() { if [[ $2 == /* ]]; then printf '%s' "$2"; else printf '%s/%s' "$1" "$2"; fi; }
 
 project=${CLAUDE_PROJECT_DIR:-.}
-dir=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
-[[ -n $dir ]] || dir=$project
+cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
+[[ -n $cwd ]] || cwd=$project
 before=$(printf '%s' "$cmd" | sed -E 's/\bgit\b[^;&|]*[[:space:]]commit\b.*//')
-cd_target=$(printf '%s' "$before" | grep -oE '(^|[;&|(][[:space:]]*)cd[[:space:]]+[^[:space:];&|)]+' | tail -n1 | sed -E 's/.*cd[[:space:]]+//' || true)
-[[ -n $cd_target ]] && dir=$(resolve "$dir" "$(unquote "$cd_target")")
 commit=$(printf '%s' "$cmd" | grep -oE '\bgit\b[^;&|]*[[:space:]]commit\b' | head -n1 || true)
-c_target=$(printf '%s' "$commit" | grep -oE '[[:space:]]-C[[:space:]]+[^[:space:]]+' | head -n1 | sed -E 's/.*-C[[:space:]]+//' || true)
-[[ -n $c_target ]] && dir=$(resolve "$dir" "$(unquote "$c_target")")
+mapfile -t cds < <(printf '%s' "$before" | grep -oE '(^|[;&|(][[:space:]]*)cd[[:space:]]+[^[:space:];&|)]+' | sed -E 's/.*cd[[:space:]]+//' || true)
+mapfile -t cs < <(printf '%s' "$commit" | grep -oE '[[:space:]]-C[[:space:]]+[^[:space:]]+' | sed -E 's/.*-C[[:space:]]+//' || true)
 
-branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-[[ -n $branch ]] || branch=$(git -C "$project" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+certain=true
+if printf '%s' "$before$commit" | grep -Eq '[()`]|\|\||\b(if|then|else|for|while|until|case|pushd|popd)\b|GIT_DIR|GIT_WORK_TREE|--git-dir|--work-tree|\bcd[[:space:]]+-' \
+  || ((${#cs[@]} > 1)); then
+  certain=false
+fi
+
+dir=$cwd
+seen=("$cwd" "$project")
+for t in "${cds[@]}"; do
+  dir=$(resolve "$dir" "$(unquote "$t")")
+  seen+=("$dir")
+done
+for t in "${cs[@]}"; do
+  dir=$(resolve "$dir" "$(unquote "$t")")
+  seen+=("$dir")
+done
+[[ -d $dir ]] || certain=false
+
+if $certain; then
+  branch=$(branch_of "$dir")
+else
+  branch=""
+  for d in "${seen[@]}"; do
+    b=$(branch_of "$d")
+    if protected "$b"; then branch=$b; break; fi
+  done
+fi
+# No branch (not a repo, or nothing protected found while unsure): the project's
+# branch decides, as an empty branch would fail open.
+[[ -n $branch ]] || branch=$(branch_of "$project")
 
 case "$branch" in
   main|master|next)
