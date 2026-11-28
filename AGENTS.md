@@ -760,10 +760,11 @@ Rules that must survive refactors:
 - No transaction spans a network fetch: fetch, then write.
 - Playback never reads it: `/stream` reads `LiveCatalogue` and `ResolveCache` only.
   The merge runs before the save, so a save that fails or raises can't hold it back.
-- The schema is `store.MIGRATIONS`, append-only numbered steps against `PRAGMA
-  user_version`, all run in one transaction at startup. Never edit a released step: a
-  self-hoster's DB may sit at any earlier version. `store_test` builds every earlier
-  version from the steps and upgrades it, so a new step is covered without a test.
+- The schema is `store_migrations.MIGRATIONS`, append-only steps (step i is its i-th
+  entry) against `PRAGMA user_version`, all run in one transaction at startup. Never
+  edit a released step: a self-hoster's DB may sit at any earlier version. `store_test`
+  builds every earlier version from the steps and upgrades it, so a new step is
+  covered without a test.
 - A store that can't be opened or migrated logs a WARNING and the app runs
   **storeless**: a throwaway temp-file DB, same code and pragmas, discarded at exit
   (`app.stop_on_sigterm` deletes it, since a killed process runs no finalisers).

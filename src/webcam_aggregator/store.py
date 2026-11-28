@@ -21,6 +21,8 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from webcam_aggregator.store_migrations import MIGRATIONS
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable
 
@@ -36,42 +38,6 @@ DB_PATH = Path("/data") / _DB_NAME
 _JOURNAL_SIZE_LIMIT = 32 * 1024 * 1024
 _WRITE_BUSY_MS = 5000
 _READ_BUSY_MS = 1000
-
-# The schema, one numbered step per version: step i takes `user_version` i to i + 1.
-# Append only. A released step is never edited, because a self-hoster's DB may sit at
-# any earlier version and is upgraded by running every step after it.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (
-    (
-        # One row per source: its last finished refresh's raw outcome and the
-        # empty-guard's state. No foreign key from kept_cam: rows for a source the
-        # code no longer has stay on disk untouched.
-        """CREATE TABLE source (
-            name TEXT PRIMARY KEY,
-            last_refresh_at INTEGER NOT NULL,
-            last_refresh_seconds REAL NOT NULL,
-            discovered INTEGER NOT NULL,
-            raw_kept INTEGER NOT NULL,
-            crashed INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            guard_last_count INTEGER,
-            guard_shrink_streak INTEGER NOT NULL
-        ) STRICT""",
-        # Each source's kept set, replaced whole after each refresh. `pos`
-        # keeps the set's order, which the merge's ties break on.
-        """CREATE TABLE kept_cam (
-            source TEXT NOT NULL,
-            pos INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            angle_key TEXT,
-            category TEXT,
-            source_page_url TEXT NOT NULL,
-            target_url TEXT NOT NULL,
-            predisc_key TEXT,
-            name_rank INTEGER,
-            PRIMARY KEY (source, pos)
-        ) STRICT""",
-    ),
-)
 
 
 class Tx:

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from webcam_aggregator import store
+from webcam_aggregator.store_migrations import MIGRATIONS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,7 +38,7 @@ def _seed_every_table(conn: sqlite3.Connection) -> dict[str, dict[str, object]]:
     return seeded
 
 
-@pytest.mark.parametrize("version", range(len(store.MIGRATIONS) + 1))
+@pytest.mark.parametrize("version", range(len(MIGRATIONS) + 1))
 def test_every_schema_version_upgrades_to_head(tmp_path: Path, version: int) -> None:
     """A DB left at any earlier version upgrades in place and keeps its rows."""
     fresh = tmp_path / "fresh.db"
@@ -45,7 +46,7 @@ def test_every_schema_version_upgrades_to_head(tmp_path: Path, version: int) -> 
 
     old = tmp_path / "old.db"
     with contextlib.closing(sqlite3.connect(old, autocommit=True)) as conn:
-        for step in store.MIGRATIONS[:version]:
+        for step in MIGRATIONS[:version]:
             for stmt in step:
                 conn.execute(stmt)
         conn.execute(f"PRAGMA user_version = {version}")
@@ -55,9 +56,7 @@ def test_every_schema_version_upgrades_to_head(tmp_path: Path, version: int) -> 
 
     assert _schema(old) == _schema(fresh)
     with contextlib.closing(sqlite3.connect(old)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone() == (
-            len(store.MIGRATIONS),
-        )
+        assert conn.execute("PRAGMA user_version").fetchone() == (len(MIGRATIONS),)
         for table, cols in seeded.items():
             where = " AND ".join(f"{c} = ?" for c in cols)
             count = f"SELECT count(*) FROM {table} WHERE {where}"  # noqa: S608

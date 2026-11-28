@@ -190,6 +190,7 @@ live-webcam-aggregator/
 │       ├── serving.py          # Playlist render, manifest gate + manifest/segment proxy
 │       ├── signing.py          # HMAC signing of proxied manifest/segment URLs
 │       ├── store.py            # SQLite store: connections, transactions, migrations
+│       ├── store_migrations.py # The store's schema, as append-only migration steps
 │       ├── extractors/         # Stream URL extractors
 │       │   ├── ytdlp.py        # yt-dlp extractor
 │       │   ├── direct_hls.py   # Direct HLS link extractor
