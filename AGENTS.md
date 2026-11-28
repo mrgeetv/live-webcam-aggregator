@@ -58,7 +58,7 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
    source and merges at once, before the HTTP server starts, so the playlist and the
    `/stream/<id>` URLs players hold survive a restart; only due sources refresh, a set
    older than `catalogue.STALE_INTERVALS` × its interval (the same bound /health calls
-   `overdue`) is dropped and that source starts as new, and a restored `status` keeps a
+   `overdue`), or stamped in the future, is dropped and that source starts as new, and a restored `status` keeps a
    `still dead` run going without a fresh transition WARNING. On a true cold start the
    playlist serves from the first finished refresh and grows as the others land.
 2. **On-demand serve** (`serving.py` + `app.py` handler): the playlist holds stable
@@ -739,7 +739,10 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   budget per refresh (which is why it stays on the 6h interval: a shorter one
   multiplies its load): known-live re-probed first, the rest in rotating slices — coverage
   RAMPS over ~2 days and resets after a restart; growing counts are normal, not an
-  outage. The API is internal and unversioned: if windy gates it, the per-source
+  outage. The store restores windy's guard count but not that in-process state, so
+  the first refreshes after a restart read as a collapse: the guard holds the restored
+  set once, then accepts the ramp, and windy's share of the playlist shrinks until it
+  regrows. The API is internal and unversioned: if windy gates it, the per-source
   stats/status seam is what will say so.
 
 **The store** (`store.py`) is a SQLite file at the hard-coded `/data/webcam-aggregator.db`
@@ -756,12 +759,14 @@ Rules that must survive refactors:
   snapshots).
 - No transaction spans a network fetch: fetch, then write.
 - Playback never reads it: `/stream` reads `LiveCatalogue` and `ResolveCache` only.
+  The merge runs before the save, so a save that fails or raises can't hold it back.
 - The schema is `store.MIGRATIONS`, append-only numbered steps against `PRAGMA
   user_version`, all run in one transaction at startup. Never edit a released step: a
   self-hoster's DB may sit at any earlier version. `store_test` builds every earlier
   version from the steps and upgrades it, so a new step is covered without a test.
 - A store that can't be opened or migrated logs a WARNING and the app runs
-  **storeless**: a throwaway temp-file DB, same code and pragmas, discarded at exit.
+  **storeless**: a throwaway temp-file DB, same code and pragmas, discarded at exit
+  (`app.stop_on_sigterm` deletes it, since a killed process runs no finalisers).
   Not `:memory:`, which WAL can't share across connections.
 
 **Security model:** every outbound fetch is validated by `fetch._validate_ip`

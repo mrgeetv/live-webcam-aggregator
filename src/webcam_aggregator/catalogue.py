@@ -521,9 +521,9 @@ class Scheduler:
 
         A restored source serves its kept set with no re-check and is due an interval
         after that refresh, as if there had been no restart. One stale enough for
-        /health to call overdue is dropped whole, guard state included, and starts as
-        new. Rows for a source the code doesn't know are left alone. Return whether
-        anything was restored.
+        /health to call overdue, or stamped in the future (the clock ran ahead), is
+        dropped whole, guard state included, and starts as new. Rows for a source the
+        code doesn't know are left alone. Return whether anything was restored.
         """
         # One query, so a source's row and its cams come from one snapshot: a read
         # that fails returns nothing at all, never a source without its kept set.
@@ -535,8 +535,6 @@ class Scheduler:
             "FROM source s LEFT JOIN kept_cam k ON k.source = s.name "
             "ORDER BY s.name, k.pos"
         )
-        if not rows:
-            return False
         now = self._clock()
         restored: dict[str, Hist] = {}
         stale: set[str] = set()
@@ -544,7 +542,7 @@ class Scheduler:
             interval = self.intervals.get(name)
             if interval is None or name in stale:
                 continue
-            if now - at > STALE_INTERVALS * interval * 3600:
+            if not 0 <= now - at <= STALE_INTERVALS * interval * 3600:
                 stale.add(name)
                 continue
             h = restored.get(name)
@@ -581,10 +579,19 @@ class Scheduler:
 
         def write(tx: Tx) -> None:
             tx.execute(
-                "INSERT OR REPLACE INTO source (name, last_refresh_at, "
+                # An upsert, not INSERT OR REPLACE: a replace deletes the row, wiping
+                # any column this statement doesn't set.
+                "INSERT INTO source (name, last_refresh_at, "
                 "last_refresh_seconds, discovered, raw_kept, crashed, status, "
                 "guard_last_count, guard_shrink_streak) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (name) DO UPDATE SET "
+                "last_refresh_at = excluded.last_refresh_at, "
+                "last_refresh_seconds = excluded.last_refresh_seconds, "
+                "discovered = excluded.discovered, raw_kept = excluded.raw_kept, "
+                "crashed = excluded.crashed, status = excluded.status, "
+                "guard_last_count = excluded.guard_last_count, "
+                "guard_shrink_streak = excluded.guard_shrink_streak",
                 (
                     name,
                     int(f.finished),
@@ -669,9 +676,10 @@ class Scheduler:
             h.last_refresh_at = f.finished
             h.last_refresh_seconds = round(f.finished - f.started, 1)
             self._running.discard(r.name)
-        self._save(r.name, h, f)
         self._verdicts.prune()
         self._merge()
+        # After the merge: playback must never wait on, or be stopped by, the store.
+        self._save(r.name, h, f)
         return True
 
     def _merge(self) -> None:

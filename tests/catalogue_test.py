@@ -5,6 +5,8 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
+import pytest
+
 from webcam_aggregator import store
 from webcam_aggregator.app import source_status_for
 from webcam_aggregator.catalogue import (
@@ -18,8 +20,6 @@ from webcam_aggregator.store import open_storeless
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
     from pathlib import Path
-
-    import pytest
 
     from webcam_aggregator.sources.base import Source
 
@@ -710,7 +710,7 @@ def test_health_fields_record_raw_outcome_under_guard() -> None:
 def test_health_fields_flag_crash() -> None:
     """A crashed discover records last_crashed=True and last_raw_kept=0.
 
-    That holds even though the empty-guard keeps serving the last-good set.
+    That holds even though the empty-guard keeps serving the kept set.
     """
     cam = _make_candidate(
         source="worldcams", key="hls:a", target="https://example.com/a.m3u8"
@@ -1551,3 +1551,86 @@ def test_health_reads_the_same_either_side_of_a_restart(
     # The outage reads on as one: no fresh "-> dead" transition, only "still dead".
     assert "-> dead" not in caplog.text
     assert "feratel: still dead" in caplog.text
+
+
+class _CrashesAfterFirst:
+    name: str = "feratel"
+    interval_hours: float = 6
+    _calls: int = 0
+
+    def discover(self) -> list[Candidate]:
+        self._calls += 1
+        if self._calls > 1:
+            msg = "site down"
+            raise RuntimeError(msg)
+        return _cams("feratel", 1)
+
+
+def test_a_restart_restores_every_field_it_saved(tmp_path: Path) -> None:
+    """Each column round-trips: angle_key feeds the stable id players hold."""
+    db = tmp_path / "s.db"
+    clock = _Clock()
+    page = "https://camscape/harbour"
+    cams = [
+        Candidate(
+            "North", "north", "Beaches", "camscape", page, "https://c/n", "k:n", 1
+        ),
+        Candidate(
+            "South", "south", "Animals", "camscape", page, "https://c/s", "k:s", 2
+        ),
+        Candidate("Gone", None, None, "camscape", page, "https://c/dead", None),
+    ]
+    srcs: list[Source] = [_Src("camscape", cams), _CrashesAfterFirst()]
+
+    def drop_dead(c: Candidate) -> str | None:
+        return "dead-manifest" if c.target_url.endswith("dead") else None
+
+    first: list[list[CatalogueEntry]] = []
+    s = _scheduler(
+        srcs, drop_reason_for=drop_dead, clock=clock, merges=first, db=store.Store(db)
+    )
+    _finish_all(s, s.tick())
+    clock.advance(6)
+    _finish_all(s, s.tick())  # feratel crashes, keeping its kept set
+    assert s.history["feratel"].last_crashed
+
+    after: list[list[CatalogueEntry]] = []
+    s2 = _scheduler(srcs, clock=clock, merges=after, db=store.Store(db))
+    assert s2.history == s.history
+    assert after == [first[-1]]
+
+
+def test_a_set_stamped_in_the_future_is_dropped(tmp_path: Path) -> None:
+    """A refresh saved while the clock ran ahead would otherwise not be due for days."""
+    db = tmp_path / "s.db"
+    clock = _Clock()
+    srcs: list[Source] = [_Src("explore", _cams("explore", 1))]
+    s = _restart(db, srcs, clock)
+    _finish_all(s, s.tick())
+
+    clock.advance(-48)  # the clock was corrected back
+    s2 = _restart(db, srcs, clock)
+    assert s2.history["explore"].last_refresh_at is None
+    assert s2.tick() == ["explore"]
+    _finish_all(s2, ["explore"])
+
+
+def test_a_save_that_raises_still_leaves_the_refresh_merged(tmp_path: Path) -> None:
+    # A lone surrogate (a JSON feed's "\ud800") can't be encoded for SQLite.
+    cam = _make_candidate(source="explore", title="cam \ud800")
+    merges: list[list[CatalogueEntry]] = []
+    s = _scheduler(
+        [_Src("explore", [cam])], merges=merges, db=store.Store(tmp_path / "s.db")
+    )
+    started = s.tick()
+    with pytest.raises(UnicodeEncodeError):
+        _finish_all(s, started)
+    assert len(merges[-1]) == 1
+
+
+def test_a_first_start_says_the_store_held_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
+        _scheduler([_Src("explore", [])])
+    assert "store: loaded none; over age, so starting as new: none" in caplog.text

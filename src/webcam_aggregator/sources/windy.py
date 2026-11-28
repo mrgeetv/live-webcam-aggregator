@@ -39,8 +39,8 @@ _IFRAME = re.compile(r'<iframe[^<>]+src="([^"]+)"', re.IGNORECASE)
 # request budget per refresh: known-live cams are re-probed first (they are the
 # catalogue's current content), the rest of the corpus is probed in rotating
 # slices. Coverage therefore RAMPS over the first ~2 days of refreshes — and resets
-# to ramp again after a restart. That is expected, not an outage: the per-source
-# counts grow, they don't collapse.
+# to ramp again after a restart, where the empty-guard reads it as a collapse
+# against the stored count. That is expected, not an outage.
 _BUDGET = 9000
 # Hard ceiling on ONE enumeration pass's requests, so a dense corpus can never turn
 # the grid scan into a five-figure burst at node.windy.com. The grid alone is ~3800

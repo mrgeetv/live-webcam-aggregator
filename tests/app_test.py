@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import logging
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import googleapiclient.discovery
@@ -24,7 +29,6 @@ from webcam_aggregator.models import Candidate
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # origin_of helper — must return the scheme+host with trailing slash
@@ -397,3 +401,35 @@ def test_build_app_runs_storeless_when_the_store_cannot_open(
     st = app.source_status()
     assert st["ready"] is False
     assert st["sources"]
+
+
+_STOPPED_STORELESS = """
+import time
+from webcam_aggregator import app, store
+s = store.open_storeless()
+app.stop_on_sigterm(s)
+print("ready", flush=True)
+time.sleep(60)
+"""
+
+
+def test_sigterm_removes_a_storeless_store(tmp_path: Path) -> None:
+    """Without it, each storeless restart leaves a DB and its WAL in /tmp."""
+    src = Path(_app.__file__).parents[1]
+    env = {**os.environ, "TMPDIR": str(tmp_path), "PYTHONPATH": str(src)}
+    proc = subprocess.Popen(  # noqa: S603 - our own interpreter and script
+        [sys.executable, "-c", _STOPPED_STORELESS],
+        env=env,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None
+        assert proc.stdout.readline().strip() == "ready"
+        assert any(tmp_path.iterdir())
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=10) == 0
+    finally:
+        proc.kill()
+        proc.wait()
+    assert not any(tmp_path.iterdir())

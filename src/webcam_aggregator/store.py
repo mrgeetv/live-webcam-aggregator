@@ -196,6 +196,10 @@ class Store:
     def close(self) -> None:
         """Close the write connection; a storeless store also deletes its file."""
         self._conn.close()
+        self.discard()
+
+    def discard(self) -> None:
+        """Delete a storeless store's file, open or not; a real store is kept."""
         if self._tmp is not None:
             self._tmp.cleanup()
 

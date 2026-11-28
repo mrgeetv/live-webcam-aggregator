@@ -38,7 +38,8 @@ stream is actually played.
 
 The same camera found on more than one source is merged into a single channel. A
 typical catalogue holds around **11000–12000 live channels** once every source is
-warm (windy.com's share ramps up over the first couple of days of refreshes), varying
+warm (windy.com's share ramps up over the first couple of days of refreshes, and
+again after each restart), varying
 with how many cams are actually up and with `EXCLUDE_CATEGORIES`.
 
 ## How it works
@@ -259,11 +260,13 @@ The app keeps a small SQLite store at `/data/webcam-aggregator.db`: each source'
 cams from its last refresh, the outcome of that refresh and when it ran. On a
 restart it serves those at once, so players keep working and the `/stream/<id>`
 links they hold stay valid, and only the sources that are due refresh. A stored set
-older than twice its source's interval is dropped rather than served, and that
-source refreshes first.
+older than twice its source's interval (or dated in the future, after a clock
+correction) is dropped rather than served, and that source refreshes first.
 
 - **Everything in it can be rebuilt.** Losing it costs one cold start (the 20–30
-  minutes above), never data. Deleting the directory is a safe reset. It needs no
+  minutes above), never data. Deleting the files in the directory is a safe reset,
+  and makes every source refresh on the next start; delete the files, not the
+  directory, which Docker would recreate owned by root. It needs no
   backup; if you take one anyway, use `sqlite3 webcam-aggregator.db ".backup copy.db"`
   or `VACUUM INTO`, never a file copy while the app is running.
 - **Mount a directory, never the file.** SQLite keeps `-wal` and `-shm` files beside
