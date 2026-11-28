@@ -17,6 +17,7 @@ from webcam_aggregator.catalogue import Scheduler
 from webcam_aggregator.extractors.base import Resolved
 from webcam_aggregator.models import Candidate
 from webcam_aggregator.signing import sign
+from webcam_aggregator.store import open_storeless
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -68,20 +69,21 @@ def _scheduler(catalogue: LiveCatalogue, clock: _Clock) -> Scheduler:
         drop_reason_for=lambda _c: None,
         youtube_live=lambda ids: {i: i for i in ids},
         on_merge=catalogue.swap,
+        store=open_storeless(),
         clock=clock,
     )
 
 
-def _make_store(*, ready: bool = True) -> tuple[LiveCatalogue, str]:
-    store = LiveCatalogue()
+def _make_catalogue(*, ready: bool = True) -> tuple[LiveCatalogue, str]:
+    catalogue = LiveCatalogue()
     if ready:
-        s = _scheduler(store, _Clock())
+        s = _scheduler(catalogue, _Clock())
         s.tick()
         assert s.finish_next(timeout=5)
-        entry_id = next(iter(store.snapshot().keys()))
+        entry_id = next(iter(catalogue.snapshot().keys()))
     else:
         entry_id = "irrelevant"
-    return store, entry_id
+    return catalogue, entry_id
 
 
 def _make_cache() -> ResolveCache:
@@ -115,7 +117,7 @@ def _healthy_status(name: str = "fake", kept: int = 1) -> dict[str, Any]:
 
 
 def _start_server(
-    store: LiveCatalogue,
+    catalogue: LiveCatalogue,
     cache: ResolveCache | None = None,
     source_status: dict[str, Any] | None = None,
     status_fn: Callable[[], dict[str, Any]] | None = None,
@@ -124,7 +126,7 @@ def _start_server(
         cache = _make_cache()
     ss = source_status or _healthy_status()
     handler_cls = make_handler(
-        store,
+        catalogue,
         cache,
         _BASE_URL,
         manifest_fetch=_manifest_fetch,
@@ -144,8 +146,8 @@ def _start_server(
 
 
 def test_unknown_path_returns_404() -> None:
-    store, _ = _make_store()
-    server, port = _start_server(store)
+    catalogue, _ = _make_catalogue()
+    server, port = _start_server(catalogue)
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         conn.request("GET", "/nope")
@@ -158,8 +160,8 @@ def test_unknown_path_returns_404() -> None:
 
 def test_playlist_not_ready_returns_503() -> None:
     """A catalogue with no merge yet → 503 on /playlist.m3u8."""
-    store, _ = _make_store(ready=False)
-    server, port = _start_server(store)
+    catalogue, _ = _make_catalogue(ready=False)
+    server, port = _start_server(catalogue)
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         conn.request("GET", "/playlist.m3u8")
@@ -171,8 +173,8 @@ def test_playlist_not_ready_returns_503() -> None:
 
 
 def test_child_manifest_missing_sig_returns_403() -> None:
-    store, entry_id = _make_store()
-    server, port = _start_server(store)
+    catalogue, entry_id = _make_catalogue()
+    server, port = _start_server(catalogue)
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         encoded_url = urllib.parse.quote(_RESOLVED_URL, safe="")
@@ -185,8 +187,8 @@ def test_child_manifest_missing_sig_returns_403() -> None:
 
 
 def test_child_manifest_missing_u_returns_400() -> None:
-    store, entry_id = _make_store()
-    server, port = _start_server(store)
+    catalogue, entry_id = _make_catalogue()
+    server, port = _start_server(catalogue)
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         conn.request("GET", f"/stream/{entry_id}/m")
@@ -199,8 +201,8 @@ def test_child_manifest_missing_u_returns_400() -> None:
 
 def test_child_manifest_valid_sig_returns_200() -> None:
     """Valid sig on /stream/<id>/m → 200 with rewritten manifest."""
-    store, entry_id = _make_store()
-    server, port = _start_server(store)
+    catalogue, entry_id = _make_catalogue()
+    server, port = _start_server(catalogue)
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         child_url = "https://cdn.example/cam/chunk.m3u8"
@@ -217,8 +219,8 @@ def test_child_manifest_valid_sig_returns_200() -> None:
 
 
 def test_segment_missing_sig_returns_403() -> None:
-    store, entry_id = _make_store()
-    server, port = _start_server(store)
+    catalogue, entry_id = _make_catalogue()
+    server, port = _start_server(catalogue)
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         encoded_url = urllib.parse.quote("https://cdn.example/cam/seg.ts", safe="")
@@ -232,8 +234,8 @@ def test_segment_missing_sig_returns_403() -> None:
 
 def test_segment_valid_sig_returns_segment() -> None:
     """Valid sig on /stream/<id>/s → relays the segment_fetch result."""
-    store, entry_id = _make_store()
-    server, port = _start_server(store)
+    catalogue, entry_id = _make_catalogue()
+    server, port = _start_server(catalogue)
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         seg_url = "https://cdn.example/cam/seg.ts"
@@ -261,8 +263,10 @@ def _get_health(port: int) -> dict[str, Any]:
 
 
 def test_health_returns_correct_json() -> None:
-    store, _ = _make_store()
-    server, port = _start_server(store, source_status=_healthy_status("fake", kept=3))
+    catalogue, _ = _make_catalogue()
+    server, port = _start_server(
+        catalogue, source_status=_healthy_status("fake", kept=3)
+    )
     try:
         health = _get_health(port)
         assert health["ready"] is True
@@ -292,16 +296,16 @@ def test_health_returns_correct_json() -> None:
 def test_health_unhealthy_when_source_failed() -> None:
     """A source that crashed or returned 0 this cycle flips healthy to False.
 
-    The source is named, even though the store is ready (the empty-guard is still
+    The source is named, even though the catalogue is serving (the empty-guard is still
     masking it in the playlist).
     """
-    store, _ = _make_store()  # ready=True
+    catalogue, _ = _make_catalogue()  # ready=True
     status = {
         "sources": {"fake": {"kept": 0, "discovered": 0, "crashed": True}},
         "unhealthy": ["fake"],
         "ready": True,
     }
-    server, port = _start_server(store, source_status=status)
+    server, port = _start_server(catalogue, source_status=status)
     try:
         health = _get_health(port)
         assert health["ready"] is True
@@ -317,9 +321,9 @@ def test_health_not_healthy_during_cold_start() -> None:
     That holds even with no failing sources, which guards against a fresh container
     reporting a false all-clear.
     """
-    store, _ = _make_store()  # the playlist already serves the first refresh
+    catalogue, _ = _make_catalogue()  # the playlist already serves the first refresh
     status = {**_healthy_status(), "ready": False}
-    server, port = _start_server(store, source_status=status)
+    server, port = _start_server(catalogue, source_status=status)
     try:
         health = _get_health(port)
         assert health["ready"] is False
@@ -383,8 +387,8 @@ def _raw_get(port: int, path: str) -> None:
 def test_health_requests_are_not_access_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, _ = _make_store()
-    server, port = _start_server(store)
+    catalogue, _ = _make_catalogue()
+    server, port = _start_server(catalogue)
     try:
         with caplog.at_level(logging.DEBUG, logger="webcam-aggregator"):
             _get_health(port)
@@ -399,8 +403,8 @@ def test_health_suppression_cannot_be_triggered_by_a_crafted_path(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A raw-request-line substring test would let a client hide its own request."""
-    store, _ = _make_store()
-    server, port = _start_server(store)
+    catalogue, _ = _make_catalogue()
+    server, port = _start_server(catalogue)
     try:
         with caplog.at_level(logging.DEBUG, logger="webcam-aggregator"):
             _raw_get(port, "/playlist.m3u8?x=/health")

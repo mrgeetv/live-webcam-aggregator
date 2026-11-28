@@ -27,10 +27,15 @@ from webcam_aggregator.sources.base import Source, decode_entities
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
+    from webcam_aggregator.store import Store, Tx
+
 log = logging.getLogger("webcam-aggregator.catalogue")
 
 DROP_THRESHOLD = 0.5
 AGREE_TO_ACCEPT = 2
+# A source whose last refresh finished this many intervals ago is stale: /health
+# calls it overdue, and a restart drops its stored kept set rather than serve it.
+STALE_INTERVALS = 2
 _NO_EXCLUDE: frozenset[str] = (
     frozenset()
 )  # default arg (basedpyright: no call in default)
@@ -40,16 +45,17 @@ _NO_EXCLUDE: frozenset[str] = (
 class Hist:
     """Per-source state carried between refreshes.
 
-    It holds the empty-guard's last good set and the raw outcome of the last refresh.
+    It holds the source's kept set, the empty-guard's state and the raw outcome of the
+    last refresh: what the store saves after each refresh.
     """
 
     last_count: int | None = None
     shrink_streak: int = 0
-    last_kept: list[Candidate] = field(default_factory=list)
+    kept_set: list[Candidate] = field(default_factory=list)
     # The last refresh's RAW outcome, for /health monitoring — distinct from the
-    # guard's last-*good* state above. These record what actually happened on the most
+    # guard's state above. These record what actually happened on the most
     # recent refresh (crash / 0 kept) even while the empty-guard masks it by
-    # reusing last_kept, so a failure surfaces to monitoring the moment it occurs.
+    # reusing kept_set, so a failure surfaces to monitoring the moment it occurs.
     last_discovered: int = 0
     last_raw_kept: int = 0
     last_crashed: bool = False
@@ -332,13 +338,13 @@ def _record_refresh(
 ) -> list[Candidate]:
     """Log a source's refresh, update its history, and return the candidates to serve.
 
-    That is the new set, or the last good one while the empty-guard holds.
+    That is the new set, or the kept set while the empty-guard holds.
     """
     name, kept, discovered, crashed = r.name, r.kept, r.discovered, r.crashed
     warned = _log_source_outcome(name, len(kept), discovered, fetches, r.drop_reasons)
     _log_drop_detail(name, r.no_extractor_hosts, r.resolve_details)
     # Record the RAW result before the guard can mask it — /health alerts on this
-    # (crashed, or 0 kept) even when the guard keeps serving the last good set.
+    # (crashed, or 0 kept) even when the guard keeps serving the kept set.
     h.last_discovered = discovered
     h.last_raw_kept = len(kept)
     h.last_crashed = crashed
@@ -361,12 +367,12 @@ def _record_refresh(
         # single refresh it stays there.
         log.warning("%s: still dead (%d kept / %d discovered)", name, 0, discovered)
     h.status = status
-    if crashed and h.last_kept:
-        # A crash is not a genuine "0 cams" result — reuse the last good set and leave
+    if crashed and h.kept_set:
+        # A crash is not a genuine "0 cams" result — reuse the kept set and leave
         # history untouched, so two consecutive crashes can't get accepted as an empty
-        # set (which would wipe last_kept and disable the guard).
-        log.warning("%s discover crashed; reusing previous %d", name, len(h.last_kept))
-        return h.last_kept
+        # set (which would wipe kept_set and disable the guard).
+        log.warning("%s discover crashed; reusing previous %d", name, len(h.kept_set))
+        return h.kept_set
     collapsed = (
         h.last_count is not None
         and h.last_count > 0
@@ -381,12 +387,12 @@ def _record_refresh(
                 len(kept),
                 DROP_THRESHOLD * 100,
                 h.last_count,
-                len(h.last_kept),
+                len(h.kept_set),
             )
-            return h.last_kept  # guard: reuse this source's last good set
+            return h.kept_set  # guard: reuse this source's kept set
     h.shrink_streak = 0
     h.last_count = len(kept)
-    h.last_kept = kept
+    h.kept_set = kept
     return kept
 
 
@@ -462,6 +468,7 @@ class Scheduler:
     _max: int
     _fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None
     _clock: Callable[[], float]
+    _store: Store
     _verdicts: VerdictTable
     _yt_lock: threading.Lock
     _running: set[str]
@@ -476,6 +483,7 @@ class Scheduler:
         drop_reason_for: Callable[[Candidate], str | None],
         youtube_live: Callable[[Iterable[str]], Mapping[str, str]],
         on_merge: Callable[[list[CatalogueEntry]], None],
+        store: Store,
         exclude_categories: frozenset[str] = _NO_EXCLUDE,
         max_parallel_sources: int = 4,
         fetch_stats: Callable[[str], dict[str, dict[str, int]]] | None = None,
@@ -483,8 +491,10 @@ class Scheduler:
     ) -> None:
         """Schedule `sources`, each every `intervals[name]` hours.
 
-        `on_merge` receives the catalogue after every refresh. `clock` is wall-clock
-        unix seconds: it stamps `Hist.last_refresh_at`, which /health reports as UTC.
+        `on_merge` receives the catalogue after every refresh, and at once if `store`
+        holds any source's kept set: what a restart serves before any refresh. `clock`
+        is wall-clock unix seconds: it stamps `Hist.last_refresh_at`, which /health
+        reports as UTC.
         """
         self._sources = list(sources)
         self.intervals = {s.name: float(intervals[s.name]) for s in self._sources}
@@ -495,6 +505,7 @@ class Scheduler:
         self._max = max_parallel_sources
         self._fetch_stats = fetch_stats
         self._clock = clock
+        self._store = store
         self._verdicts = VerdictTable(drop_reason_for, clock)
         self._yt_lock = threading.Lock()
         self._running = set()
@@ -502,6 +513,119 @@ class Scheduler:
         self._pool = ThreadPoolExecutor(
             max_workers=max_parallel_sources, thread_name_prefix="refresh"
         )
+        if self._load():
+            self._merge()
+
+    def _load(self) -> bool:
+        """Restore each source's last finished refresh from the store.
+
+        A restored source serves its kept set with no re-check and is due an interval
+        after that refresh, as if there had been no restart. One stale enough for
+        /health to call overdue, or stamped in the future (the clock ran ahead), is
+        dropped whole, guard state included, and starts as new. Rows for a source the
+        code doesn't know are left alone. Return whether anything was restored.
+        """
+        # One query, so a source's row and its cams come from one snapshot: a read
+        # that fails returns nothing at all, never a source without its kept set.
+        rows = self._store.read(
+            "SELECT s.name, s.last_refresh_at, s.last_refresh_seconds, s.discovered, "
+            "s.raw_kept, s.crashed, s.status, s.guard_last_count, "
+            "s.guard_shrink_streak, k.title, k.angle_key, k.category, "
+            "k.source_page_url, k.target_url, k.predisc_key, k.name_rank "
+            "FROM source s LEFT JOIN kept_cam k ON k.source = s.name "
+            "ORDER BY s.name, k.pos"
+        )
+        now = self._clock()
+        restored: dict[str, Hist] = {}
+        stale: set[str] = set()
+        for name, at, secs, disc, raw, crashed, status, count, streak, *cam in rows:
+            interval = self.intervals.get(name)
+            if interval is None or name in stale:
+                continue
+            if not 0 <= now - at <= STALE_INTERVALS * interval * 3600:
+                stale.add(name)
+                continue
+            h = restored.get(name)
+            if h is None:
+                h = restored[name] = Hist(
+                    last_count=count,
+                    shrink_streak=streak,
+                    last_discovered=disc,
+                    last_raw_kept=raw,
+                    last_crashed=bool(crashed),
+                    status=status,
+                    last_refresh_at=float(at),
+                    last_refresh_seconds=secs,
+                )
+            title, angle, category, page, target, key, rank = cam
+            if target is not None:  # None: a source whose kept set is empty
+                h.kept_set.append(
+                    Candidate(title, angle, category, name, page, target, key, rank)
+                )
+        self.history.update(restored)
+        log.info(
+            "store: loaded %s; over age, so starting as new: %s",
+            ", ".join(s.name for s in self._sources if s.name in restored) or "none",
+            ", ".join(s.name for s in self._sources if s.name in stale) or "none",
+        )
+        return bool(restored)
+
+    def _save(self, name: str, h: Hist, f: _Finished) -> None:
+        """Commit a finished refresh: the outcome, guard state and the kept set it left.
+
+        One transaction, so a restart finds either this refresh or the one before it,
+        never part of each.
+        """
+
+        def write(tx: Tx) -> None:
+            tx.execute(
+                # An upsert, not INSERT OR REPLACE: a replace deletes the row, wiping
+                # any column this statement doesn't set.
+                "INSERT INTO source (name, last_refresh_at, "
+                "last_refresh_seconds, discovered, raw_kept, crashed, status, "
+                "guard_last_count, guard_shrink_streak) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (name) DO UPDATE SET "
+                "last_refresh_at = excluded.last_refresh_at, "
+                "last_refresh_seconds = excluded.last_refresh_seconds, "
+                "discovered = excluded.discovered, raw_kept = excluded.raw_kept, "
+                "crashed = excluded.crashed, status = excluded.status, "
+                "guard_last_count = excluded.guard_last_count, "
+                "guard_shrink_streak = excluded.guard_shrink_streak",
+                (
+                    name,
+                    int(f.finished),
+                    round(f.finished - f.started, 1),
+                    h.last_discovered,
+                    h.last_raw_kept,
+                    int(h.last_crashed),
+                    h.status,
+                    h.last_count,
+                    h.shrink_streak,
+                ),
+            )
+            tx.execute("DELETE FROM kept_cam WHERE source = ?", (name,))
+            tx.executemany(
+                "INSERT INTO kept_cam (source, pos, title, angle_key, category, "
+                "source_page_url, target_url, predisc_key, name_rank) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        name,
+                        pos,
+                        c.title,
+                        c.angle_key,
+                        c.category,
+                        c.source_page_url,
+                        c.target_url,
+                        c.predisc_key,
+                        c.name_rank,
+                    )
+                    for pos, c in enumerate(h.kept_set)
+                ),
+            )
+
+        self._store.write(f"{name}'s refresh", write)
 
     def _due_at(self, name: str) -> float:
         last = self.history[name].last_refresh_at
@@ -554,13 +678,15 @@ class Scheduler:
             self._running.discard(r.name)
         self._verdicts.prune()
         self._merge()
+        # After the merge: playback must never wait on, or be stopped by, the store.
+        self._save(r.name, h, f)
         return True
 
     def _merge(self) -> None:
-        # Each source's kept set is its last_kept: the guard leaves the last good
-        # set there while it holds a collapse back. Sources merge in their listed
-        # order, so dedup's ties break the same way on every merge.
-        kept_all = [c for s in self._sources for c in self.history[s.name].last_kept]
+        # The guard leaves a source's previous kept set in place while it holds a
+        # collapse back. Sources merge in their listed order, so dedup's ties break
+        # the same way on every merge.
+        kept_all = [c for s in self._sources for c in self.history[s.name].kept_set]
         entries = [_to_entry(c) for c in dedupe(kept_all)]
         if self._exclude:
             # exclude_categories is casefolded (config._csv_set) for case-insensitive

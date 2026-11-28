@@ -21,6 +21,10 @@ services:
       - MAX_PARALLEL_SOURCES=${MAX_PARALLEL_SOURCES:-}
       - SCRAPE_WORKERS=${SCRAPE_WORKERS:-}
       - PROXY_YOUTUBE=${PROXY_YOUTUBE:-}
+    # The store. DATA_DIR is the host directory, read by compose itself, so it is
+    # deliberately not in environment: above: the app always uses /data.
+    volumes:
+      - ${DATA_DIR:-./data}:/data
     restart: unless-stopped
     # json-file logging is unbounded by default and will grow until it fills the disk,
     # long after it has become too large to read. 5x10 MB is ~a fortnight at INFO.

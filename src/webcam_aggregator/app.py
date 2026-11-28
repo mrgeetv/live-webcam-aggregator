@@ -5,6 +5,8 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
+import signal
 import sys
 import threading
 import time
@@ -20,6 +22,7 @@ import psutil
 from webcam_aggregator import config
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.catalogue import (
+    STALE_INTERVALS,
     Scheduler,
     failure_counts,
     top_counts,
@@ -85,9 +88,11 @@ from webcam_aggregator.sources.wildlife_trusts import WildlifeTrustsSource
 from webcam_aggregator.sources.windy import WindySource
 from webcam_aggregator.sources.worldcams import WorldcamsSource
 from webcam_aggregator.sources.youtube_api import YoutubeApiSource
+from webcam_aggregator.store import DB_PATH, Store, open_store
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
+    from pathlib import Path
 
     from googleapiclient._apis.youtube.v3.resources import YouTubeResource
 
@@ -539,11 +544,6 @@ def run_http_server(
     log.info("HTTP server listening on port %d", port)
 
 
-# One interval late is a slow refresh; this many means the scheduler isn't getting to
-# the source at all.
-_OVERDUE_INTERVALS = 2
-
-
 def _utc(ts: float | None) -> str | None:
     if ts is None:
         return None
@@ -567,7 +567,7 @@ def source_status_for(scheduler: Scheduler, now: float) -> dict[str, Any]:
         interval = scheduler.intervals[name]
         if h.last_refresh_at is None:
             status = "unknown"
-        elif now - h.last_refresh_at > _OVERDUE_INTERVALS * interval * 3600:
+        elif now - h.last_refresh_at > STALE_INTERVALS * interval * 3600:
             status = "overdue"
         else:
             status = h.status
@@ -803,14 +803,19 @@ class App:
     catalogue: LiveCatalogue
     cache: ResolveCache
     scheduler: Scheduler
+    store: Store
     # /health's per-source block, failing sources and `ready`
     source_status: Callable[[], dict[str, Any]]
     # logs the cross-source liveness and pacing lines since its last call
     report_last_hour: Callable[[], None]
 
 
-def build_app(cfg: config.Config) -> App:
-    """Wire sources, extractors, resolve cache, scheduler and catalogue from `cfg`."""
+def build_app(cfg: config.Config, db_path: Path = DB_PATH) -> App:
+    """Wire sources, extractors, resolve cache, scheduler and catalogue from `cfg`.
+
+    The store at `db_path` restores what sources learned before a restart; playback
+    never reads it, only the scheduler.
+    """
     # One pacer shared by every BUILD-side fetcher (sources, liveness resolver,
     # probe). Reactive: it is a no-op until a host answers 429/503, then that host
     # is spaced and its retries are gated past the shedding window so they succeed
@@ -820,6 +825,7 @@ def build_app(cfg: config.Config) -> App:
     yt_source = _youtube_source(cfg)
     active_sources, source_stats = _build_sources(yt_source, pacer)
     catalogue = LiveCatalogue()
+    store = open_store(db_path)
     # delay=0: liveness verify-fetches hit CDNs (not the scraped sites) and run
     # concurrently, so politeness spacing isn't needed here. retries=2 so a paced
     # 503 gets its post-cooldown retry (range(retries) means retries=1 is ZERO
@@ -846,6 +852,7 @@ def build_app(cfg: config.Config) -> App:
         ),
         youtube_live=_youtube_live_for(yt_source),
         on_merge=catalogue.swap,
+        store=store,
         exclude_categories=cfg.exclude_categories,
         max_parallel_sources=cfg.max_parallel_sources,
         fetch_stats=drain_source_stats,
@@ -854,6 +861,7 @@ def build_app(cfg: config.Config) -> App:
         catalogue=catalogue,
         cache=cache,
         scheduler=scheduler,
+        store=store,
         source_status=lambda: source_status_for(scheduler, time.time()),
         report_last_hour=lambda: _report_last_hour(
             {"resolver": resolver_stats, "probe": probe_stats}, pacer
@@ -875,6 +883,19 @@ def _every(seconds: float, label: str, fn: Callable[[], None]) -> None:
             log.exception("%s failed; trying again next time", label)
 
 
+def stop_on_sigterm(store: Store) -> None:
+    """Exit at once on SIGTERM, as Python's default does, deleting a storeless store.
+
+    At once: waiting on a running refresh would outlast a container's stop timeout.
+    """
+
+    def stop(_signum: int, _frame: object) -> None:
+        store.discard()
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+
+
 def main() -> None:
     """Serve HTTP and refresh each source on its interval."""
     # Root stays at WARNING so third-party libs (googleapiclient, urllib3) never
@@ -894,6 +915,7 @@ def main() -> None:
     for handler in logging.getLogger().handlers:
         handler.addFilter(RedactingFilter())
     app = build_app(cfg)
+    stop_on_sigterm(app.store)
 
     # Unpaced by design: this is the serve-time hot path (manifest refreshes every
     # few seconds per viewer, plus segment relay) — per-host pacing here would stall

@@ -26,6 +26,10 @@ cp .env.example .env
 Docker Compose is recommended for local development as it rebuilds from source:
 
 ```bash
+# The store's directory, writable by the container's user (see README "Persistent
+# data"). Without the chown, Docker creates it root-owned and the app runs storeless.
+mkdir -p data && sudo chown 65532:65532 data
+
 # Start the service
 docker compose up -d
 
@@ -49,6 +53,7 @@ Configure these in your `.env` file or pass directly to docker-compose.
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
+| `DATA_DIR` | `./data` | **Compose only** (not in `environment:`): the host directory mounted at `/data` for the store |
 | `EXCLUDE_CATEGORIES` | (none) | Comma-separated categories to drop across all sources (case-insensitive) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `MAX_PARALLEL_SOURCES` | `4` | How many source refreshes (discover + liveness) run at once (min 1); total concurrency ≈ this × `SCRAPE_WORKERS` |
@@ -184,6 +189,8 @@ live-webcam-aggregator/
 │       ├── cache.py            # Resolve cache (TTL, LRU, negative caching)
 │       ├── serving.py          # Playlist render, manifest gate + manifest/segment proxy
 │       ├── signing.py          # HMAC signing of proxied manifest/segment URLs
+│       ├── store.py            # SQLite store: connections, transactions, migrations
+│       ├── store_migrations.py # The store's schema, as append-only migration steps
 │       ├── extractors/         # Stream URL extractors
 │       │   ├── ytdlp.py        # yt-dlp extractor
 │       │   ├── direct_hls.py   # Direct HLS link extractor
@@ -313,6 +320,17 @@ trimmed out of the serving warnings (see *Secrets in logs* below).
 After every refresh the catalogue is re-merged from each source's latest kept cams,
 logging `catalogue merged: <N> entries` at `INFO`.
 
+At startup one `INFO` line says what the store restored; a source whose stored set is
+more than twice its interval old is not served and refreshes first:
+
+```text
+store: loaded explore, skyline, feratel; over age, so starting as new: windy
+```
+
+A store that can't be opened logs a `WARNING` naming the error and the app runs
+storeless (nothing survives a restart); one whose directory isn't a mount logs a
+`WARNING` that it lives in the container layer.
+
 Live process memory (`rss_mb`), each source's **raw** last-refresh outcome
 (`kept`/`discovered`/`crashed`/`status`) and refresh times
 (`last_refresh_at`/`last_refresh_seconds`/`interval_hours`), a `healthy` rollup
@@ -321,7 +339,7 @@ or is `overdue`, i.e. last refreshed over twice its interval ago) and
 `unhealthy_sources` are exposed on the `/health` endpoint. The payload is
 deliberately WHAT-only — the per-host/per-reason detail above lives on the log
 lines. The per-source counts stay raw even when the empty-guard is still serving a
-failed source's last good set, so a failure surfaces immediately. See the
+failed source's kept set, so a failure surfaces immediately. See the
 *Monitoring* section in the README for the payload shape and the state table.
 
 ### Playback failures
@@ -408,7 +426,7 @@ would exceed ~30s, requests fail fast with the `host-backoff` outcome rather tha
 queueing, and at the breaker threshold everything fails fast except one probe per
 decay period — so a hard-blocked site costs a refresh minutes, not hours, at the
 price of that source mostly sitting the refresh out (the empty-guard then serves its
-last good set). A scrape-phase `host-backoff` appears on that source's own log
+kept set). A scrape-phase `host-backoff` appears on that source's own log
 line; a resolver/probe one on the cross-source `liveness` line. Serve-time
 fetchers (player manifest/segment traffic and on-play resolves) are deliberately
 unpaced — a build-inflicted cooldown must never stall playback.
