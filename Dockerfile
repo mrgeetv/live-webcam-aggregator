@@ -7,9 +7,8 @@ ARG RUNTIME_IMAGE=dhi.io/python:3.15-alpine3.24
 #
 # Deno ships as a glibc binary with its loader hardcoded to /lib64. Repoint its
 # ELF interpreter and rpath at the bundled glibc so it runs self-contained,
-# without a system /lib64 loader. This lets it exec on the musl Alpine runtime
-# (DHI) while NOT hijacking the system loader on a glibc runtime (local compose
-# uses a Debian python slim image) — copying glibc over /lib64 breaks the latter.
+# without a system /lib64 loader, on the musl Alpine runtime. Copying glibc over
+# /lib64 instead would hijack the system loader on any glibc runtime.
 # Written out, not an ARG: Dependabot only reads a FROM that names its image.
 FROM denoland/deno:alpine-2.9.8 AS deno_src
 # hadolint ignore=DL3018  # patchelf is a build-only tool; pinning it across deno base bumps is fragile
@@ -73,7 +72,7 @@ COPY src/webcam_aggregator/ ./src/webcam_aggregator/
 COPY --from=builder --chown=65532:65532 /data-dir /data
 
 # Run as a non-root user (defense-in-depth). Numeric UID works on both the DHI
-# runtime (nonroot is 65532) and the local python:slim image (no /etc/passwd entry
+# runtime (nonroot is 65532) and the local python:alpine image (no /etc/passwd entry
 # needed). HOME=/tmp gives yt-dlp/deno a writable cache dir. The app writes its store
 # to /data (to /tmp when it can't), and /app/src + /deps are world-readable.
 ENV HOME=/tmp

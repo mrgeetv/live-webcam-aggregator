@@ -109,6 +109,7 @@ def test_end_to_end_server() -> None:
             "unhealthy": [],
             "ready": True,
         },
+        store_status=lambda: "ok",
         segment_fetch=lambda _u, _r: ((200, "video/mp2t", None, b"seg"), "ok"),
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)

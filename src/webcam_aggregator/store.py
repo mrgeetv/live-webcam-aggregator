@@ -18,6 +18,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,24 @@ DB_PATH = Path("/data") / _DB_NAME
 _JOURNAL_SIZE_LIMIT = 32 * 1024 * 1024
 _WRITE_BUSY_MS = 5000
 _READ_BUSY_MS = 1000
+# Older SQLite can corrupt a WAL database (the WAL-reset bug).
+_MIN_SQLITE = (3, 51, 3)
+
+
+class _UnusableError(Exception):
+    """The DB at a path is one this release must not, or cannot, use."""
+
+
+class _TooNewError(_UnusableError):
+    """The DB's schema is newer than this release's: a rolled-back image."""
+
+
+class _CorruptError(_UnusableError):
+    """quick_check found damage."""
+
+
+class _NotWalError(_UnusableError):
+    """The filesystem won't do WAL."""
 
 
 class Tx:
@@ -63,6 +82,30 @@ def _pragmas(conn: sqlite3.Connection, busy_ms: int) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
+def _check(path: Path) -> None:
+    """Refuse a newer or damaged DB, read-only: a writer's close deletes the -wal."""
+    with contextlib.closing(
+        sqlite3.connect(
+            f"{path.absolute().as_uri()}?mode=ro", uri=True, autocommit=True
+        )
+    ) as conn:
+        _pragmas(conn, _READ_BUSY_MS)
+        (version,) = conn.execute("PRAGMA user_version").fetchone()
+        if version > len(MIGRATIONS):
+            msg = "it was written by a newer release; left untouched"
+            raise _TooNewError(msg)
+        if conn.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            msg = "quick_check found damage"
+            raise _CorruptError(msg)
+
+
+def _use_wal(conn: sqlite3.Connection) -> None:
+    (mode,) = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+    if mode != "wal":  # SQLite keeps the old mode rather than raising
+        msg = f"its filesystem can't use WAL (journal_mode stayed {mode})"
+        raise _NotWalError(msg)
+
+
 class Store:
     """An open store: the migrated DB file and its write connection."""
 
@@ -70,6 +113,7 @@ class Store:
     _conn: sqlite3.Connection
     _lock: threading.Lock
     _tmp: tempfile.TemporaryDirectory[str] | None
+    _failing: bool
 
     def __init__(
         self,
@@ -79,18 +123,21 @@ class Store:
     ) -> None:
         """Open the DB at `path`, creating and migrating it as needed.
 
-        Raises sqlite3.Error or OSError if it can't be opened or migrated. `tmp` is the
-        throwaway directory of a storeless store, removed on close.
+        Raises _UnusableError, sqlite3.Error or OSError if it can't be used. `tmp` is
+        the throwaway directory of a storeless store, removed on close.
         """
         self._path = path
         self._tmp = tmp
         self._lock = threading.Lock()
+        self._failing = False
+        if path.exists():
+            _check(path)
         # autocommit=True, never False: False makes BEGIN IMMEDIATE impossible,
         # silently no-ops foreign_keys=ON and pins read snapshots open.
         self._conn = sqlite3.connect(path, autocommit=True, check_same_thread=False)
         try:
             _pragmas(self._conn, _WRITE_BUSY_MS)
-            self._conn.execute("PRAGMA journal_mode = WAL")
+            _use_wal(self._conn)
             self._conn.execute("PRAGMA synchronous = NORMAL")
             self._conn.execute(f"PRAGMA journal_size_limit = {_JOURNAL_SIZE_LIMIT}")
             self._migrate()
@@ -101,9 +148,6 @@ class Store:
     def _migrate(self) -> None:
         with self._transaction() as tx:
             (version,) = self._conn.execute("PRAGMA user_version").fetchone()
-            if version > len(MIGRATIONS):
-                msg = f"schema version {version} is newer than this release's"
-                raise sqlite3.DatabaseError(msg)
             for step in MIGRATIONS[version:]:
                 for stmt in step:
                     tx.execute(stmt)
@@ -126,23 +170,35 @@ class Store:
                     self._conn.execute("ROLLBACK")
                 raise
 
+    @property
+    def status(self) -> str:
+        """`storeless`, `failing` while writes fail, else `ok`: /health's `store`."""
+        if self._tmp is not None:
+            return "storeless"
+        return "failing" if self._failing else "ok"
+
     def write(self, label: str, fn: Callable[[Tx], None]) -> bool:
         """Run `fn` in one transaction; return whether it committed.
 
-        A failure rolls the whole transaction back and logs a WARNING naming `label`;
-        the caller carries on with what it holds in memory.
+        A failure rolls back, logs a WARNING naming `label` and marks the store
+        `failing` until a write commits again.
         """
         try:
             with self._transaction() as tx:
                 fn(tx)
         except sqlite3.Error as exc:
+            self._failing = True
             log.warning(
-                "store: %s not saved, carrying on in memory — %s: %s",
+                "store: %s not saved, carrying on in memory — %s (%s): %s",
                 label,
                 type(exc).__name__,
+                getattr(exc, "sqlite_errorname", "no SQLite code"),
                 exc,
             )
             return False
+        if self._failing:
+            self._failing = False
+            log.info("store: writing again")
         return True
 
     def read(self, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
@@ -150,7 +206,11 @@ class Store:
         try:
             # mode=rw: a read must never create an empty DB where the file was.
             with contextlib.closing(
-                sqlite3.connect(f"file:{self._path}?mode=rw", uri=True, autocommit=True)
+                sqlite3.connect(
+                    f"{self._path.absolute().as_uri()}?mode=rw",
+                    uri=True,
+                    autocommit=True,
+                )
             ) as conn:
                 _pragmas(conn, _READ_BUSY_MS)
                 conn.execute("PRAGMA query_only = ON")
@@ -180,17 +240,93 @@ def open_storeless() -> Store:
     return Store(Path(tmp.name) / _DB_NAME, tmp=tmp)
 
 
-def open_store(path: Path) -> Store:
-    """Open the store at `path`, or a storeless one if it can't be used."""
+_OPEN_ERRORS = (sqlite3.Error, OSError, _UnusableError)
+
+
+def _is_corrupt(exc: Exception) -> bool:
+    code = getattr(exc, "sqlite_errorcode", 0) & 0xFF  # the primary code
+    return isinstance(exc, _CorruptError) or code in {
+        sqlite3.SQLITE_CORRUPT,
+        sqlite3.SQLITE_NOTADB,
+    }
+
+
+def _why(exc: Exception) -> str:
+    if isinstance(exc, _UnusableError):
+        return str(exc)
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _move_aside(path: Path) -> str:
+    """Add a `.corrupt-<time>` suffix to the DB, its -wal and -shm; return it."""
+    suffix = time.strftime(".corrupt-%Y%m%dT%H%M%SZ", time.gmtime())
+    for p in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        with contextlib.suppress(FileNotFoundError):
+            p.rename(f"{p}{suffix}")
+    return suffix
+
+
+def _unusable(path: Path) -> str | None:
+    """Say why the store at `path` can't be used, before opening it, if it can't."""
+    if sqlite3.sqlite_version_info < _MIN_SQLITE:
+        least = ".".join(map(str, _MIN_SQLITE))
+        return (
+            f"SQLite {sqlite3.sqlite_version} is older than {least}, which can "
+            "corrupt a WAL database"
+        )
+    files = (path.parent, path, Path(f"{path}-wal"), Path(f"{path}-shm"))
+    if path.parent.is_dir() and not all(
+        os.access(f, os.W_OK) for f in files if f.exists()
+    ):
+        if os.statvfs(path.parent).f_flag & os.ST_RDONLY:
+            return f"{path.parent} is on a read-only mount"
+        uid, gid = os.getuid(), os.getgid()
+        return (
+            f"it isn't writable by this process (uid {uid}, gid {gid}: on the host, "
+            f"run `chown -R {uid}:{gid}` on the directory mounted at {path.parent})"
+        )
+    return None
+
+
+def _open(path: Path) -> Store | str:
+    """Open the store at `path`, replacing a corrupt DB; else say why it can't."""
+    why = _unusable(path)
+    if why is not None:
+        return why
     try:
+        return Store(path)
+    except _OPEN_ERRORS as exc:
+        if not _is_corrupt(exc):
+            return _why(exc)
+        damage = _why(exc)
+    try:
+        suffix = _move_aside(path)
         s = Store(path)
-    except (sqlite3.Error, OSError) as exc:
+    except _OPEN_ERRORS as exc:
+        return _why(exc)
+    log.warning(
+        "store: %s is corrupt (%s), so it and its -wal and -shm were renamed with a "
+        "%s suffix and a fresh store started; delete them once they are of no "
+        "interest",
+        path,
+        damage,
+        suffix,
+    )
+    return s
+
+
+def open_store(path: Path) -> Store:
+    """Open the store at `path`, or a storeless one if it can't be used.
+
+    A corrupt DB is moved aside and a fresh one started in its place.
+    """
+    s = _open(path)
+    if isinstance(s, str):
         log.warning(
-            "store: can't use %s (%s: %s); running storeless, so nothing learned "
+            "store: can't use %s: %s; running storeless, so nothing learned "
             "survives a restart",
             path,
-            type(exc).__name__,
-            exc,
+            s,
         )
         return open_storeless()
     if not os.path.ismount(path.parent):
