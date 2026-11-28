@@ -3,8 +3,9 @@ services:
     build:
       context: .
       args:
-        BUILD_IMAGE: python:3.15-slim
-        RUNTIME_IMAGE: python:3.15-slim
+        # Alpine: Debian's slim ships a SQLite too old for the store.
+        BUILD_IMAGE: python:3.15-alpine3.24
+        RUNTIME_IMAGE: python:3.15-alpine3.24
     init: true
     ports:
       - "23457:8000"

@@ -368,6 +368,7 @@ class _HandlerDeps:
     base_url: str
     manifest_fetch: Callable[[str], tuple[str | None, str]]
     source_status: Callable[[], dict[str, Any]]
+    store_status: Callable[[], str]
     segment_fetch: Callable[[str, str | None], tuple[SegmentResponse | None, str]]
     proxy_youtube: bool
 
@@ -461,16 +462,17 @@ class _Handler(BaseHTTPRequestHandler):
         st = self.deps.source_status()
         unhealthy = st["unhealthy"]
         # Single rollup for a JSON-query uptime monitor ($.healthy == true).
-        # False until every source has finished a refresh (not ready), and whenever
-        # a source crashed, returned 0 cams or is overdue — even while the
-        # empty-guard is still masking that failure in the served playlist.
-        healthy = st["ready"] and not unhealthy
+        # False before every source has refreshed once, while any source is failing
+        # (even if the empty-guard masks it), and while store writes fail.
+        store = self.deps.store_status()
+        healthy = st["ready"] and not unhealthy and store != "failing"
         payload = {
             "ready": st["ready"],
             "healthy": healthy,
             "streams": len(snapshot),
             "unhealthy_sources": unhealthy,
             "sources": st["sources"],
+            "store": store,
             "rss_mb": round(_total_rss() / 1048576, 1),
         }
         self._respond(200, "application/json", json.dumps(payload).encode())
@@ -504,6 +506,7 @@ def make_handler(
     *,
     manifest_fetch: Callable[[str], tuple[str | None, str]],
     source_status: Callable[[], dict[str, Any]],
+    store_status: Callable[[], str],
     segment_fetch: Callable[[str, str | None], tuple[SegmentResponse | None, str]],
     proxy_youtube: bool = False,
 ) -> type[BaseHTTPRequestHandler]:
@@ -514,6 +517,7 @@ def make_handler(
         base_url=base_url,
         manifest_fetch=manifest_fetch,
         source_status=source_status,
+        store_status=store_status,
         segment_fetch=segment_fetch,
         proxy_youtube=proxy_youtube,
     )
@@ -931,6 +935,7 @@ def main() -> None:
         cfg.public_base_url,
         manifest_fetch=manifest_fetcher.get_with_outcome,
         source_status=app.source_status,
+        store_status=lambda: app.store.status,
         segment_fetch=manifest_fetcher.get_segment,
         proxy_youtube=cfg.proxy_youtube,
     )

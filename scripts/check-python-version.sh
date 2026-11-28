@@ -2,7 +2,8 @@
 # Pre-commit hook to validate Python versions match across:
 # - .python-version (source of truth)
 # - Dockerfile ARG defaults (DHI images for CI)
-# - docker-compose.yml build args (standard images for local dev)
+# - docker-compose.yml build args (standard images for local dev), whose Alpine
+#   release must also match the Dockerfile's
 # - pyrightconfig.json pythonVersion (type checker)
 # - pyproject.toml requires-python (uv's lock and venv, ruff's target version)
 
@@ -52,6 +53,22 @@ if [[ "$EXPECTED_VERSION" != "$COMPOSE_VERSION" ]]; then
     echo "  docker-compose.yml:   $COMPOSE_VERSION"
     exit 1
 fi
+
+# Check docker-compose.yml's BUILD_IMAGE and RUNTIME_IMAGE use the Dockerfile runtime's Alpine
+DOCKERFILE_ALPINE=$(grep -E '^ARG RUNTIME_IMAGE=' "$DOCKERFILE" | sed -nE 's/.*-alpine([0-9]+\.[0-9]+).*/\1/p')
+if [[ -z "$DOCKERFILE_ALPINE" ]]; then
+    echo "Error: Could not extract an Alpine release from $DOCKERFILE ARG RUNTIME_IMAGE"
+    exit 1
+fi
+while read -r line; do
+    COMPOSE_ALPINE=$(sed -nE 's/.*-alpine([0-9]+\.[0-9]+).*/\1/p' <<< "$line")
+    if [[ "$COMPOSE_ALPINE" != "$DOCKERFILE_ALPINE" ]]; then
+        echo "❌ Alpine release mismatch in docker-compose.yml!"
+        echo "  Dockerfile ARG:       alpine$DOCKERFILE_ALPINE"
+        echo "  docker-compose.yml:   ${line// /}"
+        exit 1
+    fi
+done < <(grep -E '(BUILD|RUNTIME)_IMAGE:' "$COMPOSE_FILE")
 
 # Check pyrightconfig.json pythonVersion (if file exists)
 if [[ -f "$PYRIGHT_CONFIG" ]]; then

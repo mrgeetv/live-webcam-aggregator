@@ -176,6 +176,7 @@ alert when `$.healthy` isn't `true`.
       "interval_hours": 24
     }
   },
+  "store": "ok",
   "rss_mb": 1402.6
 }
 ```
@@ -185,7 +186,7 @@ Fields:
 - `ready` — every source has finished at least one refresh. The playlist serves
   before that, from the first refresh to land.
 - `healthy` — `ready` **and** no source crashed, returned 0 cams on its last refresh,
-  or is overdue.
+  or is overdue, **and** `store` isn't `failing`.
 - `unhealthy_sources` — the sources failing now (the reason `healthy` is `false`).
 - `sources.<name>` — the **raw** result of that source's last refresh: `discovered`
   (found), `kept` (passed liveness), `crashed` (`discover`/liveness threw). These stay
@@ -198,6 +199,10 @@ Fields:
 - `sources.<name>.last_refresh_at` / `last_refresh_seconds` — when its last refresh
   finished (UTC) and how long it took; `null` until the first one.
 - `sources.<name>.interval_hours` — how often it refreshes.
+- `store` — `ok`; `failing` while saving a refresh to the store fails (a full disk, an
+  I/O error, a read-only mount), which clears on the first save that succeeds, with no
+  restart; or `storeless` when startup couldn't use it (see *Persistent data*). The
+  playlist and playback carry on in all three.
 
 The payload answers *what happened*; the *why* — per-host fetch outcomes, drop
 reasons, hosts with no extractor, pacing/backoff counters — is on the log lines each
@@ -214,6 +219,7 @@ The states you'll see:
 | `false` | `false` | `[]` | Cold start — some sources haven't finished a first refresh (the playlist serves the ones that have) |
 | `true` | `true` | `[]` | All sources succeeded |
 | `true` | `false` | non-empty | Serving, but a listed source crashed, returned 0 or is overdue (`status` tells which) |
+| `true` | `false` | `[]` | Serving, but the store can't save (`store: failing`; the log says why) |
 
 A cold start reads as `healthy: false` until the slowest source's first refresh lands,
 so give the monitor a couple of retries to ride out normal restarts before it alerts.
@@ -278,10 +284,20 @@ correction) is dropped rather than served, and that source refreshes first.
   shared memory, which network filesystems don't reliably provide, and the app can't
   detect it.
 - **Upgrades migrate it automatically**, including across several skipped releases.
+- **Rolling back is safe.** An older image that finds a store written by a newer
+  release leaves the file untouched and runs storeless; going back to the newer
+  release picks the store straight back up.
+- **A corrupt store is set aside, not deleted:** the DB and its `-wal` and `-shm` are
+  renamed with a `.corrupt-<time>` suffix, startup logs a warning, and a fresh store
+  starts in their place. Delete the renamed files once they're of no interest.
 - **Without a mount** the store lives in the container's own layer: it survives a
-  restart but not a recreate, and startup logs a warning saying so. If it can't be
-  opened at all the app runs **storeless** (a throwaway store, discarded at restart)
-  and logs a warning; everything else works.
+  restart but not a recreate, and startup logs a warning saying so.
+- **Storeless.** When the store can't be used — the directory isn't writable by the
+  container's user (the warning prints the `chown` to run, with the uid and gid the
+  app actually runs as), it's a read-only mount, SQLite is older than 3.51.3, or the
+  filesystem won't do WAL —
+  startup logs a warning naming why and the app runs **storeless**: a throwaway
+  store, discarded at restart. Everything else works.
 
 ## Tuning the search query
 

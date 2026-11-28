@@ -82,7 +82,7 @@ This project uses [Docker Hardened Images](https://www.docker.com/blog/docker-ha
 
 ### Local Development
 
-Local development uses standard Python images (no authentication required). The `docker-compose.yml` overrides the Dockerfile defaults to use `python:3.15-slim`:
+Local development uses standard Python images (no authentication required). The `docker-compose.yml` overrides the Dockerfile defaults to use `python:3.15-alpine3.24`, Alpine like the DHI images: Debian's `slim` ships a SQLite older than the store needs, so the app would run storeless:
 
 ```bash
 docker compose up -d
@@ -327,16 +327,37 @@ more than twice its interval old is not served and refreshes first:
 store: loaded explore, skyline, feratel; over age, so starting as new: windy
 ```
 
-A store that can't be opened logs a `WARNING` naming the error and the app runs
-storeless (nothing survives a restart); one whose directory isn't a mount logs a
-`WARNING` that it lives in the container layer.
+A store the app can't use logs one `WARNING` saying why, and the app runs
+storeless (nothing survives a restart; everything else works):
+
+```text
+store: can't use /data/webcam-aggregator.db: it isn't writable by this process (uid 65532, gid 65532: on the host, run `chown -R 65532:65532` on the directory mounted at /data); running storeless, so nothing learned survives a restart
+store: can't use /data/webcam-aggregator.db: it was written by a newer release; left untouched; running storeless, so nothing learned survives a restart
+store: can't use /data/webcam-aggregator.db: SQLite 3.46.1 is older than 3.51.3, which can corrupt a WAL database; running storeless, so nothing learned survives a restart
+```
+
+The others name a filesystem that won't do WAL, or any other open error. A corrupt
+DB is not storeless: it is renamed aside with its `-wal` and `-shm` (a
+`.corrupt-<time>` suffix, named in the `WARNING`) and a fresh store starts. A store
+whose directory isn't a mount logs a `WARNING` that it lives in the container layer.
+
+A save that fails at runtime (a full disk, an I/O error, a read-only remount) rolls
+that refresh's transaction back and the refresh carries on in memory. Every save is
+still attempted, so a failing store logs one `WARNING` per source refresh, naming the
+SQLite error, and `/health` reports `store: failing` (which makes `healthy` false).
+The first save that succeeds clears both, with an `INFO` line and no restart:
+
+```text
+store: explore's refresh not saved, carrying on in memory — OperationalError (SQLITE_FULL): database or disk is full
+store: writing again
+```
 
 Live process memory (`rss_mb`), each source's **raw** last-refresh outcome
 (`kept`/`discovered`/`crashed`/`status`) and refresh times
 (`last_refresh_at`/`last_refresh_seconds`/`interval_hours`), a `healthy` rollup
 (`ready` — every source has refreshed once — **and** no source crashed, returned 0
-or is `overdue`, i.e. last refreshed over twice its interval ago) and
-`unhealthy_sources` are exposed on the `/health` endpoint. The payload is
+or is `overdue`, i.e. last refreshed over twice its interval ago, **and** the store
+isn't failing), `unhealthy_sources` and `store` (`ok`/`failing`/`storeless`) are exposed on the `/health` endpoint. The payload is
 deliberately WHAT-only — the per-host/per-reason detail above lives on the log
 lines. The per-source counts stay raw even when the empty-guard is still serving a
 failed source's kept set, so a failure surfaces immediately. See the

@@ -271,7 +271,8 @@ The app is two phases, decoupled by the live catalogue (`app.LiveCatalogue`):
   detail is LOG-ONLY: `/health` stays a compact WHAT summary (per-source
   `kept`/`discovered`/`crashed`/`status` plus `last_refresh_at`/`last_refresh_seconds`/
   `interval_hours`, built by `app.source_status_for`; `overdue` = last refresh
-  finished over 2× its interval ago, unhealthy like `dead`).
+  finished over 2× its interval ago, unhealthy like `dead`) plus the store's `store`
+  (see *The store* below).
 - **Add a config/env var** — parse it in `config.py` via the `_*_env` helpers, and
   ALWAYS validate: a bad/unparseable value must log a `WARNING` at startup and fall
   back to the default, never crash or silently misbehave (e.g. `_int_env` warns on a
@@ -750,10 +751,12 @@ holding only re-derivable data, so losing it costs a cold start, never correctne
 Rules that must survive refactors:
 
 - `store` owns every connection, pragma and transaction; nothing else imports
-  `sqlite3`. Other modules write SQL through its helpers: `Store.write(label, fn)` runs
+  `sqlite3` (`tests/sqlite_owner_test.py` fails if one does). Other modules write SQL through its helpers: `Store.write(label, fn)` runs
   `fn` in one `BEGIN IMMEDIATE` transaction on the single write connection, behind a
   lock held for the whole transaction, and on a SQLite error rolls back, logs a WARNING
-  and returns False so the caller carries on in memory. `Store.read` opens a fresh
+  and returns False so the caller carries on in memory. A failed write marks the store
+  `failing` (/health's `store`, which turns `healthy` false) until one commits again;
+  every later write is still attempted, so it heals with no restart. `Store.read` opens a fresh
   `query_only` connection per call. `autocommit=True` everywhere, never `False` (it
   makes `BEGIN IMMEDIATE` impossible, no-ops `foreign_keys=ON` and pins read
   snapshots).
@@ -765,10 +768,22 @@ Rules that must survive refactors:
   edit a released step: a self-hoster's DB may sit at any earlier version. `store_test`
   builds every earlier version from the steps and upgrades it, so a new step is
   covered without a test.
-- A store that can't be opened or migrated logs a WARNING and the app runs
-  **storeless**: a throwaway temp-file DB, same code and pragmas, discarded at exit
-  (`app.stop_on_sigterm` deletes it, since a killed process runs no finalisers).
-  Not `:memory:`, which WAL can't share across connections.
+- `open_store` never fails startup. A store it can't use logs a WARNING saying why and
+  the app runs **storeless**: a throwaway temp-file DB, same code and pragmas,
+  discarded at exit (`app.stop_on_sigterm` deletes it, since a killed process runs no
+  finalisers; not `:memory:`, which WAL can't share across connections). The
+  reasons: SQLite below 3.51.3 (its WAL-reset corruption bug); a directory or file the
+  process can't write (the WARNING prints `chown` with the process's real uid:gid, or
+  names a read-only mount, where chown can't help); a
+  `user_version` above `len(MIGRATIONS)`, a rolled-back image, whose file is left
+  byte-identical so re-upgrading picks it back up; `journal_mode=WAL` not answering
+  `wal` (SQLite keeps the old mode rather than raising); or any other open error.
+- A **corrupt** DB is replaced, not run storeless: one that fails to open
+  (`SQLITE_CORRUPT`/`SQLITE_NOTADB`) or whose `quick_check` returns anything but a
+  lone `ok` (it reports damage as rows rather than raising) has its db, `-wal` and
+  `-shm` renamed with a `.corrupt-<time>` suffix and a fresh store starts. The
+  version and damage checks run on a **read-only** connection before the write one
+  opens: a writer's close deletes the `-wal` and `-shm`, which are the evidence.
 
 **Security model:** every outbound fetch is validated by `fetch._validate_ip`
 (rejects non-http(s) and private/loopback/link-local/reserved IPs, and says which),
@@ -991,7 +1006,7 @@ Pre-commit hooks enforced:
 - **markdownlint-cli2** - Markdown formatting (CHANGELOG.md excluded)
 - **hadolint** - Dockerfile linting
 - **conventional-pre-commit** - Commit message validation (strict mode with forced scopes)
-- **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, pyrightconfig.json, and pyproject.toml's `requires-python`
+- **check-python-version** - Custom validation that .python-version matches Dockerfile, docker-compose.yml, pyrightconfig.json, and pyproject.toml's `requires-python`, and that docker-compose.yml's images use the Dockerfile's Alpine release
 - **uv-lock** - fails the commit when `uv.lock` no longer matches `pyproject.toml`
 - **check-hadolint-pin** - hadolint's pinned `entry:` image tag must match its `rev:` (Dependabot bumps only the `rev:`)
 - **basedpyright** - Python type checking (stricter pyright fork with pylance features)
@@ -1023,7 +1038,9 @@ This project enforces Python version consistency:
 
 - `.python-version` - Source of truth (currently 3.15)
 - `Dockerfile` - `ARG RUNTIME_IMAGE` default must use `dhi.io/python:{version}-alpine{alpine}`
-- `docker-compose.yml` - `RUNTIME_IMAGE` build arg must use `python:{version}-slim`
+- `docker-compose.yml` - `RUNTIME_IMAGE` build arg must use `python:{version}-alpine{alpine}`
+  on the Dockerfile's Alpine release (Alpine, not Debian's slim, whose SQLite is below
+  the store's floor)
 - `pyrightconfig.json` - Must have `pythonVersion` matching .python-version
 - `pyproject.toml` - `requires-python` must be `=={version}.*`
 - Pre-commit hook validates synchronization automatically
@@ -1033,7 +1050,7 @@ This project enforces Python version consistency:
 
 1. Update `.python-version` file
 2. Update `Dockerfile` `ARG RUNTIME_IMAGE` and `ARG BUILD_IMAGE` defaults to match
-   (an alpine-only bump is just this step)
+   (an alpine-only bump is just this step and the next)
 3. Update `docker-compose.yml` `RUNTIME_IMAGE` and `BUILD_IMAGE` args to match
 4. Update `pyrightconfig.json` pythonVersion to match
 5. Update `pyproject.toml` `requires-python` to match, then run `uv lock` (the

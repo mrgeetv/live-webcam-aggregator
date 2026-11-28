@@ -1634,3 +1634,38 @@ def test_a_first_start_says_the_store_held_nothing(
     with caplog.at_level(logging.INFO, logger="webcam-aggregator.catalogue"):
         _scheduler([_Src("explore", [])])
     assert "store: loaded none; over age, so starting as new: none" in caplog.text
+
+
+def test_a_store_that_cannot_save_neither_stops_the_merge_nor_the_retries(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Playback reads only the merged catalogue, so a failing save can't touch it."""
+    db = store.Store(tmp_path / "s.db")
+    # A full disk: the file can't grow.
+    assert db.write("cap", lambda tx: tx.execute("PRAGMA max_page_count = 1"))
+    cams = [
+        _make_candidate(
+            source="explore",
+            key="hls:big",
+            target="https://explore/big.m3u8",
+            title="cam " + "x" * 100_000,
+        )
+    ]
+    clock = _Clock()
+    merges: list[list[CatalogueEntry]] = []
+    s = _scheduler([_Src("explore", cams)], db=db, clock=clock, merges=merges)
+    with caplog.at_level(logging.WARNING, logger="webcam-aggregator.store"):
+        _finish_all(s, s.tick())
+    assert len(merges[-1]) == 1
+    assert db.status == "failing"
+    assert "explore's refresh not saved" in caplog.text
+
+    uncap = "PRAGMA max_page_count = 1073741823"
+    assert db.write("uncap", lambda tx: tx.execute(uncap))
+    # Failing again, so the refresh's own save is what heals it.
+    db.write("fail", lambda tx: tx.execute("INSERT INTO no_such_table VALUES (1)"))
+    clock.advance(6)
+    _finish_all(s, s.tick())
+    assert db.status == "ok"
+    assert db.read("SELECT count(*) FROM kept_cam") == [(1,)]
+    db.close()

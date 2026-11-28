@@ -11,6 +11,8 @@ import urllib.parse
 from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from webcam_aggregator.app import LiveCatalogue, make_handler, source_status_for
 from webcam_aggregator.cache import ResolveCache
 from webcam_aggregator.catalogue import Scheduler
@@ -21,8 +23,6 @@ from webcam_aggregator.store import open_storeless
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-
-    import pytest
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -121,6 +121,7 @@ def _start_server(
     cache: ResolveCache | None = None,
     source_status: dict[str, Any] | None = None,
     status_fn: Callable[[], dict[str, Any]] | None = None,
+    store_status: str = "ok",
 ) -> tuple[ThreadingHTTPServer, int]:
     if cache is None:
         cache = _make_cache()
@@ -131,6 +132,7 @@ def _start_server(
         _BASE_URL,
         manifest_fetch=_manifest_fetch,
         source_status=status_fn or (lambda: ss),
+        store_status=lambda: store_status,
         segment_fetch=_segment_fetch,
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
@@ -287,8 +289,24 @@ def test_health_returns_correct_json() -> None:
             "streams",
             "unhealthy_sources",
             "sources",
+            "store",
             "rss_mb",
         }
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("store", "healthy"), [("ok", True), ("storeless", True), ("failing", False)]
+)
+def test_health_reports_the_store(store: str, *, healthy: bool) -> None:
+    """A failing store turns healthy false; storeless is reported, not unhealthy."""
+    catalogue, _ = _make_catalogue()
+    server, port = _start_server(catalogue, store_status=store)
+    try:
+        health = _get_health(port)
+        assert health["store"] == store
+        assert health["healthy"] is healthy
     finally:
         server.shutdown()
 
